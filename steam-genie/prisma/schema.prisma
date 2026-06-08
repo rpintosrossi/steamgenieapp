@@ -277,7 +277,7 @@ model Task {
   subzoneId  String?       @db.Uuid
   name       String        @db.VarChar(300)
   frequency  TaskFrequency
-  startDate  DateTime?     @db.Date
+  startDate  DateTime      @db.Date
   requiresPhoto           Boolean @default(false)
   allowsObservation       Boolean @default(false)
   requiresRejectionReason Boolean @default(false)
