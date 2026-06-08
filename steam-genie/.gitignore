@@ -1,0 +1,36 @@
+# Byte-compiled / generated
+node_modules/
+dist/
+.next/
+.expo/
+*.tsbuildinfo
+
+# pnpm store (local cache — never commit)
+.pnpm-store/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Prisma
+prisma/migrations/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+
+# Turbo
+.turbo/
+
+# Test coverage
+coverage/

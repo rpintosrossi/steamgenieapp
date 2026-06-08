@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: steam-genie-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-steamgenie}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-steamgenie_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-steamgenie}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-steamgenie}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: steam-genie-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis_dev}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_dev}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    image: node:20-bullseye
+    container_name: steam-genie-migrate
+    working_dir: /app
+    volumes:
+      - .:/app
+      - pnpm_store:/root/.local/share/pnpm/store
+      - node_modules_linux:/app/node_modules
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-steamgenie}:${POSTGRES_PASSWORD:-steamgenie_dev}@postgres:5432/${POSTGRES_DB:-steamgenie}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev_access_secret_min_32_chars_steam_genie}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev_refresh_secret_min_32_chars_steam_genie}
+      SEED_ADMIN_DNI: ${SEED_ADMIN_DNI:-12345678}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-01012000}
+      SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-Admin Steam Genie}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - migrate
+    command: >
+      bash -lc "
+        corepack enable &&
+        corepack prepare pnpm@9 --activate &&
+        pnpm install &&
+        pnpm --filter './packages/*' build &&
+        pnpm db:generate &&
+        pnpm exec prisma migrate dev --schema=prisma/schema.prisma --name init && pnpm exec tsx prisma/apply-constraints.ts &&
+        pnpm exec tsx prisma/seed.ts
+      "
+
+volumes:
+  postgres_data:
+  redis_data:
+  pnpm_store:
+  node_modules_linux:

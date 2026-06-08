@@ -1,0 +1,36 @@
+{
+  "name": "@steam-genie/mobile",
+  "version": "1.0.0",
+  "main": "expo-router/entry",
+  "scripts": {
+    "dev": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@expo/vector-icons": "^14.0.0",
+    "@react-native-community/netinfo": "^11.3.0",
+    "@steam-genie/shared-constants": "workspace:*",
+    "@steam-genie/shared-types": "workspace:*",
+    "@steam-genie/shared-validators": "workspace:*",
+    "expo": "~51.0.0",
+    "expo-constants": "~16.0.0",
+    "expo-font": "~12.0.0",
+    "expo-router": "~3.5.0",
+    "expo-secure-store": "~13.0.0",
+    "expo-sqlite": "~14.0.0",
+    "expo-status-bar": "~1.12.0",
+    "react": "18.2.0",
+    "react-native": "0.74.0",
+    "socket.io-client": "^4.7.5",
+    "zod": "^3.22.0",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@types/react": "~18.2.0",
+    "typescript": "^5.4.0"
+  }
+}

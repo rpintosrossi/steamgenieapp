@@ -1,0 +1,135 @@
+1. Seria solo para esta empresa
+2. No
+3. Internos, clientes y proveedores
+4. Ya tengo que realizar la app funcional, por lo que tendriamos que empezar cuanto antes.
+5. 15 dias a partir de hoy.
+6. Si
+7. Si
+8. Limpiador solo ve sus servicios asignados
+9. Desde ambas
+10. Por ahora solo ordenes de trabajo (de el)
+11. Si, seria ideal
+12. Por ahora se cargan manualmente
+13. Si
+14. No, la contraseña va a ser siempre esa
+15. No
+16. Si, no debe cerrarse la sesion
+17. No
+18. Tambien con dni aunque para esos si se puede cambiar la contraseña
+19. login propio
+20. Si
+21. Exacto, porque si existen subzonas cada tarea estara en cada subzona.
+22. Exacto
+23. Si
+24. Si
+25. Si
+26. No, debe requerir logeo, si esta logeado entra de una
+27. por defecto que no tenga vencimiento, pero puede tenerlo
+28. es solo por edificio
+29. si, porque las zonas pertenecen a un edificio, entonces debe fichar en cada edificio que quiera tomar servicios.
+30. No, debe fichar salida del primero
+31. Te debe marcar como que olvido de marcarse salida.
+32. Si
+33. Si
+34. Si
+35. Si, te debe permitir realizar como un fichaje offline y cuando recupera conexión debe enviar toda la información
+36. Debe guardar la información “guardada”
+37. Una orden de trabajo se puede asignar a varias personas ya que hay servicios que se necesita a mas de 1 persona.
+38. Si, aunque si no aceptan todos, el sistema debe permitir igualmente que esas personas puedan ir
+39. Si
+40. Si, puede rechazar de una lista de motivos creados desde un abm del administrador
+41. No
+42. Si
+43. Si
+44. Peticiones adicionales son como servicios extras que puede agarrar cualquier limpiador. En cambio, las ordenes de trabajo checkin / checkout son referidas como a hoteles o Airbnb donde te indican que tenes que limpiar luego de la hora del checkout y el objetivo es que este lista para antes del checkin, son cosas distintas.
+45. Una orden de trabajo siempre esta asociada a una zona o a una subzona
+46. No, siempre debe estar asociada a una zona o subzona.
+Introduccion a las tareas (46):
+Las tareas son los ítems individuales que se generan con determinada frecuencia a realizar (ejemplo: Limpieza de suelos)
+Una vez que se configura dichas tareas asociadas a una zona o subzona, cuando la persona fiche le aparecerán los servicios que tiene que realizar. Donde cada servicio agrupa las tareas que correspondan (va a filtrar únicamente las que debe hacer porque por ejemplo si hay tareas quincenales, no estarán disponibles para realizarse todos los días, sino solo cada 15 dias, etc…)
+48. Si, debe ser personalizable al crear la tarea
+49. Si, debe ser personalizable al crear la tarea
+50. Si, motivo debe crearse desde un ABM
+51. SI, se debe crear tareas que puedan tener campos personalizables donde cada campo pueda ser una lista de ciertas opciones, y también debe ser personalziable si es obligatoreio o no y si se quiere que aparezca en el reporte final
+52. Si, pero todo personalizable por cada tarea, por defecto no, solo si quiero agregar
+53. No
+54. No
+55. Si, pero debe guardar el progreso
+56. En realidad, las tareas que no son “eventuales” están asociadas a una zona/subzona y cuando la persona fiche en ese edificio le aparecen todas las tareas que correspondan (para este tipo de servicios no deben aceptar diariamente ya que es su puesto de trabajo generalmente)
+57. No se deben generar
+58. Vence al terminar el mes calendario (es porque no se hizo nunca en el mes)
+59. No
+60. Nadie, queda vencida. Como es con frecuencia, se hará en la próxima y esa queda como vencida.
+61. No
+62. Creo que te lo respondi en la 56, las tareas que NO son eventuales, están asociadas a un edificio (zona, subzona, etc) y cuando la persona fiche le aparecen las tareas pendientes.
+63. Vendran de plataformas que nos indicaran que un huésped se hospedara tal día y horario, y que se puede limpiar a partir de tal día y horario, por lo que genera una orden de servicio con las tareas eventuales asociadas a esa zona/subzona
+64. La api externa nos la van a dar para pegarle a nuestro sistema y crear dichas reservas, donde debemos logear lo que recibimos y transformarlo como necesitamos. Todavia no sabemos como nos van a pegar, por lo que tenemos que hacerlo de manera extensible y fácilmente debuggeable, en el sentido de ver a que hora y como nos pegaron, como se interpretaron los datos, etc.
+65, 66, 67, 68, 69 Y 70 Se responderán después.
+71. Fichar, ver servicios, iniciar servicio, marcar tareas, adjuntar fotos, finalizar servicio, fichar entrada y salida, lo ideal es que puedan usar todo el sistema offline, y cuando recupere conexión envie toda la información (con la hora a la que se envio)
+72. No
+73. Todo el tiempo que quiera
+74. El sistema debe darse cuenta y cuando el que modifico mas tarde envie la información, debe comunicarle que no se pudo sincronizar ya que dicho servicio fue realizado por otra persona. Y que mande a comunicarse con el administrador de la aplicación para solucionar (No debe borrar sus registros, ya que deben quedar como registros “internos”)
+75. Respondido en 74
+76. Si
+77. Si
+78. Debe mostrar error descriptivamente y debe mantener la información para que no se “pierda”
+79. Estimo 2 como máximo por tarea, normalmente será 1 (aunque pueden enviar mas si quieren)
+80. Si
+81. SI
+82. Si
+83. No
+84. Si, aunque la reporteria la resolveremos mas tarde.
+85. Solo el administrador puede eliminar
+86 a 94. Por ahora la reporteria no la hacemos, será mas adelante
+95. Asignacion de servicio, aceptación/rechazo, inicio de servicio, finalización, fichaje de entrada/salida, estados de las ordenes, tareas, etc.
+Todo debe ser diseñado con webhooks, así no tenemos pull events, y el sistema es rápido
+96. Si, si se logeo alguna vez ya debe quedar guardado las ultimas credenciales con las que logeo y debe mandar notificaciones.
+97. No, (por ahora)
+98. No (por ahora)
+99. Si, después definimos cuales.
+100. Si
+101. Si
+102. Si, capaz entran desde celular también
+103. Dashboard, Edificios, Usuarios, Reservas, Ordenes de trabajo, Tareas Periodicas, Calendario, Peticiones Adicionales, Reportes, Configuracion, Fichajes
+104. Lo podemos hacer cuando este todo definido por si cambian los datos, así no se trabaja innecesariamente.
+105. Si, pero para mas adelante
+106. Si
+107. Si, seria ideal.
+108. Si. Ademas el encargado y los clientes y proveedores.
+109. Si
+110. Si, capaz al principio la distribuyo por apk, pero el objetivo es subirla a ambas tiendas.
+111. Si, aunque no creo que se utilice (desconozco si esto es un problema)
+112. Si
+113. No
+114. Si
+115. Me gustaría respetar la estética visual
+116. Estimo aprox 100 edificios.
+117. Estimo que como máximo 100
+118. Estimo que como máximo 100
+119. Estimo como máximo 50
+120. Estimo como máximo 100
+121. Estimo que entre 100 y 500
+122. Estimo que como máximo 100
+123. Estimo 10
+124. Miles de registros totales, creo
+125. Si
+126. No, es porque lo conozco, pero si para la velocidad y experiencia que necesito recomendas otro, lo evaluamos
+127. No, lo mas rápido que sean ya que será usado principalmente en Argentina
+128. 50 usd como tope, seria ideal
+129. arquitectura robusta desde inicio
+130. Ambiente de desarrollo y producción es suficiente
+131. Si
+132. Si
+133. Si
+134. Yo
+135. Si
+136. Pueden borrar
+137. Si
+138. No creo.
+139. No no, por ahora solo en argentina y no es necesario
+140. Por ahora solo resultados del servicio
+141. Si
+142-148 – Por ahora no tenemos nada de información, por lo que se creara todo acá (Tener en cuenta de que probablemente a futuro la creación sea dinámica desde otro sistema, contemplar para creación de apis, etc…)
+149-150-151. Recomendame vos, las etapas, y el prompt para que Claude sepa que tener en cuenta para ir armando todo
+152. Si, tene en cuenta las imágenes que te pase para que el stack respete ese diseño, se me ocurre expo, nextjs, postgresql.
+-----

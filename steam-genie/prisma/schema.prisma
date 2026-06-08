@@ -1,0 +1,735 @@
+// Steam Genie — Prisma Schema
+// Architecture v1.2 — June 2026
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Platform {
+  IOS
+  ANDROID
+}
+
+enum TaskFrequency {
+  EVENTUAL  // Only used in work orders — NEVER in the periodic tasks module
+  DAILY
+  MON_FRI
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  QUARTERLY
+  BIANNUAL
+  ANNUAL
+}
+
+enum TaskFieldType {
+  DROPDOWN
+}
+
+enum ReservationStatus {
+  UPCOMING
+  CHECKIN_DAY
+  ACTIVE
+  CHECKOUT_DAY
+  COMPLETED
+}
+
+enum ReservationSource {
+  API
+  MANUAL
+}
+
+enum WorkOrderType {
+  CHECKOUT_CLEANING // Auto-generated from a reservation
+  ADDITIONAL_REQUEST // Manual request; cleaners can self-assign
+}
+
+enum WorkOrderStatus {
+  UNASSIGNED
+  ASSIGNED
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  REJECTED
+}
+
+enum AssignmentStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+enum RejectionReasonType {
+  SERVICE_REJECTION // Applied to work_order_assignments
+  TASK_NOT_DONE     // Applied to task_executions
+}
+
+enum ServiceExecutionStatus {
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskExecutionStatus {
+  DONE
+  NOT_DONE
+  SKIPPED
+}
+
+enum PeriodicTaskInstanceStatus {
+  PENDING
+  COMPLETED
+  EXPIRED
+}
+
+enum IntegrationLogStatus {
+  RECEIVED
+  PARSED
+  ERROR
+}
+
+enum SyncConflictResolutionStatus {
+  PENDING
+  RESOLVED
+}
+
+// ─── Users & Access ───────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  dni          String   @unique @db.VarChar(20)
+  fullName     String   @db.VarChar(200)
+  birthDate    DateTime? @db.Date
+  passwordHash String   @db.VarChar(255)
+  // Denormalized for fast auth queries only.
+  // Source of truth for permissions is UserBuildingRole.
+  primaryRole  String   @db.VarChar(50)
+  isActive     Boolean  @default(true)
+  deletedAt    DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  buildingRoles     UserBuildingRole[] @relation("UserBuildingRoles")
+  grantedRoles      UserBuildingRole[] @relation("GrantedByUser")
+  devices           UserDevice[]
+  attendances       Attendance[]
+  assignments       WorkOrderAssignment[]
+  createdWorkOrders WorkOrder[]
+  serviceExecutions               ServiceExecution[]
+  serviceExecutionParticipants    ServiceExecutionParticipant[]
+  taskExecutions                  TaskExecutionRecord[]
+  uploadedPhotos                  TaskPhoto[]
+  correctedAttendances            Attendance[]  @relation("CorrectedBy")
+  resolvedConflicts SyncConflict[]  @relation("SyncConflictResolvedBy")
+  ownedConflicts    SyncConflict[]  @relation("SyncConflictUser")
+  auditLogs         AuditLog[]
+  domainEvents      DomainEvent[]
+
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique @db.VarChar(50) // admin | manager | cleaner | client | provider
+  description String?  @db.VarChar(200)
+  createdAt   DateTime @default(now())
+
+  userBuildingRoles UserBuildingRole[]
+
+  @@map("roles")
+}
+
+// Roles scoped per building (building_id = null means global role)
+model UserBuildingRole {
+  id         String   @id @default(uuid()) @db.Uuid
+  user       User     @relation("UserBuildingRoles", fields: [userId], references: [id])
+  userId     String   @db.Uuid
+  building   Building? @relation(fields: [buildingId], references: [id])
+  buildingId String?  @db.Uuid // null = global role across all buildings
+  role       Role     @relation(fields: [roleId], references: [id])
+  roleId     String   @db.Uuid
+  grantedBy  User     @relation("GrantedByUser", fields: [grantedById], references: [id])
+  grantedById String  @db.Uuid
+  createdAt  DateTime @default(now())
+
+  @@index([userId, buildingId, roleId])
+  @@map("user_building_roles")
+}
+
+model UserDevice {
+  id          String   @id @default(uuid()) @db.Uuid
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String   @db.Uuid
+  deviceId    String   @unique @db.VarChar(200)
+  platform    Platform
+  pushToken   String?  @db.VarChar(500) // Updated on every app start
+  appVersion  String?  @db.VarChar(50)
+  lastSeenAt  DateTime?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("user_devices")
+}
+
+// ─── Buildings ────────────────────────────────────────────────────────────────
+
+model Building {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(200)
+  address     String?  @db.VarChar(300)
+  city        String?  @db.VarChar(100)
+  province    String?  @db.VarChar(100)
+  latitude    Decimal? @db.Decimal(10, 7)
+  longitude   Decimal? @db.Decimal(10, 7)
+  gpsRadiusM  Int      @default(200)
+  isActive    Boolean  @default(true)
+  deletedAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  floors            Floor[]
+  zones             Zone[]
+  subzones          Subzone[]
+  tasks             Task[]
+  userBuildingRoles UserBuildingRole[]
+  attendances       Attendance[]
+  workOrders        WorkOrder[]
+  reservations      Reservation[]
+
+  @@map("buildings")
+}
+
+model Floor {
+  id         String   @id @default(uuid()) @db.Uuid
+  building   Building @relation(fields: [buildingId], references: [id])
+  buildingId String   @db.Uuid
+  name       String   @db.VarChar(100)
+  sortOrder  Int      @default(0)
+  deletedAt  DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  zones        Zone[]
+  workOrders   WorkOrder[]
+  reservations Reservation[]
+
+  @@map("floors")
+}
+
+model Zone {
+  id          String   @id @default(uuid()) @db.Uuid
+  floor       Floor    @relation(fields: [floorId], references: [id])
+  floorId     String   @db.Uuid
+  building    Building @relation(fields: [buildingId], references: [id])
+  buildingId  String   @db.Uuid // Denormalized for queries
+  name        String   @db.VarChar(200)
+  qrToken     String?  @unique @db.VarChar(100)
+  qrExpiresAt DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  subzones     Subzone[]
+  tasks        Task[]
+  workOrders   WorkOrder[]
+  reservations Reservation[]
+
+  @@map("zones")
+}
+
+model Subzone {
+  id          String   @id @default(uuid()) @db.Uuid
+  zone        Zone     @relation(fields: [zoneId], references: [id])
+  zoneId      String   @db.Uuid
+  building    Building @relation(fields: [buildingId], references: [id])
+  buildingId  String   @db.Uuid // Denormalized for queries
+  name        String   @db.VarChar(200)
+  qrToken     String?  @unique @db.VarChar(100)
+  qrExpiresAt DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tasks        Task[]
+  workOrders   WorkOrder[]
+  reservations Reservation[]
+
+  @@map("subzones")
+}
+
+// ─── Tasks ────────────────────────────────────────────────────────────────────
+
+model Task {
+  id         String        @id @default(uuid()) @db.Uuid
+  building   Building      @relation(fields: [buildingId], references: [id])
+  buildingId String        @db.Uuid
+  zone       Zone?         @relation(fields: [zoneId], references: [id])
+  zoneId     String?       @db.Uuid
+  subzone    Subzone?      @relation(fields: [subzoneId], references: [id])
+  subzoneId  String?       @db.Uuid
+  name       String        @db.VarChar(300)
+  frequency  TaskFrequency
+  startDate  DateTime?     @db.Date
+  requiresPhoto           Boolean @default(false)
+  allowsObservation       Boolean @default(false)
+  requiresRejectionReason Boolean @default(false)
+  isActive   Boolean       @default(true)
+  deletedAt  DateTime?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  customFields             TaskCustomField[]
+  workOrderTaskSnapshots   WorkOrderTask[]
+  periodicTaskInstances    PeriodicTaskInstance[]
+
+  @@index([buildingId, zoneId, subzoneId, frequency])
+  @@map("tasks")
+}
+
+model TaskCustomField {
+  id           String        @id @default(uuid()) @db.Uuid
+  task         Task          @relation(fields: [taskId], references: [id])
+  taskId       String        @db.Uuid
+  label        String        @db.VarChar(200)
+  fieldType    TaskFieldType
+  isRequired   Boolean       @default(false)
+  showInReport Boolean       @default(false)
+  sortOrder    Int           @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  options                      TaskCustomFieldOption[]
+  workOrderTaskFieldSnapshots  WorkOrderTaskCustomField[]
+
+  @@map("task_custom_fields")
+}
+
+model TaskCustomFieldOption {
+  id        String          @id @default(uuid()) @db.Uuid
+  field     TaskCustomField @relation(fields: [fieldId], references: [id])
+  fieldId   String          @db.Uuid
+  label     String          @db.VarChar(200)
+  sortOrder Int             @default(0)
+  createdAt DateTime        @default(now())
+
+  workOrderTaskFieldOptionSnapshots WorkOrderTaskCustomFieldOption[]
+
+  @@map("task_custom_field_options")
+}
+
+// ─── Rejection Reasons ────────────────────────────────────────────────────────
+
+model RejectionReason {
+  id        String              @id @default(uuid()) @db.Uuid
+  type      RejectionReasonType
+  // SERVICE_REJECTION → used in WorkOrderAssignment
+  // TASK_NOT_DONE     → used in TaskExecutionRecord
+  text      String              @db.VarChar(300)
+  isActive  Boolean             @default(true)
+  deletedAt DateTime?
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  assignments    WorkOrderAssignment[]
+  taskExecutions TaskExecutionRecord[]
+
+  @@map("rejection_reasons")
+}
+
+// ─── Attendance ───────────────────────────────────────────────────────────────
+
+model Attendance {
+  id                   String   @id @default(uuid()) @db.Uuid
+  user                 User     @relation(fields: [userId], references: [id])
+  userId               String   @db.Uuid
+  building             Building @relation(fields: [buildingId], references: [id])
+  buildingId           String   @db.Uuid
+  checkInAt            DateTime
+  checkInOccurredAt    DateTime?
+  checkInGpsLat        Decimal? @db.Decimal(10, 7)
+  checkInGpsLng        Decimal? @db.Decimal(10, 7)
+  checkInDeviceId      String?  @db.VarChar(200)
+  checkInIp            String?  @db.VarChar(45)
+  checkOutAt           DateTime?
+  checkOutOccurredAt   DateTime?
+  checkOutGpsLat       Decimal? @db.Decimal(10, 7)
+  checkOutGpsLng       Decimal? @db.Decimal(10, 7)
+  checkOutDeviceId     String?  @db.VarChar(200)
+  checkOutIp           String?  @db.VarChar(45)
+  forgotCheckout       Boolean  @default(false)
+  isOfflineSynced      Boolean  @default(false)
+  clientOperationId    String?  @unique @db.VarChar(100)
+  correctedBy          User?    @relation("CorrectedBy", fields: [correctedById], references: [id])
+  correctedById        String?  @db.Uuid
+  correctionNote       String?
+  version              Int      @default(1)
+  deletedAt            DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  serviceExecutions                ServiceExecution[]
+  serviceExecutionParticipants     ServiceExecutionParticipant[]
+
+  @@index([userId, buildingId, checkInAt])
+  @@map("attendances")
+}
+
+// ─── Reservations ─────────────────────────────────────────────────────────────
+
+model Reservation {
+  id         String            @id @default(uuid()) @db.Uuid
+  building   Building          @relation(fields: [buildingId], references: [id])
+  buildingId String            @db.Uuid
+  floor      Floor             @relation(fields: [floorId], references: [id])
+  floorId    String            @db.Uuid
+  zone       Zone              @relation(fields: [zoneId], references: [id])
+  zoneId     String            @db.Uuid
+  subzone    Subzone?          @relation(fields: [subzoneId], references: [id])
+  subzoneId  String?           @db.Uuid
+  externalId String?           @db.VarChar(200)
+  guestName  String?           @db.VarChar(200)
+  checkinAt  DateTime
+  checkoutAt DateTime
+  status     ReservationStatus @default(UPCOMING)
+  source     ReservationSource @default(MANUAL)
+  rawSource  String?
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  workOrders              WorkOrder[]
+  integrationInboundLogs  IntegrationInboundLog[]
+
+  @@map("reservations")
+}
+
+// ─── Work Orders ──────────────────────────────────────────────────────────────
+
+model WorkOrder {
+  id            String          @id @default(uuid()) @db.Uuid
+  type          WorkOrderType
+  reservation   Reservation?    @relation(fields: [reservationId], references: [id])
+  reservationId String?         @db.Uuid // Required for CHECKOUT_CLEANING
+  building      Building        @relation(fields: [buildingId], references: [id])
+  buildingId    String          @db.Uuid
+  floor         Floor?          @relation(fields: [floorId], references: [id])
+  floorId       String?         @db.Uuid
+  zone          Zone?           @relation(fields: [zoneId], references: [id])
+  zoneId        String?         @db.Uuid
+  subzone       Subzone?        @relation(fields: [subzoneId], references: [id])
+  subzoneId     String?         @db.Uuid
+  title         String          @db.VarChar(300)
+  description   String?
+  scheduledDate DateTime?       @db.Date
+  scheduledTime DateTime?       @db.Time
+  deadlineAt    DateTime?
+  status        WorkOrderStatus @default(UNASSIGNED)
+  createdBy     User            @relation(fields: [createdById], references: [id])
+  createdById   String          @db.Uuid
+  startedAt     DateTime?
+  completedAt   DateTime?
+  version       Int             @default(1)
+  deletedAt     DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  assignments        WorkOrderAssignment[]
+  workOrderTasks     WorkOrderTask[]
+  serviceExecutions  ServiceExecution[]
+  integrationLogs    IntegrationInboundLog[]
+
+  @@index([buildingId, status, scheduledDate])
+  @@map("work_orders")
+}
+
+model WorkOrderAssignment {
+  id               String           @id @default(uuid()) @db.Uuid
+  workOrder        WorkOrder        @relation(fields: [workOrderId], references: [id])
+  workOrderId      String           @db.Uuid
+  user             User             @relation(fields: [userId], references: [id])
+  userId           String           @db.Uuid
+  status           AssignmentStatus @default(PENDING)
+  rejectionReason  RejectionReason? @relation(fields: [rejectionReasonId], references: [id])
+  rejectionReasonId String?         @db.Uuid // Must be type SERVICE_REJECTION
+  rejectionNote    String?
+  respondedAt      DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([workOrderId, userId])
+  @@map("work_order_assignments")
+}
+
+// ─── Work Order Task Snapshots ────────────────────────────────────────────────
+// Created when a WorkOrder is created. Snapshots EVENTUAL tasks at that moment.
+// task_executions point here, NOT to the master tasks table.
+
+model WorkOrderTask {
+  id                               String    @id @default(uuid()) @db.Uuid
+  workOrder                        WorkOrder @relation(fields: [workOrderId], references: [id])
+  workOrderId                      String    @db.Uuid
+  task                             Task      @relation(fields: [taskId], references: [id])
+  taskId                           String    @db.Uuid // Traceability only — do not use for execution
+  nameSnapshot                     String    @db.VarChar(300)
+  requiresPhotoSnapshot            Boolean
+  allowsObservationSnapshot        Boolean
+  requiresRejectionReasonSnapshot  Boolean
+  sortOrder                        Int       @default(0)
+  createdAt                        DateTime  @default(now())
+
+  customFieldSnapshots WorkOrderTaskCustomField[]
+  taskExecutions       TaskExecutionRecord[]
+
+  @@map("work_order_tasks")
+}
+
+model WorkOrderTaskCustomField {
+  id                String        @id @default(uuid()) @db.Uuid
+  workOrderTask     WorkOrderTask @relation(fields: [workOrderTaskId], references: [id])
+  workOrderTaskId   String        @db.Uuid
+  originalField     TaskCustomField @relation(fields: [originalFieldId], references: [id])
+  originalFieldId   String        @db.Uuid
+  labelSnapshot     String        @db.VarChar(200)
+  fieldType         String        @db.VarChar(50)
+  isRequired        Boolean
+  showInReport      Boolean
+  sortOrder         Int           @default(0)
+  createdAt         DateTime      @default(now())
+
+  optionSnapshots        WorkOrderTaskCustomFieldOption[]
+  taskExecutionFieldValues TaskExecutionFieldValue[]
+
+  @@map("work_order_task_custom_fields")
+}
+
+model WorkOrderTaskCustomFieldOption {
+  id                     String                   @id @default(uuid()) @db.Uuid
+  workOrderTaskField     WorkOrderTaskCustomField @relation(fields: [workOrderTaskFieldId], references: [id])
+  workOrderTaskFieldId   String                   @db.Uuid
+  originalOption         TaskCustomFieldOption    @relation(fields: [originalOptionId], references: [id])
+  originalOptionId       String                   @db.Uuid
+  labelSnapshot          String                   @db.VarChar(200)
+  sortOrder              Int                      @default(0)
+  createdAt              DateTime                 @default(now())
+
+  @@map("work_order_task_custom_field_options")
+}
+
+// ─── Service Executions ───────────────────────────────────────────────────────
+
+model ServiceExecution {
+  id                String                 @id @default(uuid()) @db.Uuid
+  workOrder         WorkOrder              @relation(fields: [workOrderId], references: [id])
+  workOrderId       String                 @db.Uuid
+  attendance        Attendance             @relation(fields: [attendanceId], references: [id])
+  attendanceId      String                 @db.Uuid
+  startedBy         User                   @relation(fields: [startedById], references: [id])
+  startedById       String                 @db.Uuid
+  startedAt         DateTime
+  occurredAt        DateTime? // Device timestamp (offline)
+  completedAt       DateTime?
+  status            ServiceExecutionStatus @default(IN_PROGRESS)
+  clientOperationId String?                @unique @db.VarChar(100)
+  isOfflineSynced   Boolean                @default(false)
+  version           Int                    @default(1)
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  taskExecutions TaskExecutionRecord[]
+  participants   ServiceExecutionParticipant[]
+
+  // Enforces one shared ServiceExecution per WorkOrder at the DB level,
+  // preventing duplicate creations under concurrent /start requests.
+  @@unique([workOrderId])
+  @@map("service_executions")
+}
+
+// One row per worker who participates in a shared ServiceExecution.
+// The ServiceExecution is created by the first user who calls /start.
+// Subsequent workers call /join and get a row here.
+model ServiceExecutionParticipant {
+  id                 String           @id @default(uuid()) @db.Uuid
+  serviceExecution   ServiceExecution @relation(fields: [serviceExecutionId], references: [id])
+  serviceExecutionId String           @db.Uuid
+  user               User             @relation(fields: [userId], references: [id])
+  userId             String           @db.Uuid
+  attendance         Attendance       @relation(fields: [attendanceId], references: [id])
+  attendanceId       String           @db.Uuid
+  joinedAt           DateTime
+  createdAt          DateTime         @default(now())
+
+  @@unique([serviceExecutionId, userId])
+  @@map("service_execution_participants")
+}
+
+// ─── Task Executions ─────────────────────────────────────────────────────────
+// CONSTRAINT: exactly one of (workOrderTaskId, periodicTaskInstanceId) must be non-null.
+// workOrderTaskId → task inside a work order (snapshot)
+// periodicTaskInstanceId → standalone periodic task execution
+
+model TaskExecutionRecord {
+  id                      String                @id @default(uuid()) @db.Uuid
+  serviceExecution        ServiceExecution?     @relation(fields: [serviceExecutionId], references: [id])
+  serviceExecutionId      String?               @db.Uuid // Non-null when workOrderTaskId is set
+  workOrderTask           WorkOrderTask?        @relation(fields: [workOrderTaskId], references: [id])
+  workOrderTaskId         String?               @db.Uuid
+  periodicTaskInstance    PeriodicTaskInstance? @relation(fields: [periodicTaskInstanceId], references: [id])
+  periodicTaskInstanceId  String?               @db.Uuid
+  status                  TaskExecutionStatus
+  rejectionReason         RejectionReason?      @relation(fields: [rejectionReasonId], references: [id])
+  rejectionReasonId       String?               @db.Uuid // Must be type TASK_NOT_DONE
+  observation             String?
+  executedBy              User                  @relation(fields: [executedById], references: [id])
+  executedById            String                @db.Uuid
+  executedAt              DateTime
+  occurredAt              DateTime? // Device timestamp (offline)
+  clientOperationId       String?               @unique @db.VarChar(100)
+  isOfflineSynced         Boolean               @default(false)
+  version                 Int                   @default(1)
+
+  photos      TaskPhoto[]
+  fieldValues TaskExecutionFieldValue[]
+
+  // One execution record per task per service execution — checklist is shared
+  // among all participants; no two workers can mark the same task independently.
+  @@unique([serviceExecutionId, workOrderTaskId])
+  @@map("task_executions")
+}
+
+model TaskExecutionFieldValue {
+  id                 String                   @id @default(uuid()) @db.Uuid
+  taskExecution      TaskExecutionRecord      @relation(fields: [taskExecutionId], references: [id])
+  taskExecutionId    String                   @db.Uuid
+  snapshotField      WorkOrderTaskCustomField @relation(fields: [snapshotFieldId], references: [id])
+  snapshotFieldId    String                   @db.Uuid // Points to snapshot, not master field
+  selectedOptionIds  String[]                 @db.Uuid // IDs of WorkOrderTaskCustomFieldOption
+  createdAt          DateTime                 @default(now())
+
+  @@map("task_execution_field_values")
+}
+
+model TaskPhoto {
+  id              String              @id @default(uuid()) @db.Uuid
+  taskExecution   TaskExecutionRecord @relation(fields: [taskExecutionId], references: [id])
+  taskExecutionId String              @db.Uuid
+  storageKey      String              @db.VarChar(500)
+  storageBucket   String              @db.VarChar(100) @default("steam-genie")
+  fileSizeBytes   Int?
+  widthPx         Int?
+  heightPx        Int?
+  capturedAt      DateTime?
+  uploadedAt      DateTime            @default(now())
+  gpsLat          Decimal?            @db.Decimal(10, 7)
+  gpsLng          Decimal?            @db.Decimal(10, 7)
+  uploadedBy      User                @relation(fields: [uploadedById], references: [id])
+  uploadedById    String              @db.Uuid
+  deletedAt       DateTime?
+  deletedBy       String?             @db.Uuid
+  createdAt       DateTime            @default(now())
+
+  @@map("task_photos")
+}
+
+// ─── Periodic Task Instances ──────────────────────────────────────────────────
+
+model PeriodicTaskInstance {
+  id          String                     @id @default(uuid()) @db.Uuid
+  task        Task                       @relation(fields: [taskId], references: [id])
+  taskId      String                     @db.Uuid
+  periodLabel String                     @db.VarChar(50) // e.g. "2026-06", "2026-W23"
+  periodStart DateTime                   @db.Date
+  periodEnd   DateTime                   @db.Date
+  status      PeriodicTaskInstanceStatus @default(PENDING)
+  completedAt DateTime?
+  createdAt   DateTime                   @default(now())
+  updatedAt   DateTime                   @updatedAt
+
+  // Executions are accessed via TaskExecutionRecord.periodicTaskInstanceId
+  taskExecutions TaskExecutionRecord[]
+
+  @@unique([taskId, periodLabel])
+  @@map("periodic_task_instances")
+}
+
+// ─── Sync & Conflicts ─────────────────────────────────────────────────────────
+
+model SyncConflict {
+  id                String                       @id @default(uuid()) @db.Uuid
+  clientOperationId String                       @db.VarChar(100)
+  deviceId          String                       @db.VarChar(200)
+  user              User                         @relation("SyncConflictUser", fields: [userId], references: [id])
+  userId            String                       @db.Uuid
+  entityType        String                       @db.VarChar(50)
+  entityId          String                       @db.Uuid
+  operationType     String                       @db.VarChar(50)
+  payload           Json
+  occurredAt        DateTime
+  receivedAt        DateTime                     @default(now())
+  conflictReason    String
+  resolvedBy        User?                        @relation("SyncConflictResolvedBy", fields: [resolvedById], references: [id])
+  resolvedById      String?                      @db.Uuid
+  resolvedAt        DateTime?
+  createdAt         DateTime                     @default(now())
+
+  @@index([userId, resolvedAt])
+  @@map("sync_conflicts")
+}
+
+// ─── Integration & Audit ─────────────────────────────────────────────────────
+
+model IntegrationInboundLog {
+  id                  String               @id @default(uuid()) @db.Uuid
+  source              String               @db.VarChar(100)
+  headers             Json
+  rawBody             String
+  receivedAt          DateTime             @default(now())
+  status              IntegrationLogStatus @default(RECEIVED)
+  parsedPayload       Json?
+  errorMessage        String?
+  relatedReservation  Reservation?         @relation(fields: [relatedReservationId], references: [id])
+  relatedReservationId String?             @db.Uuid
+  relatedWorkOrder    WorkOrder?           @relation(fields: [relatedWorkOrderId], references: [id])
+  relatedWorkOrderId  String?              @db.Uuid
+  createdAt           DateTime             @default(now())
+
+  @@index([source, status, receivedAt])
+  @@map("integration_inbound_logs")
+}
+
+model DomainEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  eventType   String    @db.VarChar(100) // e.g. work_order.assigned
+  entityType  String    @db.VarChar(50)
+  entityId    String    @db.Uuid
+  payload     Json
+  triggeredBy User?     @relation(fields: [triggeredById], references: [id])
+  triggeredById String? @db.Uuid
+  occurredAt  DateTime  @default(now())
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@map("domain_events")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  user       User?    @relation(fields: [userId], references: [id])
+  userId     String?  @db.Uuid
+  action     String   @db.VarChar(100) // CREATE | UPDATE | DELETE | CORRECT
+  entityType String   @db.VarChar(50)
+  entityId   String   @db.Uuid
+  oldValue   Json?
+  newValue   Json?
+  ip         String?  @db.VarChar(45)
+  deviceId   String?  @db.VarChar(200)
+  createdAt  DateTime @default(now())
+
+  @@map("audit_log")
+}
