@@ -1,6 +1,12 @@
+import { IsOptional, IsUUID, IsString, MaxLength } from 'class-validator';
+
 export class RejectWorkOrderDto {
-  /** ID of a RejectionReason with type = SERVICE_REJECTION. Optional. */
+  @IsOptional()
+  @IsUUID()
   rejectionReasonId?: string;
-  /** Free-text note to accompany the rejection. Optional. */
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
   rejectionNote?: string;
 }
