@@ -3,6 +3,7 @@
   NotFoundException,
   ForbiddenException,
   ConflictException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { WorkOrderStatus } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
@@ -307,6 +308,97 @@ export class WorkOrdersService {
         data: { status: WorkOrderStatus.IN_PROGRESS, startedAt: now },
       });
     });
+
+    return this.findOne(id);
+  }
+
+  // ─── COMPLETE ─────────────────────────────────────────────────────────────
+
+  async complete(id: string, user: AuthUser) {
+    const wo = await this.assertWorkOrderExists(id);
+
+    if (wo.status !== WorkOrderStatus.IN_PROGRESS) {
+      throw new ConflictException(
+        `Work order cannot be completed from status ${wo.status}`,
+      );
+    }
+
+    const serviceExecution = await this.prisma.serviceExecution.findFirst({
+      where: { workOrderId: id },
+      include: { participants: { select: { userId: true } } },
+    });
+    if (!serviceExecution) {
+      throw new ConflictException('No active service execution found for this work order');
+    }
+
+    // User must be a participant OR have manager/admin role for the building
+    const isParticipant = serviceExecution.participants.some((p) => p.userId === user.id);
+    if (!isParticipant) {
+      const hasManagerRole = await this.prisma.userBuildingRole.findFirst({
+        where: {
+          userId: user.id,
+          role: { name: { in: ['admin', 'manager'] } },
+          OR: [{ buildingId: null }, { buildingId: wo.buildingId }],
+        },
+      });
+      if (!hasManagerRole) {
+        throw new ForbiddenException(
+          'You must be a participant in this execution or have a manager/admin role to complete it',
+        );
+      }
+    }
+
+    // ── Checklist validation ─────────────────────────────────────────────────
+    const workOrderTasks = await this.prisma.workOrderTask.findMany({
+      where: { workOrderId: id },
+      select: {
+        id: true,
+        nameSnapshot: true,
+        requiresRejectionReasonSnapshot: true,
+        // TODO: requiresPhotoSnapshot — validate photo presence once upload is implemented
+        taskExecutions: {
+          where: { serviceExecutionId: serviceExecution.id },
+          select: { id: true, status: true, rejectionReasonId: true },
+        },
+      },
+    });
+
+    const unexecutedTasks = workOrderTasks.filter(
+      (wot) => wot.taskExecutions.length === 0,
+    );
+    if (unexecutedTasks.length > 0) {
+      throw new ConflictException(
+        `${unexecutedTasks.length} task(s) not executed yet: ` +
+        unexecutedTasks.map((t) => `"${t.nameSnapshot}"`).join(', ') +
+        '. Mark all tasks before completing the work order.',
+      );
+    }
+
+    for (const wot of workOrderTasks) {
+      const exec = wot.taskExecutions[0];
+      if (
+        exec.status === 'NOT_DONE' &&
+        wot.requiresRejectionReasonSnapshot &&
+        !exec.rejectionReasonId
+      ) {
+        throw new UnprocessableEntityException(
+          `Task "${wot.nameSnapshot}" is marked NOT_DONE but requires a rejection reason.`,
+        );
+      }
+    }
+
+    // ── Close service execution and work order ────────────────────────────────
+    const now = new Date();
+    await this.prisma.$transaction([
+      this.prisma.serviceExecution.update({
+        where: { id: serviceExecution.id },
+        data: { status: 'COMPLETED', completedAt: now },
+      }),
+      this.prisma.workOrder.update({
+        where: { id },
+        data: { status: WorkOrderStatus.COMPLETED, completedAt: now },
+      }),
+    ]);
 
     return this.findOne(id);
   }

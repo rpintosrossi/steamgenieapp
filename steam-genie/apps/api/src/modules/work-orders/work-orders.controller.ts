@@ -71,4 +71,12 @@ export class WorkOrdersController {
   ) {
     return this.workOrdersService.start(id, req.user);
   }
+
+  @Post(':id/complete')
+  complete(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req: { user: AuthUser },
+  ) {
+    return this.workOrdersService.complete(id, req.user);
+  }
 }
