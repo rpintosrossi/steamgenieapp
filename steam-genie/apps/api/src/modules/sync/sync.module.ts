@@ -1,6 +1,14 @@
 import { Module } from '@nestjs/common';
 import { SyncController } from './sync.controller';
 import { SyncService } from './sync.service';
+import { AttendanceModule } from '../attendance/attendance.module';
+import { WorkOrdersModule } from '../work-orders/work-orders.module';
+import { ServiceExecutionsModule } from '../service-executions/service-executions.module';
 
-@Module({ controllers: [SyncController], providers: [SyncService], exports: [SyncService] })
+@Module({
+  imports: [AttendanceModule, WorkOrdersModule, ServiceExecutionsModule],
+  controllers: [SyncController],
+  providers: [SyncService],
+  exports: [SyncService],
+})
 export class SyncModule {}

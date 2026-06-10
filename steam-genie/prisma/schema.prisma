@@ -129,6 +129,7 @@ model User {
   correctedAttendances            Attendance[]  @relation("CorrectedBy")
   resolvedConflicts SyncConflict[]  @relation("SyncConflictResolvedBy")
   ownedConflicts    SyncConflict[]  @relation("SyncConflictUser")
+  syncOperations    SyncOperation[]
   auditLogs         AuditLog[]
   domainEvents      DomainEvent[]
 
@@ -660,6 +661,32 @@ model PeriodicTaskInstance {
 
   @@unique([taskId, periodLabel])
   @@map("periodic_task_instances")
+}
+
+// ─── Sync Operations ──────────────────────────────────────────────────────────
+// Append-only log of every offline operation received via POST /sync/batch.
+// clientOperationId is unique — guarantees idempotency across retries.
+
+model SyncOperation {
+  id                String    @id @default(uuid()) @db.Uuid
+  user              User      @relation(fields: [userId], references: [id])
+  userId            String    @db.Uuid
+  deviceId          String    @db.VarChar(200)
+  clientOperationId String    @unique @db.VarChar(200)
+  operationType     String    @db.VarChar(50)  // CHECK_IN | CHECK_OUT | START_WORK_ORDER | MARK_WORK_ORDER_TASK | COMPLETE_WORK_ORDER
+  entityType        String    @db.VarChar(50)
+  entityId          String?   @db.Uuid
+  payload           Json
+  result            Json?
+  status            String    @db.VarChar(20)  // SUCCESS | FAILED | ALREADY_PROCESSED | CONFLICT
+  errorCode         String?   @db.VarChar(100)
+  errorMessage      String?
+  occurredAt        DateTime
+  processedAt       DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@map("sync_operations")
 }
 
 // ─── Sync & Conflicts ─────────────────────────────────────────────────────────
