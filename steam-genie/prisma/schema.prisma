@@ -616,23 +616,27 @@ model TaskExecutionFieldValue {
 }
 
 model TaskPhoto {
-  id              String              @id @default(uuid()) @db.Uuid
-  taskExecution   TaskExecutionRecord @relation(fields: [taskExecutionId], references: [id])
-  taskExecutionId String              @db.Uuid
-  storageKey      String              @db.VarChar(500)
-  storageBucket   String              @db.VarChar(100) @default("steam-genie")
-  fileSizeBytes   Int?
-  widthPx         Int?
-  heightPx        Int?
-  capturedAt      DateTime?
-  uploadedAt      DateTime            @default(now())
-  gpsLat          Decimal?            @db.Decimal(10, 7)
-  gpsLng          Decimal?            @db.Decimal(10, 7)
-  uploadedBy      User                @relation(fields: [uploadedById], references: [id])
-  uploadedById    String              @db.Uuid
-  deletedAt       DateTime?
-  deletedBy       String?             @db.Uuid
-  createdAt       DateTime            @default(now())
+  id               String              @id @default(uuid()) @db.Uuid
+  taskExecution    TaskExecutionRecord @relation(fields: [taskExecutionId], references: [id])
+  taskExecutionId  String              @db.Uuid
+  storageKey       String              @db.VarChar(500)
+  storageBucket    String              @db.VarChar(100) @default("local")
+  originalFilename String?             @db.VarChar(500)
+  mimeType         String?             @db.VarChar(100)
+  fileSizeBytes    Int?
+  widthPx          Int?
+  heightPx         Int?
+  capturedAt       DateTime?
+  uploadedAt       DateTime            @default(now())
+  gpsLat           Decimal?            @db.Decimal(10, 7)
+  gpsLng           Decimal?            @db.Decimal(10, 7)
+  deviceId         String?             @db.VarChar(200)
+  clientOperationId String?            @unique @db.VarChar(100)
+  uploadedBy       User                @relation(fields: [uploadedById], references: [id])
+  uploadedById     String              @db.Uuid
+  deletedAt        DateTime?
+  deletedBy        String?             @db.Uuid
+  createdAt        DateTime            @default(now())
 
   @@map("task_photos")
 }

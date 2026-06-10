@@ -4,16 +4,32 @@
   ForbiddenException,
   ConflictException,
   UnprocessableEntityException,
+  BadRequestException,
 } from '@nestjs/common';
 import { TaskExecutionStatus } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { StorageService } from '../../infrastructure/storage/storage.service';
 import { MarkTaskDto } from './dto/mark-task.dto';
-import type { TaskExecutionItem } from './dto/task-execution-item';
+import { UploadPhotoDto } from './dto/upload-photo.dto';
+import type { TaskExecutionItem, TaskPhotoSummary } from './dto/task-execution-item';
 import type { AuthUser } from '@steam-genie/shared-types';
+
+const ALLOWED_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+];
+
+const MAX_FILE_SIZE_BYTES = 8 * 1024 * 1024; // 8 MB
 
 @Injectable()
 export class ServiceExecutionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   // ─── GET TASKS ────────────────────────────────────────────────────────────
   // IMPORTANT: task marking uses workOrderTaskId (snapshot), never taskId directly.
@@ -44,7 +60,19 @@ export class ServiceExecutionsService {
             executedBy: { select: { fullName: true } },
             executedAt: true,
             observation: true,
-            _count: { select: { photos: true } },
+            photos: {
+              where: { deletedAt: null },
+              orderBy: { createdAt: 'asc' },
+              select: {
+                id: true,
+                storageKey: true,
+                originalFilename: true,
+                mimeType: true,
+                fileSizeBytes: true,
+                capturedAt: true,
+                uploadedAt: true,
+              },
+            },
           },
         },
       },
@@ -67,7 +95,8 @@ export class ServiceExecutionsService {
               executedByName: exec.executedBy.fullName,
               executedAt: exec.executedAt,
               observation: exec.observation,
-              photoCount: exec._count.photos,
+              photoCount: exec.photos.length,
+              photos: exec.photos.map((p) => this.formatPhoto(p)),
             }
           : null,
       };
@@ -92,7 +121,6 @@ export class ServiceExecutionsService {
 
     await this.assertIsParticipantOrManager(se, user);
 
-    // Verify workOrderTask belongs to this service execution's work order
     const wot = await this.prisma.workOrderTask.findFirst({
       where: { id: workOrderTaskId, workOrderId: se.workOrderId },
       select: {
@@ -103,9 +131,7 @@ export class ServiceExecutionsService {
       },
     });
     if (!wot) {
-      throw new NotFoundException(
-        'Work order task not found for this service execution',
-      );
+      throw new NotFoundException('Work order task not found for this service execution');
     }
 
     // Rule 13: task already marked — no one can overwrite it
@@ -113,7 +139,7 @@ export class ServiceExecutionsService {
       where: {
         serviceExecutionId_workOrderTaskId: { serviceExecutionId, workOrderTaskId },
       },
-      select: { id: true, executedById: true },
+      select: { id: true },
     });
     if (existing) {
       throw new ConflictException(
@@ -121,7 +147,6 @@ export class ServiceExecutionsService {
       );
     }
 
-    // Validate NOT_DONE + requiresRejectionReasonSnapshot → must provide rejectionReasonId
     if (
       dto.status === TaskExecutionStatus.NOT_DONE &&
       wot.requiresRejectionReasonSnapshot &&
@@ -132,7 +157,6 @@ export class ServiceExecutionsService {
       );
     }
 
-    // Validate rejectionReasonId type if provided
     if (dto.rejectionReasonId) {
       const reason = await this.prisma.rejectionReason.findFirst({
         where: { id: dto.rejectionReasonId, type: 'TASK_NOT_DONE', isActive: true },
@@ -144,14 +168,13 @@ export class ServiceExecutionsService {
       }
     }
 
-    // Validate observation only allowed when allowsObservationSnapshot = true
     if (dto.observation && !wot.allowsObservationSnapshot) {
       throw new UnprocessableEntityException(
         `Task "${wot.nameSnapshot}" does not allow observations.`,
       );
     }
 
-    const record = await this.prisma.taskExecutionRecord.create({
+    return this.prisma.taskExecutionRecord.create({
       data: {
         serviceExecutionId,
         workOrderTaskId,
@@ -162,8 +185,118 @@ export class ServiceExecutionsService {
         executedAt: new Date(),
       },
     });
+  }
 
-    return record;
+  // ─── UPLOAD PHOTO ─────────────────────────────────────────────────────────
+
+  async uploadPhoto(
+    serviceExecutionId: string,
+    workOrderTaskId: string,
+    file: Express.Multer.File,
+    dto: UploadPhotoDto,
+    user: AuthUser,
+  ) {
+    if (!file) throw new BadRequestException('Photo file is required (field: photo)');
+
+    // Validate MIME type
+    if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+      throw new BadRequestException(
+        `Invalid file type "${file.mimetype}". Allowed: ${ALLOWED_MIME_TYPES.join(', ')}`,
+      );
+    }
+
+    // Validate file size
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      throw new BadRequestException(
+        `File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum: 8 MB.`,
+      );
+    }
+
+    const se = await this.findServiceExecution(serviceExecutionId);
+
+    if (se.status !== 'IN_PROGRESS') {
+      throw new ConflictException('Service execution is not in progress');
+    }
+
+    await this.assertIsParticipantOrManager(se, user);
+
+    // Verify workOrderTask belongs to this SE's work order
+    const wot = await this.prisma.workOrderTask.findFirst({
+      where: { id: workOrderTaskId, workOrderId: se.workOrderId },
+      select: { id: true, nameSnapshot: true },
+    });
+    if (!wot) throw new NotFoundException('Work order task not found for this service execution');
+
+    // Task must be marked before uploading photos
+    const taskExecution = await this.prisma.taskExecutionRecord.findUnique({
+      where: {
+        serviceExecutionId_workOrderTaskId: { serviceExecutionId, workOrderTaskId },
+      },
+      select: { id: true },
+    });
+    if (!taskExecution) {
+      throw new ConflictException(
+        `Task "${wot.nameSnapshot}" must be marked (DONE/NOT_DONE/SKIPPED) before uploading photos.`,
+      );
+    }
+
+    // Idempotency: if clientOperationId already uploaded, return existing
+    if (dto.clientOperationId) {
+      const existing = await this.prisma.taskPhoto.findFirst({
+        where: { clientOperationId: dto.clientOperationId },
+      });
+      if (existing) return this.formatPhoto(existing);
+    }
+
+    // Generate unique key and upload
+    const key = this.storage.generateKey(file.originalname, file.mimetype);
+    await this.storage.upload(key, file.buffer, file.mimetype);
+
+    const photo = await this.prisma.taskPhoto.create({
+      data: {
+        taskExecutionId: taskExecution.id,
+        storageKey: key,
+        storageBucket: 'local',
+        originalFilename: file.originalname,
+        mimeType: file.mimetype,
+        fileSizeBytes: file.size,
+        capturedAt: dto.capturedAt ? new Date(dto.capturedAt) : null,
+        gpsLat: dto.gpsLat ?? null,
+        gpsLng: dto.gpsLng ?? null,
+        deviceId: dto.deviceId ?? null,
+        clientOperationId: dto.clientOperationId ?? null,
+        uploadedById: user.id,
+      },
+    });
+
+    return this.formatPhoto(photo);
+  }
+
+  // ─── GET PHOTOS FOR TASK ──────────────────────────────────────────────────
+
+  async getPhotosForTask(
+    serviceExecutionId: string,
+    workOrderTaskId: string,
+    user: AuthUser,
+  ): Promise<TaskPhotoSummary[]> {
+    const se = await this.findServiceExecution(serviceExecutionId);
+    await this.assertIsParticipantOrManager(se, user);
+
+    const taskExecution = await this.prisma.taskExecutionRecord.findUnique({
+      where: {
+        serviceExecutionId_workOrderTaskId: { serviceExecutionId, workOrderTaskId },
+      },
+      select: { id: true },
+    });
+
+    if (!taskExecution) return [];
+
+    const photos = await this.prisma.taskPhoto.findMany({
+      where: { taskExecutionId: taskExecution.id, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return photos.map((p) => this.formatPhoto(p));
   }
 
   // ─── PRIVATE HELPERS ──────────────────────────────────────────────────────
@@ -208,5 +341,28 @@ export class ServiceExecutionsService {
         'You must be a participant in this execution or have a manager/admin role to access it',
       );
     }
+  }
+
+  private formatPhoto(
+    p: {
+      id: string;
+      storageKey: string;
+      originalFilename?: string | null;
+      mimeType?: string | null;
+      fileSizeBytes?: number | null;
+      capturedAt?: Date | null;
+      uploadedAt: Date;
+    },
+  ): TaskPhotoSummary {
+    return {
+      id: p.id,
+      storageKey: p.storageKey,
+      url: this.storage.getPublicUrl(p.storageKey),
+      originalFilename: p.originalFilename ?? null,
+      mimeType: p.mimeType ?? null,
+      fileSizeBytes: p.fileSizeBytes ?? null,
+      capturedAt: p.capturedAt ?? null,
+      uploadedAt: p.uploadedAt,
+    };
   }
 }

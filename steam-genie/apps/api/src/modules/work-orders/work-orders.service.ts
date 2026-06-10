@@ -355,10 +355,15 @@ export class WorkOrdersService {
         id: true,
         nameSnapshot: true,
         requiresRejectionReasonSnapshot: true,
-        // TODO: requiresPhotoSnapshot — validate photo presence once upload is implemented
+        requiresPhotoSnapshot: true,
         taskExecutions: {
           where: { serviceExecutionId: serviceExecution.id },
-          select: { id: true, status: true, rejectionReasonId: true },
+          select: {
+            id: true,
+            status: true,
+            rejectionReasonId: true,
+            _count: { select: { photos: { where: { deletedAt: null } } } },
+          },
         },
       },
     });
@@ -376,6 +381,7 @@ export class WorkOrdersService {
 
     for (const wot of workOrderTasks) {
       const exec = wot.taskExecutions[0];
+
       if (
         exec.status === 'NOT_DONE' &&
         wot.requiresRejectionReasonSnapshot &&
@@ -383,6 +389,12 @@ export class WorkOrdersService {
       ) {
         throw new UnprocessableEntityException(
           `Task "${wot.nameSnapshot}" is marked NOT_DONE but requires a rejection reason.`,
+        );
+      }
+
+      if (wot.requiresPhotoSnapshot && exec._count.photos === 0) {
+        throw new ConflictException(
+          `Task "${wot.nameSnapshot}" requires at least one photo.`,
         );
       }
     }

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { join } from 'path';
 import { PrismaModule } from './infrastructure/prisma/prisma.module';
+import { StorageModule } from './infrastructure/storage/storage.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { BuildingsModule } from './modules/buildings/buildings.module';
@@ -15,6 +16,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { TaskPhotosModule } from './modules/task-photos/task-photos.module';
 import { HealthModule } from './health/health.module';
 
 @Module({
@@ -24,6 +26,7 @@ import { HealthModule } from './health/health.module';
       envFilePath: join(__dirname, '../../../.env'),
     }),
     PrismaModule,
+    StorageModule,
     HealthModule,
     AuthModule,
     UsersModule,
@@ -38,6 +41,7 @@ import { HealthModule } from './health/health.module';
     IntegrationsModule,
     DashboardModule,
     AuditModule,
+    TaskPhotosModule,
   ],
 })
 export class AppModule {}

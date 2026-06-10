@@ -34,3 +34,6 @@ pnpm-debug.log*
 
 # Test coverage
 coverage/
+
+# Local file uploads (runtime storage — use S3/R2 in production)
+apps/api/uploads/
