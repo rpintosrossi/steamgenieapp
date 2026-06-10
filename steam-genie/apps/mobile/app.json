@@ -14,8 +14,29 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      ["expo-sqlite", { "enableFTS": true }]
+      ["expo-sqlite", { "enableFTS": true }],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Steam Genie necesita tu ubicación para registrar el fichaje en el edificio."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Steam Genie necesita acceso a tu galería para adjuntar fotos a las tareas.",
+          "cameraPermission": "Steam Genie necesita acceso a la cámara para tomar fotos de las tareas."
+        }
+      ]
     ],
+    "android": {
+      "permissions": [
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE"
+      ]
+    },
     "experiments": {
       "typedRoutes": true
     }

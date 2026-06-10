@@ -9,33 +9,58 @@ export function getDatabase(): SQLite.SQLiteDatabase {
   return db;
 }
 
+const CURRENT_DB_VERSION = 2;
+
 export async function initDatabase(): Promise<void> {
   const database = getDatabase();
 
-  await database.execAsync(`
-    PRAGMA journal_mode = WAL;
+  await database.execAsync('PRAGMA journal_mode = WAL;');
 
-    CREATE TABLE IF NOT EXISTS sync_queue (
-      id TEXT PRIMARY KEY,
-      operation TEXT NOT NULL,
-      entity TEXT NOT NULL,
-      payload TEXT NOT NULL,
-      client_operation_id TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      attempts INTEGER NOT NULL DEFAULT 0,
-      last_error TEXT
-    );
+  const versionRow = await database.getFirstAsync<{ user_version: number }>(
+    'PRAGMA user_version;',
+  );
+  const currentVersion = versionRow?.user_version ?? 0;
 
-    CREATE TABLE IF NOT EXISTS work_orders_cache (
-      id TEXT PRIMARY KEY,
-      data TEXT NOT NULL,
-      synced_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
+  if (currentVersion < CURRENT_DB_VERSION) {
+    // Fresh install or outdated schema — recreate tables
+    await database.execAsync(`
+      DROP TABLE IF EXISTS sync_queue;
+      DROP TABLE IF EXISTS work_orders_cache;
+      DROP TABLE IF EXISTS tasks_cache;
+      DROP TABLE IF EXISTS photo_queue;
 
-    CREATE TABLE IF NOT EXISTS tasks_cache (
-      id TEXT PRIMARY KEY,
-      data TEXT NOT NULL,
-      synced_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
+      CREATE TABLE sync_queue (
+        id                  TEXT PRIMARY KEY,
+        client_operation_id TEXT UNIQUE NOT NULL,
+        operation_type      TEXT NOT NULL,
+        entity_type         TEXT NOT NULL,
+        entity_id           TEXT,
+        payload             TEXT NOT NULL,
+        occurred_at         TEXT NOT NULL,
+        status              TEXT NOT NULL DEFAULT 'PENDING',
+        attempts            INTEGER NOT NULL DEFAULT 0,
+        last_error          TEXT,
+        created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE photo_queue (
+        id                    TEXT PRIMARY KEY,
+        client_operation_id   TEXT UNIQUE NOT NULL,
+        service_execution_id  TEXT NOT NULL,
+        work_order_task_id    TEXT NOT NULL,
+        local_uri             TEXT NOT NULL,
+        mime_type             TEXT NOT NULL DEFAULT 'image/jpeg',
+        captured_at           TEXT,
+        gps_lat               REAL,
+        gps_lng               REAL,
+        device_id             TEXT,
+        status                TEXT NOT NULL DEFAULT 'PENDING',
+        attempts              INTEGER NOT NULL DEFAULT 0,
+        last_error            TEXT,
+        created_at            TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      PRAGMA user_version = ${CURRENT_DB_VERSION};
+    `);
+  }
 }

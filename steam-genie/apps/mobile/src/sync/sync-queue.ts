@@ -1,44 +1,205 @@
 import { getDatabase } from '../db/database';
-import type { SyncQueueEntry } from '@steam-genie/shared-types';
+
+export type SyncOperationType =
+  | 'CHECK_IN'
+  | 'CHECK_OUT'
+  | 'START_WORK_ORDER'
+  | 'MARK_WORK_ORDER_TASK'
+  | 'COMPLETE_WORK_ORDER';
+
+export interface SyncQueueItem {
+  id: string;
+  clientOperationId: string;
+  operationType: SyncOperationType;
+  entityType: string;
+  entityId: string | null;
+  payload: Record<string, unknown>;
+  occurredAt: string;
+  status: 'PENDING' | 'SUCCESS' | 'FAILED' | 'ALREADY_PROCESSED' | 'CONFLICT';
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+}
+
+export interface PhotoQueueItem {
+  id: string;
+  clientOperationId: string;
+  serviceExecutionId: string;
+  workOrderTaskId: string;
+  localUri: string;
+  mimeType: string;
+  capturedAt: string | null;
+  gpsLat: number | null;
+  gpsLng: number | null;
+  deviceId: string | null;
+  status: 'PENDING' | 'SUCCESS' | 'FAILED';
+  attempts: number;
+  lastError: string | null;
+}
+
+// ─── SyncQueue ────────────────────────────────────────────────────────────────
 
 export class SyncQueue {
-  private db = getDatabase();
+  private get db() {
+    return getDatabase();
+  }
 
-  async enqueue(entry: Omit<SyncQueueEntry, 'attempts' | 'lastError'>): Promise<void> {
+  async enqueue(item: Omit<SyncQueueItem, 'attempts' | 'lastError' | 'createdAt' | 'status'>): Promise<void> {
     await this.db.runAsync(
-      `INSERT INTO sync_queue (id, operation, entity, payload, client_operation_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO sync_queue
+         (id, client_operation_id, operation_type, entity_type, entity_id, payload, occurred_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
-        entry.id,
-        entry.operation,
-        entry.entity,
-        JSON.stringify(entry.payload),
-        entry.clientOperationId,
-        entry.createdAt,
+        item.id,
+        item.clientOperationId,
+        item.operationType,
+        item.entityType,
+        item.entityId ?? null,
+        JSON.stringify(item.payload),
+        item.occurredAt,
       ],
     );
   }
 
-  async dequeue(limit = 50): Promise<SyncQueueEntry[]> {
-    const rows = await this.db.getAllAsync<Record<string, string>>(
-      `SELECT * FROM sync_queue ORDER BY created_at ASC LIMIT ?`,
+  async getPending(limit = 50): Promise<SyncQueueItem[]> {
+    const rows = await this.db.getAllAsync<Record<string, string | number>>(
+      `SELECT * FROM sync_queue WHERE status = 'PENDING' ORDER BY created_at ASC LIMIT ?`,
       [limit],
     );
     return rows.map((row) => ({
-      ...row,
-      payload: JSON.parse(row.payload),
+      id: String(row.id),
+      clientOperationId: String(row.client_operation_id),
+      operationType: String(row.operation_type) as SyncOperationType,
+      entityType: String(row.entity_type),
+      entityId: row.entity_id ? String(row.entity_id) : null,
+      payload: JSON.parse(String(row.payload)),
+      occurredAt: String(row.occurred_at),
+      status: String(row.status) as SyncQueueItem['status'],
       attempts: Number(row.attempts),
-    })) as unknown as SyncQueueEntry[];
+      lastError: row.last_error ? String(row.last_error) : null,
+      createdAt: String(row.created_at),
+    }));
   }
 
-  async remove(id: string): Promise<void> {
-    await this.db.runAsync(`DELETE FROM sync_queue WHERE id = ?`, [id]);
+  async countPending(): Promise<number> {
+    const row = await this.db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) as count FROM sync_queue WHERE status = 'PENDING'`,
+    );
+    return row?.count ?? 0;
   }
 
-  async markFailed(id: string, error: string): Promise<void> {
+  async markSuccess(clientOperationId: string): Promise<void> {
     await this.db.runAsync(
-      `UPDATE sync_queue SET attempts = attempts + 1, last_error = ? WHERE id = ?`,
-      [error, id],
+      `UPDATE sync_queue SET status = 'SUCCESS' WHERE client_operation_id = ?`,
+      [clientOperationId],
     );
   }
+
+  async markFailed(clientOperationId: string, error: string): Promise<void> {
+    await this.db.runAsync(
+      `UPDATE sync_queue
+       SET status = 'FAILED', attempts = attempts + 1, last_error = ?
+       WHERE client_operation_id = ?`,
+      [error, clientOperationId],
+    );
+  }
+
+  async markStatus(
+    clientOperationId: string,
+    status: SyncQueueItem['status'],
+  ): Promise<void> {
+    await this.db.runAsync(
+      `UPDATE sync_queue SET status = ? WHERE client_operation_id = ?`,
+      [status, clientOperationId],
+    );
+  }
+
+  // Reset FAILED to PENDING for retry
+  async requeueFailed(): Promise<void> {
+    await this.db.runAsync(
+      `UPDATE sync_queue SET status = 'PENDING' WHERE status = 'FAILED' AND attempts < 5`,
+    );
+  }
+}
+
+// ─── PhotoQueue ───────────────────────────────────────────────────────────────
+
+export class PhotoQueue {
+  private get db() {
+    return getDatabase();
+  }
+
+  async enqueue(item: Omit<PhotoQueueItem, 'attempts' | 'lastError' | 'status'>): Promise<void> {
+    await this.db.runAsync(
+      `INSERT OR IGNORE INTO photo_queue
+         (id, client_operation_id, service_execution_id, work_order_task_id,
+          local_uri, mime_type, captured_at, gps_lat, gps_lng, device_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        item.id,
+        item.clientOperationId,
+        item.serviceExecutionId,
+        item.workOrderTaskId,
+        item.localUri,
+        item.mimeType,
+        item.capturedAt ?? null,
+        item.gpsLat ?? null,
+        item.gpsLng ?? null,
+        item.deviceId ?? null,
+      ],
+    );
+  }
+
+  async getPending(): Promise<PhotoQueueItem[]> {
+    const rows = await this.db.getAllAsync<Record<string, string | number>>(
+      `SELECT * FROM photo_queue WHERE status = 'PENDING' ORDER BY created_at ASC LIMIT 20`,
+    );
+    return rows.map((row) => ({
+      id: String(row.id),
+      clientOperationId: String(row.client_operation_id),
+      serviceExecutionId: String(row.service_execution_id),
+      workOrderTaskId: String(row.work_order_task_id),
+      localUri: String(row.local_uri),
+      mimeType: String(row.mime_type),
+      capturedAt: row.captured_at ? String(row.captured_at) : null,
+      gpsLat: row.gps_lat != null ? Number(row.gps_lat) : null,
+      gpsLng: row.gps_lng != null ? Number(row.gps_lng) : null,
+      deviceId: row.device_id ? String(row.device_id) : null,
+      status: String(row.status) as PhotoQueueItem['status'],
+      attempts: Number(row.attempts),
+      lastError: row.last_error ? String(row.last_error) : null,
+    }));
+  }
+
+  async countPending(): Promise<number> {
+    const row = await this.db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) as count FROM photo_queue WHERE status = 'PENDING'`,
+    );
+    return row?.count ?? 0;
+  }
+
+  async markSuccess(clientOperationId: string): Promise<void> {
+    await this.db.runAsync(
+      `UPDATE photo_queue SET status = 'SUCCESS' WHERE client_operation_id = ?`,
+      [clientOperationId],
+    );
+  }
+
+  async markFailed(clientOperationId: string, error: string): Promise<void> {
+    await this.db.runAsync(
+      `UPDATE photo_queue
+       SET status = 'FAILED', attempts = attempts + 1, last_error = ?
+       WHERE client_operation_id = ?`,
+      [error, clientOperationId],
+    );
+  }
+}
+
+// ─── Singletons ────────────────────────────────────────────────────────────────
+export const syncQueue = new SyncQueue();
+export const photoQueue = new PhotoQueue();
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+export function generateClientId(): string {
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 }
