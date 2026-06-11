@@ -5,7 +5,10 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "steamgenie",
-    "platforms": ["ios", "android"],
+    "platforms": [
+      "ios",
+      "android"
+    ],
     "userInterfaceStyle": "automatic",
     "splash": {
       "resizeMode": "contain",
@@ -14,7 +17,6 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      ["expo-sqlite", { "enableFTS": true }],
       [
         "expo-location",
         {
@@ -27,7 +29,9 @@
           "photosPermission": "Steam Genie necesita acceso a tu galería para adjuntar fotos a las tareas.",
           "cameraPermission": "Steam Genie necesita acceso a la cámara para tomar fotos de las tareas."
         }
-      ]
+      ],
+      "expo-font",
+      "expo-sqlite"
     ],
     "android": {
       "permissions": [

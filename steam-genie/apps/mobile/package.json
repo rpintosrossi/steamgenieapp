@@ -10,29 +10,31 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@expo/vector-icons": "^14.0.0",
-    "@react-native-community/netinfo": "^11.3.0",
+    "@expo/metro-runtime": "^6.1.2",
+    "@expo/vector-icons": "^15.1.1",
+    "@react-native-community/netinfo": "^11.4.1",
     "@steam-genie/shared-constants": "workspace:*",
     "@steam-genie/shared-types": "workspace:*",
     "@steam-genie/shared-validators": "workspace:*",
-    "expo": "~51.0.0",
-    "expo-constants": "~16.0.0",
-    "expo-font": "~12.0.0",
-    "expo-image-picker": "^56.0.16",
-    "expo-location": "^56.0.16",
-    "expo-router": "~3.5.0",
-    "expo-secure-store": "~13.0.0",
-    "expo-sqlite": "~14.0.0",
-    "expo-status-bar": "~1.12.0",
-    "react": "18.2.0",
-    "react-native": "0.74.0",
+    "expo": "~54.0.0",
+    "expo-constants": "~18.0.13",
+    "expo-font": "~14.0.12",
+    "expo-image-picker": "~17.0.11",
+    "expo-linking": "^8.0.12",
+    "expo-location": "~19.0.8",
+    "expo-router": "~6.0.24",
+    "expo-secure-store": "~15.0.8",
+    "expo-sqlite": "~16.0.10",
+    "expo-status-bar": "~3.0.9",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
     "socket.io-client": "^4.7.5",
     "zod": "^3.22.0",
     "zustand": "^4.5.2"
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",
-    "@types/react": "~18.2.0",
-    "typescript": "^5.4.0"
+    "@types/react": "~19.1.17",
+    "typescript": "~5.9.3"
   }
 }
