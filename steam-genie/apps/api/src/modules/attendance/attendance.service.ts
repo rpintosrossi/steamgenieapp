@@ -40,7 +40,8 @@ export class AttendanceService {
 
     if (openAttendance) {
       if (openAttendance.buildingId === dto.buildingId) {
-        throw new ConflictException('You already have an active check-in for this building');
+        // Idempotente: reintento o UI desincronizada — devolver el fichaje activo.
+        return this.findById(openAttendance.id);
       }
       // Open attendance in a different building — auto-close as forgotten checkout
       await this.prisma.attendance.update({

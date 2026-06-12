@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import * as Location from 'expo-location';
 import { apiService, ApiRequestError } from '../services/api.service';
 import { syncQueue, generateClientId } from '../sync/sync-queue';
@@ -15,6 +15,7 @@ export type AttendanceAction = 'check-in' | 'check-out';
 export function useAttendance(isOnline: boolean) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const actionInFlight = useRef(false);
 
   const { selectedBuilding, prefetchData, updateActiveAttendance, syncActiveAttendance } =
     useBuildingStore();
@@ -65,6 +66,8 @@ export function useAttendance(isOnline: boolean) {
       setError('No hay edificio seleccionado.');
       return false;
     }
+    if (actionInFlight.current) return false;
+    actionInFlight.current = true;
     setIsLoading(true);
     setError(null);
 
@@ -128,11 +131,14 @@ export function useAttendance(isOnline: boolean) {
       setError(e instanceof Error ? e.message : 'Error al fichar entrada');
       return false;
     } finally {
+      actionInFlight.current = false;
       setIsLoading(false);
     }
   }, [selectedBuilding, isOnline, updateActiveAttendance, syncActiveAttendance, setStatus]);
 
   const checkOut = useCallback(async (): Promise<boolean> => {
+    if (actionInFlight.current) return false;
+    actionInFlight.current = true;
     setIsLoading(true);
     setError(null);
 
@@ -176,6 +182,7 @@ export function useAttendance(isOnline: boolean) {
       setError(e instanceof Error ? e.message : 'Error al fichar salida');
       return false;
     } finally {
+      actionInFlight.current = false;
       setIsLoading(false);
     }
   }, [isOnline, updateActiveAttendance, syncActiveAttendance, setStatus]);
