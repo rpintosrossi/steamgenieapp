@@ -8,8 +8,9 @@
     "ios": "expo run:ios",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "build:apk": "eas build --platform android --profile preview",
-    "build:android": "eas build --platform android --profile production"
+    "build:apk": "pnpm dlx eas-cli build --platform android --profile preview",
+    "build:android": "pnpm dlx eas-cli build --platform android --profile production",
+    "eas-build-post-install": "bash ../../scripts/eas-build-packages.sh"
   },
   "dependencies": {
     "@expo/metro-runtime": "^6.1.2",
@@ -42,7 +43,6 @@
   "devDependencies": {
     "@babel/core": "^7.24.0",
     "@types/react": "~19.1.17",
-    "eas-cli": "^16.3.2",
     "typescript": "~5.9.3"
   }
 }

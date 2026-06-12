@@ -11,8 +11,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://10.0.2.2:4000",
-        "EXPO_USE_METRO_WORKSPACE_ROOT": "1"
+        "EXPO_PUBLIC_API_URL": "http://10.0.2.2:4000"
       }
     },
     "preview": {
@@ -21,20 +20,16 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://steamgenie.up.railway.app",
-        "EXPO_USE_METRO_WORKSPACE_ROOT": "1"
-      },
-      "prebuildCommand": "cd ../.. && pnpm --filter \"./packages/*\" build"
+        "EXPO_PUBLIC_API_URL": "https://steamgenie.up.railway.app"
+      }
     },
     "production": {
       "android": {
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://steamgenie.up.railway.app",
-        "EXPO_USE_METRO_WORKSPACE_ROOT": "1"
-      },
-      "prebuildCommand": "cd ../.. && pnpm --filter \"./packages/*\" build"
+        "EXPO_PUBLIC_API_URL": "https://steamgenie.up.railway.app"
+      }
     }
   }
 }
