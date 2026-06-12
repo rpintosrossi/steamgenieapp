@@ -3,6 +3,7 @@ import type { ExpoConfig } from 'expo/config';
 export default (): ExpoConfig => ({
   name: 'Steam Genie',
   slug: 'steam-genie',
+  owner: 'rpintosrossi',
   version: '1.0.0',
   orientation: 'portrait',
   scheme: 'steamgenie',
