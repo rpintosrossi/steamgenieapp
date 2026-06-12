@@ -1,0 +1,8 @@
+# Fallback si EAS resuelve desde steam-genie/
+**/.next/**
+**/.turbo/**
+**/dist/**
+**/node_modules/**
+**/.expo/**
+apps/api/uploads/
+apps/web/.next/

@@ -1,0 +1,21 @@
+# EAS upload ignore (monorepo APP-SG → steam-genie mobile build)
+# Evita EPERM en .next/trace cuando corre el dev server de web.
+
+**/.next/**
+**/.turbo/**
+**/dist/**
+**/node_modules/**
+**/.expo/**
+**/.pnpm-store/**
+**/coverage/**
+**/*.log
+
+steam-genie/apps/api/uploads/
+steam-genie/apps/web/.next/
+steam-genie/apps/mobile/android/
+steam-genie/apps/mobile/ios/
+
+# No necesarios para el build mobile
+*.pdf
+DocumentacionAPP-SG.txt
+Especificación*
