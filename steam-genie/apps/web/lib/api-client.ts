@@ -1,4 +1,11 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+function resolveApiBaseUrl(): string {
+  const raw = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+  const trimmed = raw.trim().replace(/\/$/, '');
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 type FetchOptions = RequestInit & { skipAuth?: boolean; _retried?: boolean };
 
