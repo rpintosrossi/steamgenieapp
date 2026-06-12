@@ -15,11 +15,13 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { BuildingAccessGuard } from '../../common/guards/building-access.guard';
 import { RequiredRoles } from '../../common/decorators/required-roles.decorator';
 import { BuildingScoped } from '../../common/decorators/building-scoped.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { BuildingsService } from './buildings.service';
 import { QueryBuildingsDto } from './dto/query-buildings.dto';
 import { CreateBuildingDto } from './dto/create-building.dto';
 import { UpdateBuildingDto } from './dto/update-building.dto';
 import { CreateFloorDto } from './dto/create-floor.dto';
+import type { AuthUser } from '@steam-genie/shared-types';
 
 @Controller('buildings')
 @UseGuards(JwtAuthGuard, RolesGuard, BuildingAccessGuard)
@@ -27,9 +29,9 @@ export class BuildingsController {
   constructor(private readonly buildingsService: BuildingsService) {}
 
   @Get()
-  @RequiredRoles('admin', 'manager')
-  findAll(@Query() query: QueryBuildingsDto) {
-    return this.buildingsService.findAll(query);
+  @RequiredRoles('admin', 'manager', 'cleaner')
+  findAll(@Query() query: QueryBuildingsDto, @CurrentUser() user: AuthUser) {
+    return this.buildingsService.findAll(query, user);
   }
 
   @Post()

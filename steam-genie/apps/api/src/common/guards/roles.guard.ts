@@ -58,18 +58,32 @@ export class RolesGuard implements CanActivate {
         userId: user.id,
         role: { name: { in: requiredRoles } },
         OR: [
-          { buildingId: null }, // global role
+          { buildingId: null },
           ...(buildingId ? [{ buildingId }] : []),
         ],
       },
     });
 
-    if (!match) {
-      throw new ForbiddenException(
-        'You do not have the required role for this action.',
-      );
+    if (match) return true;
+
+    // Sin edificio en la request: alcanza con tener el rol en cualquier edificio (p. ej. app móvil).
+    if (!buildingId) {
+      const anyAssignment = await this.prisma.userBuildingRole.findFirst({
+        where: {
+          userId: user.id,
+          role: { name: { in: requiredRoles } },
+        },
+      });
+      if (anyAssignment) return true;
     }
 
-    return true;
+    // Compat: primaryRole denormalizado
+    if (requiredRoles.includes(user.primaryRole as RoleName)) {
+      return true;
+    }
+
+    throw new ForbiddenException(
+      'No tenés el rol necesario para esta acción.',
+    );
   }
 }

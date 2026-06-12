@@ -41,6 +41,11 @@ export class ServiceExecutionsService {
     const se = await this.findServiceExecution(serviceExecutionId);
     await this.assertIsParticipantOrManager(se, user);
 
+    const workOrder = await this.prisma.workOrder.findFirst({
+      where: { id: se.workOrderId },
+      select: { zoneId: true, subzoneId: true },
+    });
+
     const workOrderTasks = await this.prisma.workOrderTask.findMany({
       where: { workOrderId: se.workOrderId },
       orderBy: { sortOrder: 'asc' },
@@ -51,6 +56,7 @@ export class ServiceExecutionsService {
         requiresPhotoSnapshot: true,
         allowsObservationSnapshot: true,
         requiresRejectionReasonSnapshot: true,
+        task: { select: { zoneId: true, subzoneId: true } },
         taskExecutions: {
           where: { serviceExecutionId },
           select: {
@@ -87,6 +93,8 @@ export class ServiceExecutionsService {
         requiresPhotoSnapshot: wot.requiresPhotoSnapshot,
         allowsObservationSnapshot: wot.allowsObservationSnapshot,
         requiresRejectionReasonSnapshot: wot.requiresRejectionReasonSnapshot,
+        zoneId: wot.task.zoneId ?? workOrder?.zoneId ?? null,
+        subzoneId: wot.task.subzoneId ?? workOrder?.subzoneId ?? null,
         execution: exec
           ? {
               id: exec.id,
@@ -121,6 +129,13 @@ export class ServiceExecutionsService {
 
     await this.assertIsParticipantOrManager(se, user);
 
+    if (dto.clientOperationId) {
+      const existingByOp = await this.prisma.taskExecutionRecord.findUnique({
+        where: { clientOperationId: dto.clientOperationId },
+      });
+      if (existingByOp) return existingByOp;
+    }
+
     const wot = await this.prisma.workOrderTask.findFirst({
       where: { id: workOrderTaskId, workOrderId: se.workOrderId },
       select: {
@@ -134,18 +149,11 @@ export class ServiceExecutionsService {
       throw new NotFoundException('Work order task not found for this service execution');
     }
 
-    // Rule 13: task already marked — no one can overwrite it
     const existing = await this.prisma.taskExecutionRecord.findUnique({
       where: {
         serviceExecutionId_workOrderTaskId: { serviceExecutionId, workOrderTaskId },
       },
-      select: { id: true },
     });
-    if (existing) {
-      throw new ConflictException(
-        'This task has already been marked. The checklist is shared and marks cannot be overwritten.',
-      );
-    }
 
     if (
       dto.status === TaskExecutionStatus.NOT_DONE &&
@@ -174,15 +182,31 @@ export class ServiceExecutionsService {
       );
     }
 
+    const executionData = {
+      status: dto.status,
+      rejectionReasonId:
+        dto.status === TaskExecutionStatus.NOT_DONE ? (dto.rejectionReasonId ?? null) : null,
+      observation: dto.observation ?? null,
+      executedById: user.id,
+      executedAt: new Date(),
+      clientOperationId: dto.clientOperationId ?? null,
+    };
+
+    if (existing) {
+      return this.prisma.taskExecutionRecord.update({
+        where: { id: existing.id },
+        data: {
+          ...executionData,
+          version: { increment: 1 },
+        },
+      });
+    }
+
     return this.prisma.taskExecutionRecord.create({
       data: {
         serviceExecutionId,
         workOrderTaskId,
-        status: dto.status,
-        rejectionReasonId: dto.rejectionReasonId ?? null,
-        observation: dto.observation ?? null,
-        executedById: user.id,
-        executedAt: new Date(),
+        ...executionData,
       },
     });
   }
@@ -256,7 +280,7 @@ export class ServiceExecutionsService {
       data: {
         taskExecutionId: taskExecution.id,
         storageKey: key,
-        storageBucket: 'local',
+        storageBucket: this.storage.storageBucketName,
         originalFilename: file.originalname,
         mimeType: file.mimetype,
         fileSizeBytes: file.size,

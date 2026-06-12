@@ -5,6 +5,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { ReservationSource, WorkOrderType, WorkOrderStatus } from '@prisma/client';
+import { calendarDateFromInstant } from '@steam-genie/shared-constants';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { UpdateReservationDto } from './dto/update-reservation.dto';
@@ -107,29 +108,10 @@ export class ReservationsService {
       throw new BadRequestException('deadlineAt must be after checkoutAt');
     }
 
-    // Validate hierarchy
-    await this.validateHierarchy(dto.buildingId, dto.floorId, dto.zoneId, dto.subzoneId);
+    // Validate hierarchy (reservation is zone-scoped, not subzone)
+    await this.validateHierarchy(dto.buildingId, dto.floorId, dto.zoneId);
 
-    // Find EVENTUAL tasks for this zone/subzone
-    const eventualTasks = await this.prisma.task.findMany({
-      where: {
-        buildingId: dto.buildingId,
-        zoneId: dto.zoneId,
-        subzoneId: dto.subzoneId ?? null,
-        frequency: 'EVENTUAL',
-        isActive: true,
-        deletedAt: null,
-      },
-      include: {
-        customFields: {
-          orderBy: { sortOrder: 'asc' as const },
-          include: {
-            options: { orderBy: { sortOrder: 'asc' as const } },
-          },
-        },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
+    const eventualTasks = await this.findEventualTasksForZone(dto.buildingId, dto.zoneId);
 
     const hasNoTasks = eventualTasks.length === 0;
 
@@ -140,10 +122,8 @@ export class ReservationsService {
     });
     const woTitle = `Limpieza checkout – ${zone?.name ?? dto.zoneId}`;
 
-    // Scheduled date = checkout date
-    const scheduledDate = new Date(
-      Date.UTC(checkoutAt.getUTCFullYear(), checkoutAt.getUTCMonth(), checkoutAt.getUTCDate()),
-    );
+    // Día calendario del checkout (zona AR), no la fecha UTC del instante.
+    const scheduledDate = calendarDateFromInstant(checkoutAt);
 
     // ── Transaction ──────────────────────────────────────────────────────────
     const result = await this.prisma.$transaction(async (tx) => {
@@ -153,7 +133,7 @@ export class ReservationsService {
           buildingId: dto.buildingId,
           floorId: dto.floorId,
           zoneId: dto.zoneId,
-          subzoneId: dto.subzoneId ?? null,
+          subzoneId: null,
           externalId: dto.externalId ?? null,
           guestName: dto.guestName ?? null,
           checkinAt,
@@ -170,7 +150,7 @@ export class ReservationsService {
           buildingId: dto.buildingId,
           floorId: dto.floorId,
           zoneId: dto.zoneId,
-          subzoneId: dto.subzoneId ?? null,
+          subzoneId: null,
           title: woTitle,
           scheduledDate,
           scheduledTime: checkoutAt,
@@ -230,7 +210,7 @@ export class ReservationsService {
     return {
       ...result,
       warning: hasNoTasks
-        ? 'No EVENTUAL tasks configured for this zone/subzone'
+        ? 'No EVENTUAL tasks configured for this zone or its subzones'
         : undefined,
     };
   }
@@ -277,18 +257,45 @@ export class ReservationsService {
 
   // ─── PRIVATE HELPERS ──────────────────────────────────────────────────────
 
+  /** Tareas EVENTUAL de la zona: directas en la zona + todas las subzonas hijas. */
+  private async findEventualTasksForZone(buildingId: string, zoneId: string) {
+    const subzones = await this.prisma.subzone.findMany({
+      where: { zoneId, buildingId, deletedAt: null },
+      select: { id: true },
+    });
+    const subzoneIds = subzones.map((s) => s.id);
+
+    return this.prisma.task.findMany({
+      where: {
+        buildingId,
+        zoneId,
+        frequency: 'EVENTUAL',
+        isActive: true,
+        deletedAt: null,
+        OR: [
+          { subzoneId: null },
+          ...(subzoneIds.length > 0 ? [{ subzoneId: { in: subzoneIds } }] : []),
+        ],
+      },
+      include: {
+        customFields: {
+          orderBy: { sortOrder: 'asc' as const },
+          include: {
+            options: { orderBy: { sortOrder: 'asc' as const } },
+          },
+        },
+      },
+      orderBy: [{ subzoneId: 'asc' }, { createdAt: 'asc' }],
+    });
+  }
+
   private async assertReservationExists(id: string) {
     const r = await this.prisma.reservation.findFirst({ where: { id } });
     if (!r) throw new NotFoundException('Reservation not found');
     return r;
   }
 
-  private async validateHierarchy(
-    buildingId: string,
-    floorId: string,
-    zoneId: string,
-    subzoneId?: string,
-  ) {
+  private async validateHierarchy(buildingId: string, floorId: string, zoneId: string) {
     const building = await this.prisma.building.findFirst({
       where: { id: buildingId, deletedAt: null },
     });
@@ -303,12 +310,5 @@ export class ReservationsService {
       where: { id: zoneId, buildingId, floorId, deletedAt: null },
     });
     if (!zone) throw new NotFoundException('Zone not found or does not belong to this floor');
-
-    if (subzoneId) {
-      const subzone = await this.prisma.subzone.findFirst({
-        where: { id: subzoneId, zoneId, deletedAt: null },
-      });
-      if (!subzone) throw new NotFoundException('Subzone not found or does not belong to this zone');
-    }
   }
 }

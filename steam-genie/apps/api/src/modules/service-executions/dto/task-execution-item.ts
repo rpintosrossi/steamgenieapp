@@ -27,6 +27,8 @@ export interface TaskExecutionItem {
   requiresPhotoSnapshot: boolean;
   allowsObservationSnapshot: boolean;
   requiresRejectionReasonSnapshot: boolean;
+  zoneId: string | null;
+  subzoneId: string | null;
   /** null when the task has not been executed yet */
   execution: TaskExecutionDetail | null;
 }

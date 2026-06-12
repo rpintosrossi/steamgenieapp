@@ -15,4 +15,10 @@ export class MarkTaskDto {
   @IsString()
   @MaxLength(1000)
   observation?: string;
+
+  /** Idempotency key for offline sync (prevents duplicate marks). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  clientOperationId?: string;
 }

@@ -12,6 +12,7 @@
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequiredRoles } from '../../common/decorators/required-roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { WorkOrderAssignmentGuard } from './guards/work-order-assignment.guard';
 import { WorkOrdersService } from './work-orders.service';
 import { QueryWorkOrdersDto } from './dto/query-work-orders.dto';
@@ -26,14 +27,14 @@ export class WorkOrdersController {
 
   @Get()
   @RequiredRoles('admin', 'manager', 'cleaner')
-  findAll(@Query() query: QueryWorkOrdersDto) {
-    return this.workOrdersService.findAll(query);
+  findAll(@Query() query: QueryWorkOrdersDto, @CurrentUser() user: AuthUser) {
+    return this.workOrdersService.findAll(query, user);
   }
 
   @Get(':id')
   @RequiredRoles('admin', 'manager', 'cleaner')
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.workOrdersService.findOne(id);
+  findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
+    return this.workOrdersService.findOne(id, user);
   }
 
   @Post(':id/assign')

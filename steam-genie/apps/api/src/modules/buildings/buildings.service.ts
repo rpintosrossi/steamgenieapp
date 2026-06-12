@@ -10,6 +10,7 @@ import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
 import { CreateSubzoneDto } from './dto/create-subzone.dto';
 import { UpdateSubzoneDto } from './dto/update-subzone.dto';
+import type { AuthUser } from '@steam-genie/shared-types';
 
 @Injectable()
 export class BuildingsService {
@@ -17,7 +18,7 @@ export class BuildingsService {
 
   // ─── Buildings ─────────────────────────────────────────────────────────────
 
-  async findAll(query: QueryBuildingsDto) {
+  async findAll(query: QueryBuildingsDto, user?: AuthUser) {
     const { page = 1, limit = 20, search } = query;
     const skip = (page - 1) * limit;
 
@@ -29,6 +30,36 @@ export class BuildingsService {
         { city: { contains: search, mode: 'insensitive' } },
         { address: { contains: search, mode: 'insensitive' } },
       ];
+    }
+
+    if (user) {
+      const hasGlobalStaffAccess = await this.prisma.userBuildingRole.findFirst({
+        where: {
+          userId: user.id,
+          buildingId: null,
+          role: { name: { in: ['admin', 'manager'] } },
+        },
+      });
+
+      if (!hasGlobalStaffAccess) {
+        const assignments = await this.prisma.userBuildingRole.findMany({
+          where: { userId: user.id, buildingId: { not: null } },
+          select: { buildingId: true },
+        });
+        const buildingIds = [
+          ...new Set(
+            assignments
+              .map((item) => item.buildingId)
+              .filter((id): id is string => Boolean(id)),
+          ),
+        ];
+
+        if (buildingIds.length === 0) {
+          return { data: [], total: 0, page, limit, pages: 0 };
+        }
+
+        where.id = { in: buildingIds };
+      }
     }
 
     const [data, total] = await Promise.all([

@@ -4,6 +4,7 @@ import { useBuildingStore } from '../../src/stores/building.store';
 import { useSyncStore } from '../../src/stores/sync.store';
 import { syncManager } from '../../src/sync/sync-manager';
 import { COLORS } from '../../src/constants/colors';
+import { BrandedScreenHeader } from '../../src/components/BrandedScreenHeader';
 
 const STATUS_LABELS: Record<string, string> = {
   synced: 'Sincronizado',
@@ -25,11 +26,9 @@ export default function ProfileScreen() {
   const { user, logout } = useAuthStore();
   const { selectedBuilding, clearBuilding } = useBuildingStore();
   const { status, pendingCount, lastSyncedAt, errorMessage } = useSyncStore();
-  const accessToken = useAuthStore((s) => s.accessToken);
 
   async function handleSync() {
-    if (!accessToken) return;
-    await syncManager.syncAll(accessToken);
+    await syncManager.syncAll();
   }
 
   async function handleChangeBuilding() {
@@ -65,9 +64,7 @@ export default function ProfileScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Perfil</Text>
-      </View>
+      <BrandedScreenHeader title="Mi perfil" subtitle={user?.fullName ?? undefined} />
 
       {/* User info */}
       <View style={styles.card}>
@@ -120,12 +117,6 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
   content: { paddingBottom: 40 },
-  header: {
-    padding: 20,
-    paddingTop: 60,
-    backgroundColor: COLORS.primary,
-  },
-  headerTitle: { fontSize: 22, fontWeight: '700', color: '#fff' },
   card: {
     backgroundColor: COLORS.surface,
     margin: 16,

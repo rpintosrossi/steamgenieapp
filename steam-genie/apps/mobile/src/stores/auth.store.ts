@@ -4,6 +4,28 @@ import type { AuthUser, TokenPair } from '@steam-genie/shared-types';
 
 const ACCESS_TOKEN_KEY = 'sg_access_token';
 const REFRESH_TOKEN_KEY = 'sg_refresh_token';
+const USER_KEY = 'sg_user';
+
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:4000';
+
+let refreshInFlight: Promise<string | null> | null = null;
+
+function isAccessTokenExpired(token: string, skewMs = 60_000): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1] ?? '')) as { exp?: number };
+    if (!payload.exp) return true;
+    return payload.exp * 1000 < Date.now() + skewMs;
+  } catch {
+    return true;
+  }
+}
+
+async function persistTokens(accessToken: string, refreshToken: string): Promise<void> {
+  await Promise.all([
+    SecureStore.setItemAsync(ACCESS_TOKEN_KEY, accessToken),
+    SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken),
+  ]);
+}
 
 interface AuthState {
   accessToken: string | null;
@@ -13,6 +35,8 @@ interface AuthState {
   login: (dni: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   hydrate: () => Promise<void>;
+  refreshTokens: () => Promise<string | null>;
+  ensureAccessToken: () => Promise<string | null>;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -22,22 +46,77 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isHydrated: false,
 
   hydrate: async () => {
-    const [accessToken, refreshToken] = await Promise.all([
+    const [accessToken, refreshToken, userJson] = await Promise.all([
       SecureStore.getItemAsync(ACCESS_TOKEN_KEY),
       SecureStore.getItemAsync(REFRESH_TOKEN_KEY),
+      SecureStore.getItemAsync(USER_KEY),
     ]);
-    set({ accessToken, refreshToken, isHydrated: true });
+    let user: AuthUser | null = null;
+    if (userJson) {
+      try {
+        user = JSON.parse(userJson) as AuthUser;
+      } catch {
+        user = null;
+      }
+    }
+    set({ accessToken, refreshToken, user, isHydrated: true });
+
+    if (refreshToken && (!accessToken || isAccessTokenExpired(accessToken))) {
+      await get().refreshTokens();
+    }
+  },
+
+  refreshTokens: async () => {
+    if (refreshInFlight) return refreshInFlight;
+
+    refreshInFlight = (async () => {
+      const { refreshToken } = get();
+      if (!refreshToken) return null;
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken }),
+        });
+
+        if (!res.ok) {
+          await get().logout();
+          return null;
+        }
+
+        const data = (await res.json()) as TokenPair;
+        await persistTokens(data.accessToken, data.refreshToken);
+        set({ accessToken: data.accessToken, refreshToken: data.refreshToken });
+        return data.accessToken;
+      } catch {
+        await get().logout();
+        return null;
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
+
+    return refreshInFlight;
+  },
+
+  ensureAccessToken: async () => {
+    const { accessToken, refreshToken } = get();
+    if (accessToken && !isAccessTokenExpired(accessToken)) {
+      return accessToken;
+    }
+    if (refreshToken) {
+      return get().refreshTokens();
+    }
+    return null;
   },
 
   login: async (dni: string, password: string) => {
-    const res = await fetch(
-      `${process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000'}/auth/login`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dni, password }),
-      },
-    );
+    const res = await fetch(`${API_BASE_URL}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dni, password }),
+    });
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -47,8 +126,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const data: TokenPair & { user: AuthUser } = await res.json();
 
     await Promise.all([
-      SecureStore.setItemAsync(ACCESS_TOKEN_KEY, data.accessToken),
-      SecureStore.setItemAsync(REFRESH_TOKEN_KEY, data.refreshToken),
+      persistTokens(data.accessToken, data.refreshToken),
+      SecureStore.setItemAsync(USER_KEY, JSON.stringify(data.user)),
     ]);
 
     set({ accessToken: data.accessToken, refreshToken: data.refreshToken, user: data.user });
@@ -58,6 +137,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     await Promise.all([
       SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY),
       SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY),
+      SecureStore.deleteItemAsync(USER_KEY),
     ]);
     set({ accessToken: null, refreshToken: null, user: null });
   },

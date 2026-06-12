@@ -5,6 +5,7 @@ export type SyncOperationType =
   | 'CHECK_OUT'
   | 'START_WORK_ORDER'
   | 'MARK_WORK_ORDER_TASK'
+  | 'MARK_PERIODIC_TASK'
   | 'COMPLETE_WORK_ORDER';
 
 export interface SyncQueueItem {

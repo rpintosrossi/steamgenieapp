@@ -2,9 +2,16 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
+  ConflictException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
-import { TaskFrequency, PeriodicTaskInstanceStatus } from '@prisma/client';
+import { TaskFrequency, PeriodicTaskInstanceStatus, TaskExecutionStatus } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { StorageService } from '../../infrastructure/storage/storage.service';
+import { MarkTaskDto } from '../service-executions/dto/mark-task.dto';
+import { UploadPhotoDto } from '../service-executions/dto/upload-photo.dto';
+import type { AuthUser } from '@steam-genie/shared-types';
 import { QueryTasksDto } from './dto/query-tasks.dto';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -36,9 +43,22 @@ const TASK_SELECT = {
   updatedAt: true,
 };
 
+const ALLOWED_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+];
+
+const MAX_FILE_SIZE_BYTES = 8 * 1024 * 1024;
+
 @Injectable()
 export class TasksService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   // ─── TASKS ─────────────────────────────────────────────────────────────────
 
@@ -233,11 +253,172 @@ export class TasksService {
     );
 
     // Upsert periodic_task_instances for each due task
-    const results = await Promise.all(
+    const instances = await Promise.all(
       dueTasks.map((task) => this.upsertPeriodicInstance(task, todayDate)),
     );
 
-    return results;
+    return Promise.all(instances.map((instance) => this.enrichPeriodicInstance(instance)));
+  }
+
+  // ─── MARK PERIODIC INSTANCE ────────────────────────────────────────────────
+
+  async markPeriodicInstance(instanceId: string, dto: MarkTaskDto, user: AuthUser) {
+    const instance = await this.prisma.periodicTaskInstance.findUnique({
+      where: { id: instanceId },
+      include: { task: { select: { ...TASK_SELECT, deletedAt: true } } },
+    });
+    if (!instance || instance.task.deletedAt) {
+      throw new NotFoundException('Periodic task instance not found');
+    }
+
+    await this.assertBuildingAccess(user.id, instance.task.buildingId);
+    await this.assertActiveAttendance(user.id, instance.task.buildingId);
+
+    if (dto.clientOperationId) {
+      const existingByOp = await this.prisma.taskExecutionRecord.findUnique({
+        where: { clientOperationId: dto.clientOperationId },
+      });
+      if (existingByOp) return existingByOp;
+    }
+
+    const existing = await this.prisma.taskExecutionRecord.findFirst({
+      where: { periodicTaskInstanceId: instanceId },
+    });
+
+    if (
+      dto.status === TaskExecutionStatus.NOT_DONE &&
+      instance.task.requiresRejectionReason &&
+      !dto.rejectionReasonId
+    ) {
+      throw new UnprocessableEntityException(
+        `Task "${instance.task.name}" requires a rejection reason when marked as NOT_DONE.`,
+      );
+    }
+
+    if (dto.rejectionReasonId) {
+      const reason = await this.prisma.rejectionReason.findFirst({
+        where: { id: dto.rejectionReasonId, type: 'TASK_NOT_DONE', isActive: true },
+      });
+      if (!reason) {
+        throw new NotFoundException(
+          'Rejection reason not found or not valid for task execution (must be type TASK_NOT_DONE)',
+        );
+      }
+    }
+
+    if (dto.observation && !instance.task.allowsObservation) {
+      throw new UnprocessableEntityException(
+        `Task "${instance.task.name}" does not allow observations.`,
+      );
+    }
+
+    const executionData = {
+      status: dto.status,
+      rejectionReasonId:
+        dto.status === TaskExecutionStatus.NOT_DONE ? (dto.rejectionReasonId ?? null) : null,
+      observation: dto.observation ?? null,
+      executedById: user.id,
+      executedAt: new Date(),
+      clientOperationId: dto.clientOperationId ?? null,
+    };
+
+    const record = await this.prisma.$transaction(async (tx) => {
+      const saved = existing
+        ? await tx.taskExecutionRecord.update({
+            where: { id: existing.id },
+            data: {
+              ...executionData,
+              version: { increment: 1 },
+            },
+          })
+        : await tx.taskExecutionRecord.create({
+            data: {
+              periodicTaskInstanceId: instanceId,
+              ...executionData,
+            },
+          });
+
+      await tx.periodicTaskInstance.update({
+        where: { id: instanceId },
+        data: {
+          status: PeriodicTaskInstanceStatus.COMPLETED,
+          completedAt: new Date(),
+        },
+      });
+
+      return saved;
+    });
+
+    return record;
+  }
+
+  async uploadPeriodicPhoto(
+    instanceId: string,
+    file: Express.Multer.File,
+    dto: UploadPhotoDto,
+    user: AuthUser,
+  ) {
+    if (!file) throw new BadRequestException('Photo file is required (field: photo)');
+
+    if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+      throw new BadRequestException(
+        `Invalid file type "${file.mimetype}". Allowed: ${ALLOWED_MIME_TYPES.join(', ')}`,
+      );
+    }
+
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      throw new BadRequestException(
+        `File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum: 8 MB.`,
+      );
+    }
+
+    const instance = await this.prisma.periodicTaskInstance.findUnique({
+      where: { id: instanceId },
+      include: { task: { select: { buildingId: true, name: true } } },
+    });
+    if (!instance) throw new NotFoundException('Periodic task instance not found');
+
+    await this.assertBuildingAccess(user.id, instance.task.buildingId);
+    await this.assertActiveAttendance(user.id, instance.task.buildingId);
+
+    const taskExecution = await this.prisma.taskExecutionRecord.findFirst({
+      where: { periodicTaskInstanceId: instanceId },
+      select: { id: true },
+    });
+    if (!taskExecution) {
+      throw new ConflictException(
+        `Task "${instance.task.name}" must be marked before uploading photos.`,
+      );
+    }
+
+    if (dto.clientOperationId) {
+      const existing = await this.prisma.taskPhoto.findFirst({
+        where: { clientOperationId: dto.clientOperationId },
+      });
+      if (existing) return this.formatPhoto(existing);
+    }
+
+    const key = this.storage.generateKey(file.originalname, file.mimetype);
+    await this.storage.upload(key, file.buffer, file.mimetype);
+
+    const photo = await this.prisma.taskPhoto.create({
+      data: {
+        taskExecutionId: taskExecution.id,
+        storageKey: key,
+        storageBucket: this.storage.storageBucketName,
+        originalFilename: file.originalname,
+        mimeType: file.mimetype,
+        fileSizeBytes: file.size,
+        capturedAt: dto.capturedAt ? new Date(dto.capturedAt) : null,
+        gpsLat: dto.gpsLat ?? null,
+        gpsLng: dto.gpsLng ?? null,
+        deviceId: dto.deviceId ?? null,
+        clientOperationId: dto.clientOperationId ?? null,
+        uploadedById: user.id,
+      },
+    });
+
+    return this.formatPhoto(photo);
   }
 
   // ─── PRIVATE HELPERS ───────────────────────────────────────────────────────
@@ -454,5 +635,94 @@ export class TasksService {
     const task = await this.prisma.task.findFirst({ where: { id, deletedAt: null } });
     if (!task) throw new NotFoundException('Task not found');
     return task;
+  }
+
+  private async enrichPeriodicInstance(
+    instance: Awaited<ReturnType<typeof this.upsertPeriodicInstance>>,
+  ) {
+    const execution = await this.prisma.taskExecutionRecord.findFirst({
+      where: { periodicTaskInstanceId: instance.id },
+      select: {
+        id: true,
+        status: true,
+        observation: true,
+        executedAt: true,
+        photos: {
+          where: { deletedAt: null },
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            storageKey: true,
+            originalFilename: true,
+            mimeType: true,
+            fileSizeBytes: true,
+            capturedAt: true,
+            uploadedAt: true,
+          },
+        },
+      },
+    });
+
+    return {
+      ...instance,
+      execution: execution
+        ? {
+            id: execution.id,
+            status: execution.status,
+            observation: execution.observation,
+            executedAt: execution.executedAt,
+            photos: execution.photos.map((p) => this.formatPhoto(p)),
+          }
+        : null,
+    };
+  }
+
+  private async assertBuildingAccess(userId: string, buildingId: string) {
+    const access = await this.prisma.userBuildingRole.findFirst({
+      where: {
+        userId,
+        OR: [{ buildingId: null }, { buildingId }],
+      },
+    });
+    if (!access) {
+      throw new ForbiddenException('You do not have access to this building');
+    }
+  }
+
+  private async assertActiveAttendance(userId: string, buildingId: string) {
+    const attendance = await this.prisma.attendance.findFirst({
+      where: {
+        userId,
+        buildingId,
+        checkOutAt: null,
+        deletedAt: null,
+      },
+    });
+    if (!attendance) {
+      throw new ForbiddenException('You must be checked in to mark periodic tasks');
+    }
+  }
+
+  private formatPhoto(
+    p: {
+      id: string;
+      storageKey: string;
+      originalFilename?: string | null;
+      mimeType?: string | null;
+      fileSizeBytes?: number | null;
+      capturedAt?: Date | null;
+      uploadedAt: Date;
+    },
+  ) {
+    return {
+      id: p.id,
+      storageKey: p.storageKey,
+      url: this.storage.getPublicUrl(p.storageKey),
+      originalFilename: p.originalFilename ?? null,
+      mimeType: p.mimeType ?? null,
+      fileSizeBytes: p.fileSizeBytes ?? null,
+      capturedAt: p.capturedAt ?? null,
+      uploadedAt: p.uploadedAt,
+    };
   }
 }

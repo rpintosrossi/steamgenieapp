@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,13 +8,25 @@ import {
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useBuildingStore, WorkOrderCached } from '../../src/stores/building.store';
+import { useAuthStore } from '../../src/stores/auth.store';
 import { useNetworkStatus } from '../../src/hooks/useNetworkStatus';
 import { apiService } from '../../src/services/api.service';
 import { SyncStatusBar } from '../../src/components/SyncStatusBar';
+import { BrandedScreenHeader } from '../../src/components/BrandedScreenHeader';
 import { COLORS } from '../../src/constants/colors';
+import { getWorkOrderTypeLabel } from '../../src/constants/work-order-types';
+import {
+  filterWorkOrdersAssignedToUser,
+  formatWorkOrderScheduledDate,
+  getWorkOrderTaskCount,
+  isWorkOrderActive,
+  isWorkOrderExpired,
+  normalizeWorkOrdersList,
+  sortWorkOrdersByDate,
+} from '../../src/utils/work-orders';
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: 'Borrador',
@@ -36,119 +48,185 @@ const STATUS_COLORS: Record<string, string> = {
   CANCELLED: COLORS.disabled,
 };
 
-const TYPE_LABELS: Record<string, string> = {
-  PREVENTIVE: 'Preventivo',
-  CORRECTIVE: 'Correctivo',
-  CLEANING: 'Limpieza',
-  INSPECTION: 'Inspección',
-};
-
 interface WorkOrdersResponse {
-  data: WorkOrderCached[];
-  total: number;
+  data?: WorkOrderCached[];
+  total?: number;
 }
 
-const ACTIVE_STATUSES = ['ASSIGNED', 'ACCEPTED', 'IN_PROGRESS'];
+function getStatusDisplay(item: WorkOrderCached) {
+  if (isWorkOrderExpired(item)) {
+    return { label: 'Vencida', color: COLORS.error };
+  }
+  return {
+    label: STATUS_LABELS[item.status] ?? item.status,
+    color: STATUS_COLORS[item.status] ?? COLORS.disabled,
+  };
+}
 
 export default function ServicesScreen() {
   const router = useRouter();
-  const { selectedBuilding, prefetchData, refreshPrefetch, isLoadingPrefetch } = useBuildingStore();
+  const { selectedBuilding, prefetchData, refreshPrefetch } = useBuildingStore();
+  const { user } = useAuthStore();
   const { isConnected } = useNetworkStatus();
   const isOnline = isConnected ?? true;
 
   const [workOrders, setWorkOrders] = useState<WorkOrderCached[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isUserRefreshing, setIsUserRefreshing] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'active' | 'all'>('active');
 
-  const loadFromApi = useCallback(async () => {
-    if (!selectedBuilding || !isOnline) return;
-    setIsLoading(true);
-    try {
-      const res = await apiService.get<WorkOrdersResponse>(
-        `/work-orders?buildingId=${selectedBuilding.id}&limit=50`,
-      );
-      setWorkOrders(res.data);
-    } catch {
-      // Fall back to prefetch cache on error
-    } finally {
-      setIsLoading(false);
-    }
-  }, [selectedBuilding, isOnline]);
+  const loadFromApi = useCallback(
+    async (options?: { userRefresh?: boolean }) => {
+      if (!selectedBuilding || !user?.id) return;
 
-  useEffect(() => {
-    if (isOnline) {
+      if (options?.userRefresh) {
+        setIsUserRefreshing(true);
+      }
+
+      try {
+        if (isOnline) {
+          const res = await apiService.get<WorkOrdersResponse | WorkOrderCached[]>(
+            `/work-orders?buildingId=${selectedBuilding.id}&limit=50`,
+          );
+          setWorkOrders(
+            filterWorkOrdersAssignedToUser(normalizeWorkOrdersList(res), user.id),
+          );
+        } else {
+          setWorkOrders(
+            filterWorkOrdersAssignedToUser(
+              normalizeWorkOrdersList(prefetchData?.workOrders ?? []),
+              user.id,
+            ),
+          );
+        }
+      } catch {
+        setWorkOrders(
+          filterWorkOrdersAssignedToUser(
+            normalizeWorkOrdersList(prefetchData?.workOrders ?? []),
+            user.id,
+          ),
+        );
+      } finally {
+        setIsInitialLoading(false);
+        if (options?.userRefresh) {
+          setIsUserRefreshing(false);
+        }
+      }
+    },
+    [selectedBuilding, isOnline, prefetchData?.workOrders, user?.id],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
       loadFromApi();
-    } else {
-      setWorkOrders(prefetchData?.workOrders ?? []);
-    }
-  }, [isOnline, prefetchData?.workOrders]);
+    }, [loadFromApi]),
+  );
 
-  const displayedWOs = activeFilter === 'active'
-    ? workOrders.filter((wo) => ACTIVE_STATUSES.includes(wo.status))
-    : workOrders;
+  async function handleRefresh() {
+    setIsUserRefreshing(true);
+    try {
+      if (isOnline) {
+        await loadFromApi();
+      }
+      await refreshPrefetch();
+    } finally {
+      setIsUserRefreshing(false);
+    }
+  }
+
+  const displayedWOs = useMemo(() => {
+    const filtered =
+      activeFilter === 'active'
+        ? workOrders.filter(isWorkOrderActive)
+        : workOrders;
+    return sortWorkOrdersByDate(filtered);
+  }, [workOrders, activeFilter]);
+
+  const activeCount = workOrders.filter(isWorkOrderActive).length;
 
   function renderItem({ item }: { item: WorkOrderCached }) {
-    const statusColor = STATUS_COLORS[item.status] ?? COLORS.disabled;
-    const statusLabel = STATUS_LABELS[item.status] ?? item.status;
+    const { label, color } = getStatusDisplay(item);
+    const taskCount = getWorkOrderTaskCount(item);
 
     return (
       <TouchableOpacity
         style={styles.card}
         onPress={() => router.push(`/service/${item.id}`)}
+        activeOpacity={0.85}
       >
         <View style={styles.cardHeader}>
-          <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
-            <Text style={styles.statusBadgeText}>{statusLabel}</Text>
+          <View style={[styles.statusBadge, { backgroundColor: color }]}>
+            <Text style={styles.statusBadgeText}>{label}</Text>
           </View>
-          <Text style={styles.cardType}>{TYPE_LABELS[item.type] ?? item.type}</Text>
+          <Text style={styles.cardType}>{getWorkOrderTypeLabel(item.type)}</Text>
         </View>
-        <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
-        {item.description && (
-          <Text style={styles.cardDesc} numberOfLines={1}>{item.description}</Text>
-        )}
+        <Text style={styles.cardTitle} numberOfLines={2}>
+          {item.title}
+        </Text>
+        {item.description ? (
+          <Text style={styles.cardDesc} numberOfLines={2}>
+            {item.description}
+          </Text>
+        ) : null}
         <View style={styles.cardFooter}>
-          {item.scheduledDate && (
+          {item.scheduledDate ? (
             <View style={styles.footerItem}>
               <Ionicons name="calendar-outline" size={12} color={COLORS.textMuted} />
               <Text style={styles.footerText}>
-                {new Date(item.scheduledDate).toLocaleDateString('es-AR')}
+                {formatWorkOrderScheduledDate(item.scheduledDate)}
               </Text>
             </View>
-          )}
+          ) : null}
           <View style={styles.footerItem}>
             <Ionicons name="list-outline" size={12} color={COLORS.textMuted} />
-            <Text style={styles.footerText}>{item.workOrderTasks.length} tareas</Text>
+            <Text style={styles.footerText}>{taskCount} tareas</Text>
           </View>
         </View>
       </TouchableOpacity>
     );
   }
 
-  const refreshing = isLoadingPrefetch || isLoading;
+  if (isInitialLoading && workOrders.length === 0) {
+    return (
+      <View style={styles.container}>
+        <SyncStatusBar />
+        <BrandedScreenHeader
+          title="Mis servicios"
+          subtitle={selectedBuilding?.name ?? undefined}
+        />
+        <View style={styles.initialLoader}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
       <SyncStatusBar />
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Mis servicios</Text>
-        <Text style={styles.headerBuilding}>{selectedBuilding?.name ?? ''}</Text>
-      </View>
+      <BrandedScreenHeader
+        title="Mis servicios"
+        subtitle={selectedBuilding?.name ?? undefined}
+      />
 
-      {/* Filter tabs */}
       <View style={styles.filterRow}>
         <TouchableOpacity
           style={[styles.filterTab, activeFilter === 'active' && styles.filterTabActive]}
           onPress={() => setActiveFilter('active')}
         >
-          <Text style={[styles.filterTabText, activeFilter === 'active' && styles.filterTabTextActive]}>
-            Activos ({workOrders.filter((wo) => ACTIVE_STATUSES.includes(wo.status)).length})
+          <Text
+            style={[styles.filterTabText, activeFilter === 'active' && styles.filterTabTextActive]}
+          >
+            Activos ({activeCount})
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.filterTab, activeFilter === 'all' && styles.filterTabActive]}
           onPress={() => setActiveFilter('all')}
         >
-          <Text style={[styles.filterTabText, activeFilter === 'all' && styles.filterTabTextActive]}>
+          <Text
+            style={[styles.filterTabText, activeFilter === 'all' && styles.filterTabTextActive]}
+          >
             Todos ({workOrders.length})
           </Text>
         </TouchableOpacity>
@@ -158,24 +236,18 @@ export default function ServicesScreen() {
         data={displayedWOs}
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
-        contentContainerStyle={styles.list}
+        ItemSeparatorComponent={() => <View style={styles.separator} />}
+        contentContainerStyle={displayedWOs.length === 0 ? styles.listEmpty : styles.list}
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={isOnline ? loadFromApi : refreshPrefetch}
-          />
+          <RefreshControl refreshing={isUserRefreshing} onRefresh={handleRefresh} />
         }
         ListEmptyComponent={
-          isLoading ? (
-            <View style={styles.center}>
-              <ActivityIndicator color={COLORS.primary} />
-            </View>
-          ) : (
-            <View style={styles.empty}>
-              <Ionicons name="clipboard-outline" size={48} color={COLORS.disabled} />
-              <Text style={styles.emptyText}>No hay servicios {activeFilter === 'active' ? 'activos' : ''}</Text>
-            </View>
-          )
+          <View style={styles.empty}>
+            <Ionicons name="clipboard-outline" size={48} color={COLORS.disabled} />
+            <Text style={styles.emptyText}>
+              No hay servicios {activeFilter === 'active' ? 'activos' : ''}
+            </Text>
+          </View>
         }
       />
     </View>
@@ -184,20 +256,26 @@ export default function ServicesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
-  header: { padding: 20, paddingTop: 60, backgroundColor: COLORS.primary, gap: 2 },
-  headerTitle: { fontSize: 22, fontWeight: '700', color: '#fff' },
-  headerBuilding: { fontSize: 14, color: 'rgba(255,255,255,0.85)' },
+  initialLoader: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   filterRow: {
     flexDirection: 'row',
     backgroundColor: COLORS.surface,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
-  filterTab: { flex: 1, padding: 12, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
+  filterTab: {
+    flex: 1,
+    padding: 12,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
   filterTabActive: { borderBottomColor: COLORS.primary },
   filterTabText: { fontSize: 13, color: COLORS.textMuted, fontWeight: '500' },
   filterTabTextActive: { color: COLORS.primary, fontWeight: '700' },
-  list: { padding: 16, gap: 12 },
+  list: { padding: 16, paddingBottom: 24 },
+  listEmpty: { flexGrow: 1, padding: 16, justifyContent: 'center' },
+  separator: { height: 12 },
   card: {
     backgroundColor: COLORS.surface,
     borderRadius: 12,
@@ -218,7 +296,6 @@ const styles = StyleSheet.create({
   cardFooter: { flexDirection: 'row', gap: 16, marginTop: 4 },
   footerItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   footerText: { fontSize: 11, color: COLORS.textMuted },
-  center: { padding: 32, alignItems: 'center' },
-  empty: { padding: 48, alignItems: 'center', gap: 12 },
+  empty: { alignItems: 'center', gap: 12, paddingVertical: 48 },
   emptyText: { color: COLORS.textMuted, fontSize: 15 },
 });

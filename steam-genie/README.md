@@ -127,18 +127,76 @@ steam-genie/
 
 ---
 
-## 9. Deploy (Railway)
+## 9. Deploy (Railway — API)
 
-1. Crear servicios en Railway: PostgreSQL, Redis, y el API web service.
-2. Configurar variables de entorno en Railway desde `.env.example`.
-3. Comando de release (Railway → Settings → Deploy → Release Command):
-   ```bash
-   # Primera vez (incluye seed):
-   pnpm db:deploy && pnpm db:seed
-   # Deploys posteriores (solo migraciones):
-   pnpm db:deploy
-   ```
-   El seed es idempotente: usa upsert para roles/admin y `IF NOT EXISTS` para constraints.
-4. Storage: Cloudflare R2 bucket + API keys en las variables `R2_*`.
+### Requisitos previos
+
+- Cuenta en [Railway](https://railway.app)
+- Base de datos **Neon** (o Postgres en Railway) con `DATABASE_URL` (pooler) y `DIRECT_URL` (directo)
+- Bucket **Cloudflare R2** con variables `S3_*` (ver `.env.example`)
+
+### 1. Subir código
+
+El monorepo vive en `steam-genie/`. Si el repo git es `APP-SG`, en Railway → **Settings → Root Directory** = `steam-genie`.
+
+### 2. Crear servicio API
+
+1. **New Project** → **Deploy from GitHub** → repo `steamgenieapp`
+2. Railway detecta `Dockerfile` y `railway.toml`
+3. Generar dominio público: **Settings → Networking → Generate Domain**
+
+### 3. Variables de entorno (Railway → Variables)
+
+| Variable | Valor |
+|---|---|
+| `NODE_ENV` | `production` |
+| `DATABASE_URL` | URL pooler Neon (`*-pooler*`) |
+| `DIRECT_URL` | URL directa Neon (sin `-pooler`) |
+| `JWT_ACCESS_SECRET` | secreto ≥ 32 chars |
+| `JWT_REFRESH_SECRET` | secreto ≥ 32 chars |
+| `JWT_ACCESS_EXPIRES_IN` | `15m` |
+| `JWT_REFRESH_EXPIRES_IN` | `90d` |
+| `API_URL` | `https://<tu-dominio>.up.railway.app` |
+| `ALLOWED_ORIGINS` | URL del admin (Vercel) + localhost si hace falta |
+| `SKIP_GPS_VALIDATION` | `false` en producción |
+| `S3_ENDPOINT` | `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` |
+| `S3_REGION` | `auto` |
+| `S3_BUCKET` | nombre del bucket |
+| `S3_ACCESS_KEY_ID` | clave R2 |
+| `S3_SECRET_ACCESS_KEY` | secreto R2 |
+| `S3_PUBLIC_BASE_URL` | URL pública del bucket |
+
+> **No** commitear `.env`. Copiar valores desde tu `.env` local.
+
+### 4. Migraciones (automáticas)
+
+`railway.toml` ejecuta antes de cada deploy:
+
+```bash
+pnpm db:deploy
+```
+
+Primera vez, correr seed manualmente (Railway → service → **Shell** o CLI):
+
+```bash
+pnpm db:seed
+```
+
+### 5. Verificar
+
+```bash
+curl https://<tu-dominio>.up.railway.app/health
+# → {"status":"ok","timestamp":"..."}
+```
+
+### CLI (opcional)
+
+```bash
+cd steam-genie
+railway login
+railway link          # vincular proyecto
+railway up            # deploy
+railway variables set DATABASE_URL=...
+```
 
 Ver `ARQUITECTURA.md` para el diagrama completo y decisiones de diseño.

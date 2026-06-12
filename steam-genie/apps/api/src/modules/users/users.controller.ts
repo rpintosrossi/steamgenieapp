@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Patch,
   Delete,
   Body,
@@ -19,6 +20,7 @@ import { QueryUsersDto } from './dto/query-users.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { AssignBuildingRoleDto } from './dto/assign-building-role.dto';
+import { SyncBuildingRolesDto } from './dto/sync-building-roles.dto';
 import { RegisterDeviceDto } from './dto/register-device.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
 
@@ -67,6 +69,16 @@ export class UsersController {
   @RequiredRoles('admin', 'manager')
   getBuildingRoles(@Param('id', ParseUUIDPipe) id: string) {
     return this.usersService.getBuildingRoles(id);
+  }
+
+  @Put(':id/building-roles/bulk')
+  @RequiredRoles('admin')
+  syncBuildingRoles(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SyncBuildingRolesDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.usersService.syncBuildingRoles(id, dto, user.id);
   }
 
   @Post(':id/building-roles')

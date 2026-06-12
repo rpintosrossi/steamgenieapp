@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
@@ -9,6 +10,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
 import { AssignBuildingRoleDto } from './dto/assign-building-role.dto';
+import { SyncBuildingRolesDto } from './dto/sync-building-roles.dto';
 import { RegisterDeviceDto } from './dto/register-device.dto';
 
 const USER_SELECT = {
@@ -168,11 +170,21 @@ export class UsersService {
   async update(id: string, dto: UpdateUserDto) {
     await this.assertExists(id);
 
+    if (dto.dni) {
+      const duplicate = await this.prisma.user.findFirst({
+        where: { dni: dto.dni, id: { not: id }, deletedAt: null },
+      });
+      if (duplicate) throw new ConflictException('DNI already registered');
+    }
+
     return this.prisma.user.update({
       where: { id },
       data: {
+        ...(dto.dni !== undefined ? { dni: dto.dni } : {}),
         ...(dto.fullName !== undefined ? { fullName: dto.fullName } : {}),
-        ...(dto.birthDate !== undefined ? { birthDate: new Date(dto.birthDate) } : {}),
+        ...(dto.birthDate !== undefined
+          ? { birthDate: dto.birthDate ? new Date(dto.birthDate) : null }
+          : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       },
       select: USER_SELECT,
@@ -239,6 +251,53 @@ export class UsersService {
     return { message: 'Role removed' };
   }
 
+  async syncBuildingRoles(userId: string, dto: SyncBuildingRolesDto, grantedById: string) {
+    await this.assertExists(userId);
+
+    const role = await this.prisma.role.findUnique({ where: { id: dto.roleId } });
+    if (!role) throw new NotFoundException('Role not found');
+
+    if (dto.buildingIds.length > 0) {
+      const validCount = await this.prisma.building.count({
+        where: { id: { in: dto.buildingIds }, deletedAt: null, isActive: true },
+      });
+      if (validCount !== dto.buildingIds.length) {
+        throw new BadRequestException('One or more buildings are invalid or inactive');
+      }
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.userBuildingRole.deleteMany({
+        where: { userId, roleId: dto.roleId, buildingId: { not: null } },
+      });
+
+      if (dto.buildingIds.length > 0) {
+        await tx.userBuildingRole.deleteMany({
+          where: { userId, roleId: dto.roleId, buildingId: null },
+        });
+
+        await tx.userBuildingRole.createMany({
+          data: dto.buildingIds.map((buildingId) => ({
+            userId,
+            roleId: dto.roleId,
+            buildingId,
+            grantedById,
+          })),
+        });
+      }
+
+      const assignments = await tx.userBuildingRole.findMany({
+        where: { userId },
+        include: { role: true },
+      });
+
+      const primaryRole = this.resolvePrimaryRole(assignments.map((a) => a.role.name));
+      await tx.user.update({ where: { id: userId }, data: { primaryRole } });
+    });
+
+    return this.getBuildingRoles(userId);
+  }
+
   async upsertDevice(userId: string, dto: RegisterDeviceDto) {
     return this.prisma.userDevice.upsert({
       where: { deviceId: dto.deviceId },
@@ -267,6 +326,20 @@ export class UsersService {
         isActive: true,
       },
     });
+  }
+
+  async findRoles() {
+    return this.prisma.role.findMany({
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, description: true },
+    });
+  }
+
+  private resolvePrimaryRole(roleNames: string[]): string {
+    for (const roleName of ROLE_HIERARCHY) {
+      if (roleNames.includes(roleName)) return roleName;
+    }
+    return roleNames[0] ?? 'cleaner';
   }
 
   private async assertExists(id: string) {

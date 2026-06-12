@@ -7,11 +7,14 @@
  * ES module imports (which would be reordered before this file's execution).
  */
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-require('dotenv').config({
-  path: require('path').join(__dirname, '../../../.env'),
-  override: true,
-});
+const fs = require('fs');
+const path = require('path');
+
+const envPath = path.join(__dirname, '../../../.env');
+if (fs.existsSync(envPath)) {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('dotenv').config({ path: envPath, override: true });
+}
 
 // Now bootstrap the actual app — all subsequent require()s will see DATABASE_URL
 // eslint-disable-next-line @typescript-eslint/no-require-imports

@@ -48,6 +48,18 @@ export class AttendanceController {
     return this.attendanceService.checkOut(user, dto, ip);
   }
 
+  @Get('today-summary')
+  @RequiredRoles('admin', 'manager', 'cleaner')
+  findTodaySummary(@CurrentUser() user: AuthUser) {
+    return this.attendanceService.findTodaySummary(user.id);
+  }
+
+  @Get('last')
+  @RequiredRoles('admin', 'manager', 'cleaner')
+  findLast(@CurrentUser() user: AuthUser) {
+    return this.attendanceService.findLast(user.id);
+  }
+
   @Get('active')
   findActive(@CurrentUser() user: AuthUser) {
     return this.attendanceService.findActive(user.id);

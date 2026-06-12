@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,7 @@ import {
   Alert,
   RefreshControl,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { apiService } from '../../../src/services/api.service';
 import { useBuildingStore, WorkOrderCached } from '../../../src/stores/building.store';
@@ -17,14 +17,39 @@ import { syncQueue, generateClientId } from '../../../src/sync/sync-queue';
 import { useNetworkStatus } from '../../../src/hooks/useNetworkStatus';
 import { useSyncStore } from '../../../src/stores/sync.store';
 import { COLORS } from '../../../src/constants/colors';
+import { getWorkOrderTypeLabel } from '../../../src/constants/work-order-types';
+import { CheckoutReservationCard } from '../../../src/components/CheckoutReservationCard';
+import {
+  ATTENDANCE_REQUIRED_MESSAGE,
+  isCheckedInAtBuilding,
+} from '../../../src/utils/attendance';
+import {
+  formatChecklistIncompleteMessage,
+  formatPhotoRequiredMessage,
+  getActiveServiceExecutionId,
+  isChecklistIncompleteError,
+  isPhotoRequiredError,
+  isWorkOrderExpired,
+} from '../../../src/utils/work-orders';
+import { formatStoredCalendarDate } from '@steam-genie/shared-constants';
+import type { ReservationSnapshot } from '../../../src/stores/building.store';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface WorkOrderDetail extends WorkOrderCached {
+interface WorkOrderDetail extends Omit<WorkOrderCached, 'workOrderTasks'> {
   description: string | null;
   building: { id: string; name: string };
+  floor: { id: string; name: string } | null;
   zone: { id: string; name: string } | null;
   subzone: { id: string; name: string } | null;
+  reservation: ReservationSnapshot | null;
+  workOrderTasks?: Array<{
+    id: string;
+    nameSnapshot: string;
+    sortOrder: number;
+    requiresPhotoSnapshot: boolean;
+    task?: { zoneId: string | null; subzoneId: string | null } | null;
+  }>;
   serviceExecutions: Array<{
     id: string;
     status: string;
@@ -58,12 +83,6 @@ const STATUS_COLORS: Record<string, string> = {
   REJECTED: COLORS.error,
   CANCELLED: COLORS.disabled,
 };
-const TYPE_LABELS: Record<string, string> = {
-  PREVENTIVE: 'Preventivo',
-  CORRECTIVE: 'Correctivo',
-  CLEANING: 'Limpieza',
-  INSPECTION: 'Inspección',
-};
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -73,36 +92,61 @@ export default function ServiceDetailScreen() {
   const { isConnected } = useNetworkStatus();
   const isOnline = isConnected ?? true;
   const { setStatus } = useSyncStore();
-  const { prefetchData } = useBuildingStore();
+  const { prefetchData, refreshPrefetch, patchWorkOrder } = useBuildingStore();
 
   const [workOrder, setWorkOrder] = useState<WorkOrderDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const hasLoadedRef = useRef(false);
 
-  const loadWorkOrder = useCallback(async () => {
-    if (!id) return;
+  useEffect(() => {
+    hasLoadedRef.current = false;
+    setWorkOrder(null);
     setIsLoading(true);
+  }, [id]);
+
+  const loadWorkOrder = useCallback(async (mode: 'initial' | 'silent' | 'refresh' = 'initial') => {
+    if (!id) return;
+    if (mode === 'initial') setIsLoading(true);
+    if (mode === 'refresh') setIsRefreshing(true);
     try {
       if (isOnline) {
         const data = await apiService.get<WorkOrderDetail>(`/work-orders/${id}`);
         setWorkOrder(data);
+
+        const cached = useBuildingStore.getState().prefetchData?.workOrders.find((wo) => wo.id === data.id);
+        if (
+          !cached ||
+          cached.status !== data.status ||
+          cached.title !== data.title
+        ) {
+          patchWorkOrder(data.id, { status: data.status, title: data.title });
+        }
       } else {
-        // Fall back to prefetch cache
-        const cached = prefetchData?.workOrders.find((wo) => wo.id === id);
+        const cached = useBuildingStore.getState().prefetchData?.workOrders.find((wo) => wo.id === id);
         if (cached) {
           setWorkOrder(cached as unknown as WorkOrderDetail);
         }
       }
     } catch (e) {
-      Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo cargar el servicio');
+      if (mode !== 'silent') {
+        Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo cargar el servicio');
+      }
     } finally {
-      setIsLoading(false);
+      if (mode === 'initial') setIsLoading(false);
+      if (mode === 'refresh') setIsRefreshing(false);
     }
-  }, [id, isOnline, prefetchData]);
+  }, [id, isOnline, patchWorkOrder]);
 
-  useEffect(() => {
-    loadWorkOrder();
-  }, [loadWorkOrder]);
+  useFocusEffect(
+    useCallback(() => {
+      const mode = hasLoadedRef.current ? 'silent' : 'initial';
+      void loadWorkOrder(mode).finally(() => {
+        hasLoadedRef.current = true;
+      });
+    }, [loadWorkOrder]),
+  );
 
   // ── Actions ──────────────────────────────────────────────────────────────────
 
@@ -112,7 +156,7 @@ export default function ServiceDetailScreen() {
     try {
       if (isOnline) {
         await apiService.post(`/work-orders/${workOrder.id}/accept`, {});
-        await loadWorkOrder();
+        await loadWorkOrder('silent');
       } else {
         Alert.alert('Sin conexión', 'No es posible aceptar servicios sin conexión.');
       }
@@ -125,17 +169,26 @@ export default function ServiceDetailScreen() {
 
   async function handleStart() {
     if (!workOrder) return;
+    if (!canExecute) {
+      Alert.alert('Fichaje requerido', ATTENDANCE_REQUIRED_MESSAGE);
+      return;
+    }
     setActionLoading(true);
     try {
       const occurredAt = new Date().toISOString();
       if (isOnline) {
-        const res = await apiService.post<{ id: string; workOrderId: string }>(
+        const updated = await apiService.post<WorkOrderDetail>(
           `/work-orders/${workOrder.id}/start`,
           { clientOperationId: generateClientId() },
         );
-        await loadWorkOrder();
-        // Navigate to checklist with seId
-        router.push(`/service/${workOrder.id}/checklist?seId=${res.id}`);
+        const seId = getActiveServiceExecutionId(updated);
+        if (!seId) {
+          Alert.alert('Error', 'No se pudo obtener la ejecución del servicio. Intentá de nuevo.');
+          return;
+        }
+        setWorkOrder(updated);
+        patchWorkOrder(updated.id, { status: updated.status, title: updated.title });
+        router.push(`/service/${workOrder.id}/checklist?seId=${seId}`);
       } else {
         const clientOperationId = generateClientId();
         await syncQueue.enqueue({
@@ -162,6 +215,10 @@ export default function ServiceDetailScreen() {
 
   async function handleComplete() {
     if (!workOrder) return;
+    if (!canExecute) {
+      Alert.alert('Fichaje requerido', ATTENDANCE_REQUIRED_MESSAGE);
+      return;
+    }
     Alert.alert(
       'Completar servicio',
       '¿Confirmás que todas las tareas fueron realizadas?',
@@ -173,10 +230,14 @@ export default function ServiceDetailScreen() {
             setActionLoading(true);
             try {
               if (isOnline) {
-                await apiService.post(`/work-orders/${workOrder.id}/complete`, {
-                  clientOperationId: generateClientId(),
-                });
-                await loadWorkOrder();
+                const updated = await apiService.post<WorkOrderDetail>(
+                  `/work-orders/${workOrder.id}/complete`,
+                  {},
+                );
+                setWorkOrder(updated);
+                patchWorkOrder(updated.id, { status: updated.status, title: updated.title });
+                await refreshPrefetch();
+                Alert.alert('Servicio completado', 'El servicio fue marcado como completado.');
               } else {
                 const clientOperationId = generateClientId();
                 await syncQueue.enqueue({
@@ -192,7 +253,28 @@ export default function ServiceDetailScreen() {
                 Alert.alert('Guardado', 'La completitud se sincronizará al recuperar conexión.');
               }
             } catch (e) {
-              Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo completar');
+              const message = e instanceof Error ? e.message : 'No se pudo completar';
+              if (isChecklistIncompleteError(message)) {
+                Alert.alert(
+                  'Checklist incompleto',
+                  formatChecklistIncompleteMessage(message),
+                  [
+                    { text: 'Cerrar', style: 'cancel' },
+                    { text: 'Completar tareas', onPress: openChecklist },
+                  ],
+                );
+              } else if (isPhotoRequiredError(message)) {
+                Alert.alert(
+                  'Falta foto obligatoria',
+                  formatPhotoRequiredMessage(message),
+                  [
+                    { text: 'Cerrar', style: 'cancel' },
+                    { text: 'Completar tareas', onPress: openChecklist },
+                  ],
+                );
+              } else {
+                Alert.alert('Error', message);
+              }
             } finally {
               setActionLoading(false);
             }
@@ -204,12 +286,16 @@ export default function ServiceDetailScreen() {
 
   function openChecklist() {
     if (!workOrder) return;
-    const se = workOrder.serviceExecutions?.[0];
-    if (!se) {
+    if (!canExecute) {
+      Alert.alert('Fichaje requerido', ATTENDANCE_REQUIRED_MESSAGE);
+      return;
+    }
+    const seId = getActiveServiceExecutionId(workOrder);
+    if (!seId) {
       Alert.alert('Sin ejecución', 'No se encontró una ejecución activa para este servicio.');
       return;
     }
-    router.push(`/service/${workOrder.id}/checklist?seId=${se.id}`);
+    router.push(`/service/${workOrder.id}/checklist?seId=${seId}`);
   }
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -235,92 +321,131 @@ export default function ServiceDetailScreen() {
 
   const statusColor = STATUS_COLORS[workOrder.status] ?? COLORS.disabled;
   const statusLabel = STATUS_LABELS[workOrder.status] ?? workOrder.status;
+  const expired = isWorkOrderExpired(workOrder);
+  const displayStatusLabel = expired ? 'Vencida' : statusLabel;
+  const displayStatusColor = expired ? COLORS.error : statusColor;
   const activeExecution = workOrder.serviceExecutions?.[0] ?? null;
+  const canExecute = isCheckedInAtBuilding(
+    prefetchData?.activeAttendance,
+    workOrder.building?.id ?? workOrder.buildingId,
+  );
+  const showExecutionBlocked =
+    !canExecute &&
+    (workOrder.status === 'ACCEPTED' || workOrder.status === 'IN_PROGRESS');
+  const showCheckoutReservation =
+    workOrder.type === 'CHECKOUT_CLEANING' &&
+    workOrder.reservation &&
+    ['ASSIGNED', 'ACCEPTED', 'IN_PROGRESS'].includes(workOrder.status);
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={[styles.header, { backgroundColor: statusColor }]}>
+      <View style={[styles.header, { backgroundColor: displayStatusColor }]}>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={20} color="#fff" />
           <Text style={styles.backText}>Volver</Text>
         </TouchableOpacity>
         <View style={styles.statusBadge}>
-          <Text style={styles.statusBadgeText}>{statusLabel}</Text>
+          <Text style={styles.statusBadgeText}>{displayStatusLabel}</Text>
         </View>
-        <Text style={styles.headerType}>{TYPE_LABELS[workOrder.type] ?? workOrder.type}</Text>
+        <Text style={styles.headerType}>{getWorkOrderTypeLabel(workOrder.type)}</Text>
         <Text style={styles.headerTitle} numberOfLines={2}>{workOrder.title}</Text>
       </View>
 
       <ScrollView
+        style={styles.mainScroll}
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={loadWorkOrder} />}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={() => loadWorkOrder('refresh')} />
+        }
       >
-        {/* Info */}
         <View style={styles.card}>
-          {workOrder.description && (
+          {workOrder.description ? (
             <>
               <Text style={styles.label}>Descripción</Text>
               <Text style={styles.value}>{workOrder.description}</Text>
             </>
-          )}
+          ) : null}
           <Text style={styles.label}>Edificio</Text>
           <Text style={styles.value}>{workOrder.building?.name ?? '—'}</Text>
-          {workOrder.zone && (
-            <>
-              <Text style={styles.label}>Zona</Text>
-              <Text style={styles.value}>
-                {workOrder.zone.name}{workOrder.subzone ? ` › ${workOrder.subzone.name}` : ''}
-              </Text>
-            </>
-          )}
-          {workOrder.scheduledDate && (
+          {workOrder.scheduledDate ? (
             <>
               <Text style={styles.label}>Fecha programada</Text>
               <Text style={styles.value}>
-                {new Date(workOrder.scheduledDate).toLocaleDateString('es-AR', {
-                  weekday: 'long', day: 'numeric', month: 'long',
+                {formatStoredCalendarDate(workOrder.scheduledDate, 'es-AR', {
+                  weekday: 'long',
+                  day: 'numeric',
+                  month: 'long',
                 })}
               </Text>
             </>
-          )}
+          ) : null}
         </View>
 
-        {/* Tasks summary */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>
-            Tareas ({workOrder.workOrderTasks.length})
-          </Text>
-          {workOrder.workOrderTasks.map((task) => (
-            <View key={task.id} style={styles.taskRow}>
-              <Ionicons name="ellipse-outline" size={14} color={COLORS.textMuted} />
-              <Text style={styles.taskName}>{task.nameSnapshot}</Text>
-              {task.requiresPhotoSnapshot && (
-                <Ionicons name="camera-outline" size={14} color={COLORS.primary} />
-              )}
-            </View>
-          ))}
-          {workOrder.workOrderTasks.length === 0 && (
-            <Text style={styles.emptySmall}>Sin tareas registradas</Text>
-          )}
-        </View>
+        {showCheckoutReservation && workOrder.reservation ? (
+          <CheckoutReservationCard
+            reservation={workOrder.reservation}
+            workOrderLocation={{
+              floor: workOrder.floor,
+              zone: workOrder.zone,
+              subzone: workOrder.subzone,
+            }}
+          />
+        ) : null}
 
         {/* Execution status */}
         {activeExecution && (
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Ejecución activa</Text>
+            <Text style={styles.sectionTitle}>
+              {workOrder.status === 'COMPLETED' ? 'Ejecución' : 'Ejecución activa'}
+            </Text>
             <Text style={styles.label}>Estado</Text>
-            <Text style={styles.value}>{STATUS_LABELS[activeExecution.status] ?? activeExecution.status}</Text>
+            <Text style={styles.value}>
+              {STATUS_LABELS[activeExecution.status] ?? activeExecution.status}
+            </Text>
             <Text style={styles.label}>Iniciado</Text>
             <Text style={styles.value}>
               {new Date(activeExecution.startedAt).toLocaleString('es-AR')}
             </Text>
+            {activeExecution.completedAt && (
+              <>
+                <Text style={styles.label}>Completado</Text>
+                <Text style={styles.value}>
+                  {new Date(activeExecution.completedAt).toLocaleString('es-AR')}
+                </Text>
+              </>
+            )}
+          </View>
+        )}
+
+        {workOrder.status === 'COMPLETED' && (
+          <View style={[styles.card, styles.completedCard]}>
+            <Ionicons name="checkmark-circle" size={28} color={COLORS.success} />
+            <Text style={styles.completedTitle}>Servicio completado</Text>
+            <Text style={styles.completedText}>
+              Este servicio ya no aparece en la pestaña Activos.
+            </Text>
+          </View>
+        )}
+
+        {expired && (
+          <View style={[styles.card, styles.expiredNotice]}>
+            <Ionicons name="time-outline" size={20} color={COLORS.error} />
+            <Text style={styles.expiredNoticeText}>
+              Este servicio venció. Solo podés consultarlo; no es posible aceptarlo ni iniciarlo.
+            </Text>
+          </View>
+        )}
+
+        {showExecutionBlocked && !expired && (
+          <View style={[styles.card, styles.attendanceNotice]}>
+            <Ionicons name="information-circle-outline" size={20} color={COLORS.warning} />
+            <Text style={styles.attendanceNoticeText}>{ATTENDANCE_REQUIRED_MESSAGE}</Text>
           </View>
         )}
 
         {/* Actions */}
         <View style={styles.actionsContainer}>
-          {workOrder.status === 'ASSIGNED' && (
+          {workOrder.status === 'ASSIGNED' && !expired && (
             <TouchableOpacity
               style={[styles.btn, styles.btnPrimary, actionLoading && styles.btnDisabled]}
               onPress={handleAccept}
@@ -335,11 +460,15 @@ export default function ServiceDetailScreen() {
             </TouchableOpacity>
           )}
 
-          {workOrder.status === 'ACCEPTED' && (
+          {workOrder.status === 'ACCEPTED' && !expired && (
             <TouchableOpacity
-              style={[styles.btn, styles.btnSuccess, actionLoading && styles.btnDisabled]}
+              style={[
+                styles.btn,
+                styles.btnSuccess,
+                (actionLoading || !canExecute) && styles.btnDisabled,
+              ]}
               onPress={handleStart}
-              disabled={actionLoading}
+              disabled={actionLoading || !canExecute}
             >
               {actionLoading ? <ActivityIndicator color="#fff" /> : (
                 <>
@@ -353,16 +482,21 @@ export default function ServiceDetailScreen() {
           {workOrder.status === 'IN_PROGRESS' && (
             <>
               <TouchableOpacity
-                style={[styles.btn, styles.btnPrimary]}
+                style={[styles.btn, styles.btnPrimary, !canExecute && styles.btnDisabled]}
                 onPress={openChecklist}
+                disabled={!canExecute}
               >
                 <Ionicons name="list-outline" size={20} color="#fff" />
                 <Text style={styles.btnText}>Ver checklist</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.btn, styles.btnSuccess, actionLoading && styles.btnDisabled]}
+                style={[
+                  styles.btn,
+                  styles.btnSuccess,
+                  (actionLoading || !canExecute) && styles.btnDisabled,
+                ]}
                 onPress={handleComplete}
-                disabled={actionLoading}
+                disabled={actionLoading || !canExecute}
               >
                 {actionLoading ? <ActivityIndicator color="#fff" /> : (
                   <>
@@ -395,6 +529,7 @@ const styles = StyleSheet.create({
   statusBadgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   headerType: { color: 'rgba(255,255,255,0.8)', fontSize: 13, marginTop: 4 },
   headerTitle: { fontSize: 20, fontWeight: '800', color: '#fff', lineHeight: 26 },
+  mainScroll: { flex: 1 },
   content: { padding: 16, gap: 12, paddingBottom: 40 },
   card: {
     backgroundColor: COLORS.surface,
@@ -410,9 +545,6 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 15, fontWeight: '700', color: COLORS.text, marginBottom: 6 },
   label: { fontSize: 11, color: COLORS.textMuted, marginTop: 8 },
   value: { fontSize: 14, color: COLORS.text, fontWeight: '500' },
-  taskRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
-  taskName: { flex: 1, fontSize: 13, color: COLORS.text },
-  emptySmall: { fontSize: 13, color: COLORS.textMuted, fontStyle: 'italic' },
   actionsContainer: { gap: 10 },
   btn: {
     flexDirection: 'row',
@@ -428,4 +560,31 @@ const styles = StyleSheet.create({
   btnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   link: { color: COLORS.primary, fontSize: 15, fontWeight: '600' },
   emptyText: { color: COLORS.textMuted, fontSize: 15 },
+  completedCard: {
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#86efac',
+  },
+  completedTitle: { fontSize: 16, fontWeight: '700', color: COLORS.success },
+  completedText: { fontSize: 13, color: COLORS.textMuted, textAlign: 'center' },
+  attendanceNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+  },
+  attendanceNoticeText: { flex: 1, fontSize: 13, color: COLORS.text, lineHeight: 18 },
+  expiredNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  expiredNoticeText: { flex: 1, fontSize: 13, color: COLORS.text, lineHeight: 18 },
 });

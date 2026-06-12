@@ -32,10 +32,10 @@ export function useAttendance(isOnline: boolean) {
     };
   }
 
-  const checkIn = useCallback(async () => {
+  const checkIn = useCallback(async (): Promise<boolean> => {
     if (!selectedBuilding) {
       setError('No hay edificio seleccionado.');
-      return;
+      return false;
     }
     setIsLoading(true);
     setError(null);
@@ -45,13 +45,29 @@ export function useAttendance(isOnline: boolean) {
       const occurredAt = new Date().toISOString();
 
       if (isOnline) {
-        const attendance = await apiService.post<AttendanceCached>('/attendance/check-in', {
+        const attendance = await apiService.post<{
+          id: string;
+          buildingId: string;
+          checkInAt: string;
+          checkInGpsLat: number | string | null;
+          checkInGpsLng: number | string | null;
+          version?: number;
+        }>('/attendance/check-in', {
           buildingId: selectedBuilding.id,
           gpsLat,
           gpsLng,
           occurredAt,
         });
-        updateActiveAttendance(attendance);
+        updateActiveAttendance({
+          id: attendance.id,
+          buildingId: attendance.buildingId,
+          checkInAt: attendance.checkInAt,
+          checkInGpsLat:
+            attendance.checkInGpsLat != null ? String(attendance.checkInGpsLat) : null,
+          checkInGpsLng:
+            attendance.checkInGpsLng != null ? String(attendance.checkInGpsLng) : null,
+          version: attendance.version ?? 1,
+        });
       } else {
         const clientOperationId = generateClientId();
         await syncQueue.enqueue({
@@ -79,14 +95,16 @@ export function useAttendance(isOnline: boolean) {
         });
         setStatus('pending');
       }
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al fichar entrada');
+      return false;
     } finally {
       setIsLoading(false);
     }
-  }, [selectedBuilding, isOnline, updateActiveAttendance]);
+  }, [selectedBuilding, isOnline, updateActiveAttendance, setStatus]);
 
-  const checkOut = useCallback(async () => {
+  const checkOut = useCallback(async (): Promise<boolean> => {
     setIsLoading(true);
     setError(null);
 
@@ -119,12 +137,14 @@ export function useAttendance(isOnline: boolean) {
         updateActiveAttendance(null);
         setStatus('pending');
       }
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al fichar salida');
+      return false;
     } finally {
       setIsLoading(false);
     }
-  }, [isOnline, updateActiveAttendance]);
+  }, [isOnline, updateActiveAttendance, setStatus]);
 
   return { activeAttendance, isLoading, error, checkIn, checkOut, clearError: () => setError(null) };
 }

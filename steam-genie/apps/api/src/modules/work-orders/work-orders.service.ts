@@ -6,6 +6,7 @@
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { WorkOrderStatus } from '@prisma/client';
+import { endOfStoredCalendarDateInBusinessTz } from '@steam-genie/shared-constants';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { QueryWorkOrdersDto } from './dto/query-work-orders.dto';
 import { AssignWorkOrderDto } from './dto/assign-work-order.dto';
@@ -13,10 +14,17 @@ import { RejectWorkOrderDto } from './dto/reject-work-order.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
 
 const WO_DETAIL_INCLUDE = {
+  building: { select: { id: true, name: true } },
+  floor: { select: { id: true, name: true } },
+  zone: { select: { id: true, name: true } },
+  subzone: { select: { id: true, name: true } },
   reservation: {
     select: {
       id: true, externalId: true, guestName: true,
       checkinAt: true, checkoutAt: true, status: true,
+      floor: { select: { id: true, name: true } },
+      zone: { select: { id: true, name: true } },
+      subzone: { select: { id: true, name: true } },
     },
   },
   assignments: {
@@ -30,6 +38,7 @@ const WO_DETAIL_INCLUDE = {
       id: true, taskId: true, nameSnapshot: true,
       requiresPhotoSnapshot: true, allowsObservationSnapshot: true,
       requiresRejectionReasonSnapshot: true, sortOrder: true,
+      task: { select: { zoneId: true, subzoneId: true } },
       customFieldSnapshots: {
         select: {
           id: true, labelSnapshot: true, fieldType: true,
@@ -58,7 +67,7 @@ export class WorkOrdersService {
 
   // ─── LIST ─────────────────────────────────────────────────────────────────
 
-  async findAll(query: QueryWorkOrdersDto) {
+  async findAll(query: QueryWorkOrdersDto, user?: AuthUser) {
     const { page = 1, limit = 20, buildingId, status, type, date, assignedTo } = query;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = { deletedAt: null };
@@ -71,8 +80,22 @@ export class WorkOrdersService {
       next.setUTCDate(next.getUTCDate() + 1);
       where.scheduledDate = { gte: d, lt: next };
     }
-    if (assignedTo) {
-      where.assignments = { some: { userId: assignedTo, status: { in: ['PENDING', 'ACCEPTED'] } } };
+
+    let effectiveAssignedTo = assignedTo;
+    if (user) {
+      const isStaff = await this.hasStaffBuildingAccess(user.id, buildingId);
+      if (!isStaff) {
+        effectiveAssignedTo = user.id;
+      }
+    }
+
+    if (effectiveAssignedTo) {
+      where.assignments = {
+        some: {
+          userId: effectiveAssignedTo,
+          status: { in: ['PENDING', 'ACCEPTED'] },
+        },
+      };
     }
 
     const [data, total] = await Promise.all([
@@ -85,6 +108,16 @@ export class WorkOrdersService {
           id: true, type: true, status: true, title: true,
           buildingId: true, zoneId: true, subzoneId: true,
           scheduledDate: true, deadlineAt: true, createdAt: true,
+          building: { select: { id: true, name: true } },
+          zone: { select: { id: true, name: true } },
+          assignments: {
+            select: {
+              id: true,
+              userId: true,
+              status: true,
+              user: { select: { id: true, fullName: true, dni: true } },
+            },
+          },
           _count: { select: { workOrderTasks: true, assignments: true } },
         },
       }),
@@ -96,12 +129,27 @@ export class WorkOrdersService {
 
   // ─── GET ONE ──────────────────────────────────────────────────────────────
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: AuthUser) {
     const wo = await this.prisma.workOrder.findFirst({
       where: { id, deletedAt: null },
       include: WO_DETAIL_INCLUDE,
     });
     if (!wo) throw new NotFoundException('Work order not found');
+
+    if (user) {
+      const isStaff = await this.hasStaffBuildingAccess(user.id, wo.buildingId);
+      if (!isStaff) {
+        const hasAssignment = wo.assignments.some(
+          (assignment) =>
+            assignment.userId === user.id &&
+            (assignment.status === 'PENDING' || assignment.status === 'ACCEPTED'),
+        );
+        if (!hasAssignment) {
+          throw new ForbiddenException('No tenés asignado este servicio.');
+        }
+      }
+    }
+
     return wo;
   }
 
@@ -151,7 +199,8 @@ export class WorkOrdersService {
   // ─── ACCEPT ───────────────────────────────────────────────────────────────
 
   async accept(id: string, user: AuthUser) {
-    await this.assertWorkOrderExists(id);
+    const wo = await this.assertWorkOrderExists(id);
+    this.assertWorkOrderNotExpired(wo);
 
     const assignment = await this.prisma.workOrderAssignment.findFirst({
       where: { workOrderId: id, userId: user.id, status: 'PENDING' },
@@ -259,6 +308,13 @@ export class WorkOrdersService {
 
     if (wo.status === WorkOrderStatus.COMPLETED) {
       throw new ConflictException('Work order is already completed');
+    }
+
+    if (
+      wo.status === WorkOrderStatus.ACCEPTED ||
+      wo.status === WorkOrderStatus.ASSIGNED
+    ) {
+      this.assertWorkOrderNotExpired(wo);
     }
 
     // Check if ServiceExecution already exists (concurrent /start protection via @@unique)
@@ -373,9 +429,9 @@ export class WorkOrdersService {
     );
     if (unexecutedTasks.length > 0) {
       throw new ConflictException(
-        `${unexecutedTasks.length} task(s) not executed yet: ` +
+        `${unexecutedTasks.length} tarea(s) sin ejecutar: ` +
         unexecutedTasks.map((t) => `"${t.nameSnapshot}"`).join(', ') +
-        '. Mark all tasks before completing the work order.',
+        '. Marcá todas las tareas antes de completar el servicio.',
       );
     }
 
@@ -392,9 +448,13 @@ export class WorkOrdersService {
         );
       }
 
-      if (wot.requiresPhotoSnapshot && exec._count.photos === 0) {
+      if (
+        wot.requiresPhotoSnapshot &&
+        exec.status === 'DONE' &&
+        exec._count.photos === 0
+      ) {
         throw new ConflictException(
-          `Task "${wot.nameSnapshot}" requires at least one photo.`,
+          `La tarea "${wot.nameSnapshot}" requiere al menos una foto para marcarse como hecha.`,
         );
       }
     }
@@ -415,14 +475,55 @@ export class WorkOrdersService {
     return this.findOne(id);
   }
 
-  // ─── PRIVATE HELPERS ──────────────────────────────────────────────────────
-
   private async assertWorkOrderExists(id: string) {
     const wo = await this.prisma.workOrder.findFirst({
       where: { id, deletedAt: null },
-      select: { id: true, status: true, buildingId: true },
+      select: {
+        id: true,
+        status: true,
+        buildingId: true,
+        scheduledDate: true,
+        deadlineAt: true,
+      },
     });
     if (!wo) throw new NotFoundException('Work order not found');
     return wo;
+  }
+
+  private assertWorkOrderNotExpired(wo: {
+    status: WorkOrderStatus;
+    scheduledDate: Date | null;
+    deadlineAt: Date | null;
+  }) {
+    const expirable = new Set<WorkOrderStatus>([
+      WorkOrderStatus.ASSIGNED,
+      WorkOrderStatus.ACCEPTED,
+    ]);
+    if (!expirable.has(wo.status)) return;
+
+    const now = new Date();
+    if (wo.deadlineAt && wo.deadlineAt.getTime() < now.getTime()) {
+      throw new UnprocessableEntityException('Work order has expired');
+    }
+    if (!wo.deadlineAt && wo.scheduledDate) {
+      const endOfDay = endOfStoredCalendarDateInBusinessTz(wo.scheduledDate);
+      if (endOfDay.getTime() < now.getTime()) {
+        throw new UnprocessableEntityException('Work order has expired');
+      }
+    }
+  }
+
+  /** Admin/manager global o del edificio consultado. */
+  private async hasStaffBuildingAccess(
+    userId: string,
+    buildingId?: string,
+  ): Promise<boolean> {
+    return !!(await this.prisma.userBuildingRole.findFirst({
+      where: {
+        userId,
+        role: { name: { in: ['admin', 'manager'] } },
+        OR: [{ buildingId: null }, ...(buildingId ? [{ buildingId }] : [])],
+      },
+    }));
   }
 }

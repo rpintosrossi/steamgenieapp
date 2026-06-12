@@ -12,6 +12,9 @@
     "db:migrate": "prisma migrate dev --schema=prisma/schema.prisma && tsx prisma/apply-constraints.ts",
     "db:deploy": "prisma migrate deploy --schema=prisma/schema.prisma && tsx prisma/apply-constraints.ts",
     "db:seed": "tsx prisma/seed.ts",
+    "db:seed-demo-wo": "tsx prisma/seed-demo-work-order.ts",
+    "db:seed-demo-services": "tsx prisma/seed-demo-services.ts",
+    "db:seed-building": "tsx prisma/seed-building-demo.ts",
     "db:studio": "prisma studio --schema=prisma/schema.prisma",
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\""
   },

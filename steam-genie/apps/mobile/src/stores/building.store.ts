@@ -36,17 +36,42 @@ export interface ServiceExecutionSummary {
   participants: { userId: string; joinedAt: string }[];
 }
 
+export interface WorkOrderLocationSnapshot {
+  id: string;
+  name: string;
+}
+
+export interface ReservationSnapshot {
+  guestName?: string | null;
+  checkinAt: string;
+  checkoutAt: string;
+  externalId?: string | null;
+  status?: string;
+  floor?: WorkOrderLocationSnapshot | null;
+  zone?: WorkOrderLocationSnapshot | null;
+  subzone?: WorkOrderLocationSnapshot | null;
+}
+
 export interface WorkOrderCached {
   id: string;
   status: string;
   type: string;
   title: string;
-  description: string | null;
+  description?: string | null;
   scheduledDate: string | null;
+  deadlineAt?: string | null;
   buildingId: string;
-  version: number;
-  workOrderTasks: WorkOrderTaskSnapshot[];
-  assignments: { userId: string; status: string }[];
+  floorId?: string | null;
+  zoneId?: string | null;
+  subzoneId?: string | null;
+  version?: number;
+  floor?: WorkOrderLocationSnapshot | null;
+  zone?: WorkOrderLocationSnapshot | null;
+  subzone?: WorkOrderLocationSnapshot | null;
+  reservation?: ReservationSnapshot | null;
+  workOrderTasks?: WorkOrderTaskSnapshot[];
+  assignments?: { userId: string; status: string }[];
+  _count?: { workOrderTasks: number; assignments: number };
 }
 
 export interface AttendanceCached {
@@ -56,6 +81,15 @@ export interface AttendanceCached {
   checkInGpsLat: string | null;
   checkInGpsLng: string | null;
   version: number;
+}
+
+export interface PeriodicTaskCached {
+  id: string;
+  name: string;
+  frequency: string;
+  zoneId: string | null;
+  subzoneId: string | null;
+  startDate: string;
 }
 
 export interface PrefetchData {
@@ -68,7 +102,7 @@ export interface PrefetchData {
   serviceExecutions: ServiceExecutionSummary[];
   activeAttendance: AttendanceCached | null;
   rejectionReasons: RejectionReason[];
-  periodicTasks: unknown[];
+  periodicTasks: PeriodicTaskCached[];
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -87,6 +121,7 @@ interface BuildingStore {
   clearBuilding: () => Promise<void>;
   restoreBuilding: () => Promise<string | null>;
   updateActiveAttendance: (attendance: AttendanceCached | null) => void;
+  patchWorkOrder: (id: string, patch: Partial<WorkOrderCached>) => void;
 }
 
 export const useBuildingStore = create<BuildingStore>((set, get) => ({
@@ -107,7 +142,21 @@ export const useBuildingStore = create<BuildingStore>((set, get) => ({
       const data = await apiService.get<PrefetchData>(
         `/sync/prefetch?buildingId=${buildingId}`,
       );
-      set({ prefetchData: data, selectedBuilding: data.building, isLoadingPrefetch: false });
+      set({
+        prefetchData: {
+          ...data,
+          floors: Array.isArray(data.floors) ? data.floors : [],
+          zones: Array.isArray(data.zones) ? data.zones : [],
+          subzones: Array.isArray(data.subzones) ? data.subzones : [],
+          periodicTasks: Array.isArray(data.periodicTasks) ? data.periodicTasks : [],
+          workOrders: Array.isArray(data.workOrders) ? data.workOrders : [],
+        },
+        selectedBuilding:
+          get().selectedBuilding?.id === data.building.id
+            ? get().selectedBuilding
+            : data.building,
+        isLoadingPrefetch: false,
+      });
     } catch (e) {
       set({
         prefetchError: e instanceof Error ? e.message : 'Error al cargar datos',
@@ -136,5 +185,18 @@ export const useBuildingStore = create<BuildingStore>((set, get) => ({
     const { prefetchData } = get();
     if (!prefetchData) return;
     set({ prefetchData: { ...prefetchData, activeAttendance: attendance } });
+  },
+
+  patchWorkOrder: (id, patch) => {
+    const { prefetchData } = get();
+    if (!prefetchData) return;
+    set({
+      prefetchData: {
+        ...prefetchData,
+        workOrders: prefetchData.workOrders.map((wo) =>
+          wo.id === id ? { ...wo, ...patch } : wo,
+        ),
+      },
+    });
   },
 }));

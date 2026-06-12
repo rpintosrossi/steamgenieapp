@@ -19,10 +19,6 @@ export class CreateReservationDto {
   zoneId!: string;
 
   @IsOptional()
-  @IsUUID()
-  subzoneId?: string;
-
-  @IsOptional()
   @IsString()
   @MaxLength(200)
   externalId?: string;

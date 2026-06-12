@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
 import { useAuthStore } from '../src/stores/auth.store';
 import { useBuildingStore } from '../src/stores/building.store';
@@ -13,6 +14,8 @@ export default function RootLayout() {
   const { setStatus } = useSyncStore();
   const router = useRouter();
   const segments = useSegments();
+  const rootNavigationState = useRootNavigationState();
+  const navigationReady = rootNavigationState?.key != null;
 
   // ── 1. Hydrate auth + init DB on mount ─────────────────────────────────────
   useEffect(() => {
@@ -35,11 +38,10 @@ export default function RootLayout() {
 
   // ── 3. Navigation guard ────────────────────────────────────────────────────
   useEffect(() => {
-    if (!isHydrated) return;
+    if (!isHydrated || !navigationReady) return;
 
     const inAuth = segments[0] === '(auth)';
     const inBuildingSelect = segments[0] === 'building-select';
-    const inTabs = segments[0] === '(tabs)';
 
     if (!accessToken) {
       if (!inAuth) router.replace('/(auth)/login');
@@ -54,9 +56,9 @@ export default function RootLayout() {
 
     // Logged in + building selected → go to tabs
     if (inAuth || inBuildingSelect) {
-      router.replace('/(tabs)/');
+      router.replace('/(tabs)');
     }
-  }, [accessToken, isHydrated, selectedBuilding, segments]);
+  }, [accessToken, isHydrated, selectedBuilding, segments, navigationReady]);
 
   // ── 4. NetInfo listener — sync when reconnected ───────────────────────────
   useEffect(() => {
@@ -70,14 +72,22 @@ export default function RootLayout() {
       setStatus('synced');
 
       // If there's a logged-in session, run sync on reconnect
-      const token = useAuthStore.getState().accessToken;
-      if (token) {
-        syncManager.syncAll(token).catch(() => {});
-        syncManager.refreshPendingCount().catch(() => {});
-      }
+      void useAuthStore
+        .getState()
+        .ensureAccessToken()
+        .then((token) => {
+          if (token) {
+            syncManager.syncAll().catch(() => {});
+            syncManager.refreshPendingCount().catch(() => {});
+          }
+        });
     });
     return unsubscribe;
   }, []);
 
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return (
+    <SafeAreaProvider>
+      <Stack screenOptions={{ headerShown: false }} />
+    </SafeAreaProvider>
+  );
 }

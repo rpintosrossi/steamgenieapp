@@ -1,6 +1,6 @@
 import { syncQueue, photoQueue, generateClientId } from './sync-queue';
 import { useSyncStore } from '../stores/sync.store';
-import { apiService } from '../services/api.service';
+import { useAuthStore } from '../stores/auth.store';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:4000';
 
@@ -152,7 +152,10 @@ class SyncManager {
   /**
    * Full sync: batch operations + pending photos.
    */
-  async syncAll(accessToken: string): Promise<void> {
+  async syncAll(): Promise<void> {
+    const accessToken = await useAuthStore.getState().ensureAccessToken();
+    if (!accessToken) return;
+
     await this.processBatch(accessToken);
     await this.uploadPendingPhotos(accessToken);
   }

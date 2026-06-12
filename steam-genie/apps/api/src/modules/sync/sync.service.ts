@@ -10,6 +10,7 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { AttendanceService } from '../attendance/attendance.service';
 import { WorkOrdersService } from '../work-orders/work-orders.service';
 import { ServiceExecutionsService } from '../service-executions/service-executions.service';
+import { TasksService } from '../tasks/tasks.service';
 import { PrefetchQueryDto } from './dto/prefetch-query.dto';
 import { SyncBatchDto, SyncOperationItemDto, SyncOperationType } from './dto/sync-batch.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
@@ -39,6 +40,7 @@ export class SyncService {
     private readonly attendanceService: AttendanceService,
     private readonly workOrdersService: WorkOrdersService,
     private readonly serviceExecutionsService: ServiceExecutionsService,
+    private readonly tasksService: TasksService,
   ) {}
 
   // ─── PREFETCH ─────────────────────────────────────────────────────────────
@@ -139,8 +141,27 @@ export class SyncService {
         title: true,
         description: true,
         scheduledDate: true,
+        deadlineAt: true,
         buildingId: true,
+        floorId: true,
+        zoneId: true,
+        subzoneId: true,
         version: true,
+        floor: { select: { id: true, name: true } },
+        zone: { select: { id: true, name: true } },
+        subzone: { select: { id: true, name: true } },
+        reservation: {
+          select: {
+            guestName: true,
+            checkinAt: true,
+            checkoutAt: true,
+            externalId: true,
+            status: true,
+            floor: { select: { id: true, name: true } },
+            zone: { select: { id: true, name: true } },
+            subzone: { select: { id: true, name: true } },
+          },
+        },
         workOrderTasks: {
           orderBy: { sortOrder: 'asc' },
           select: {
@@ -150,6 +171,7 @@ export class SyncService {
             requiresPhotoSnapshot: true,
             allowsObservationSnapshot: true,
             requiresRejectionReasonSnapshot: true,
+            task: { select: { zoneId: true, subzoneId: true } },
           },
         },
         assignments: {
@@ -434,6 +456,37 @@ export class SyncService {
             status: status as 'DONE' | 'NOT_DONE' | 'SKIPPED',
             rejectionReasonId: p.rejectionReasonId as string | undefined,
             observation: p.observation as string | undefined,
+            clientOperationId: op.clientOperationId,
+          },
+          user,
+        );
+        return {
+          clientOperationId: op.clientOperationId,
+          status: 'SUCCESS',
+          serverEntityId: record.id,
+          entityType: 'TASK_EXECUTION',
+          version: null,
+          error: null,
+        };
+      }
+
+      case SyncOperationType.MARK_PERIODIC_TASK: {
+        const periodicTaskInstanceId = (op.entityId ?? p.periodicTaskInstanceId) as
+          | string
+          | undefined;
+        const status = p.status as string | undefined;
+        if (!periodicTaskInstanceId || !status) {
+          throw new BadRequestException(
+            'MARK_PERIODIC_TASK payload requires: periodicTaskInstanceId, status',
+          );
+        }
+        const record = await this.tasksService.markPeriodicInstance(
+          periodicTaskInstanceId,
+          {
+            status: status as 'DONE' | 'NOT_DONE' | 'SKIPPED',
+            rejectionReasonId: p.rejectionReasonId as string | undefined,
+            observation: p.observation as string | undefined,
+            clientOperationId: op.clientOperationId,
           },
           user,
         );
@@ -551,8 +604,18 @@ export class SyncService {
       if (message.includes('already have an active check-in')) return 'ALREADY_CHECKED_IN';
       if (message.includes('already marked')) return 'TASK_ALREADY_MARKED';
       if (message.includes('already a participant')) return 'ALREADY_PARTICIPANT';
-      if (message.includes('task(s) not executed')) return 'CHECKLIST_INCOMPLETE';
-      if (message.includes('photo')) return 'PHOTO_REQUIRED';
+      if (
+        message.includes('task(s) not executed') ||
+        message.includes('tarea(s) sin ejecutar')
+      ) {
+        return 'CHECKLIST_INCOMPLETE';
+      }
+      if (
+        message.includes('requires at least one photo') ||
+        message.includes('requiere al menos una foto')
+      ) {
+        return 'PHOTO_REQUIRED';
+      }
       return 'CONFLICT';
     }
     if (status === 400) {

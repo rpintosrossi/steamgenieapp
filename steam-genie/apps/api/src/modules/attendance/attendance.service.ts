@@ -107,6 +107,63 @@ export class AttendanceService {
     });
   }
 
+  async findLast(userId: string) {
+    return this.prisma.attendance.findFirst({
+      where: { userId, deletedAt: null },
+      orderBy: { checkInAt: 'desc' },
+      select: {
+        id: true,
+        checkInAt: true,
+        checkOutAt: true,
+        building: { select: { id: true, name: true } },
+      },
+    });
+  }
+
+  async findTodaySummary(userId: string) {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+
+    const buildingSelect = {
+      id: true,
+      name: true,
+      address: true,
+      latitude: true,
+      longitude: true,
+      gpsRadiusM: true,
+    } as const;
+
+    const todayEntries = await this.prisma.attendance.findMany({
+      where: {
+        userId,
+        deletedAt: null,
+        checkInAt: { gte: start, lt: end },
+      },
+      orderBy: { checkInAt: 'desc' },
+      select: {
+        buildingId: true,
+        checkInAt: true,
+        checkOutAt: true,
+        building: { select: buildingSelect },
+      },
+    });
+
+    const activeEntry = todayEntries.find((entry) => entry.checkOutAt === null) ?? null;
+
+    return {
+      active: activeEntry
+        ? {
+            buildingId: activeEntry.buildingId,
+            checkInAt: activeEntry.checkInAt,
+            building: activeEntry.building,
+          }
+        : null,
+      todayEntries,
+    };
+  }
+
   // ─── FIND ALL (admin/manager) ─────────────────────────────────────────────
 
   async findAll(query: QueryAttendanceDto) {
@@ -190,6 +247,10 @@ export class AttendanceService {
     gpsLat: number,
     gpsLng: number,
   ) {
+    if (process.env.SKIP_GPS_VALIDATION === 'true') {
+      return;
+    }
+
     const building = await this.prisma.building.findFirst({
       where: { id: buildingId, isActive: true, deletedAt: null },
       select: { id: true, latitude: true, longitude: true, gpsRadiusM: true },

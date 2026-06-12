@@ -11,9 +11,11 @@
     ],
     "userInterfaceStyle": "automatic",
     "splash": {
+      "image": "./assets/images/logo-fondoazul.jpeg",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#0a1628"
     },
+    "icon": "./assets/images/logo-sinletras.png",
     "plugins": [
       "expo-router",
       "expo-secure-store",

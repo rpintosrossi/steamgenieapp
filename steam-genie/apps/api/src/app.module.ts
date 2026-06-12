@@ -23,6 +23,7 @@ import { HealthModule } from './health/health.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      ignoreEnvFile: process.env.NODE_ENV === 'production',
       envFilePath: join(__dirname, '../../../.env'),
     }),
     PrismaModule,

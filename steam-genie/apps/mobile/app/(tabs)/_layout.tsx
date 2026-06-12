@@ -33,15 +33,26 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="tareas"
+        options={{
+          title: 'Tareas',
+          tabBarIcon: ({ color }) => <TabIcon name="checkbox-outline" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="edificio"
+        options={{
+          title: 'Edificio',
+          tabBarIcon: ({ color }) => <TabIcon name="business-outline" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="profile"
         options={{
           title: 'Perfil',
           tabBarIcon: ({ color }) => <TabIcon name="person-outline" color={color} />,
         }}
       />
-      {/* Hidden tabs from old scaffold */}
-      <Tabs.Screen name="tasks" options={{ href: null }} />
-      <Tabs.Screen name="requests" options={{ href: null }} />
     </Tabs>
   );
 }
