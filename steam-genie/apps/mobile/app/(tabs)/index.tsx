@@ -66,7 +66,7 @@ interface LastAttendanceSummary {
 
 export default function FichajeScreen() {
   const router = useRouter();
-  const { selectedBuilding, prefetchData, isLoadingPrefetch, refreshPrefetch, clearBuilding } =
+  const { selectedBuilding, prefetchData, isLoadingPrefetch, refreshPrefetch, clearBuilding, syncActiveAttendance } =
     useBuildingStore();
   const user = useAuthStore((s) => s.user);
   const { isConnected } = useNetworkStatus();
@@ -141,9 +141,12 @@ export default function FichajeScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      if (isOnline) {
+        void syncActiveAttendance();
+      }
       void loadWorkOrders();
       void loadLastCheckIn();
-    }, [loadWorkOrders, loadLastCheckIn]),
+    }, [isOnline, syncActiveAttendance, loadWorkOrders, loadLastCheckIn]),
   );
 
   useEffect(() => {

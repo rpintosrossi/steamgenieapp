@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import * as Location from 'expo-location';
-import { apiService } from '../services/api.service';
+import { apiService, ApiRequestError } from '../services/api.service';
 import { syncQueue, generateClientId } from '../sync/sync-queue';
 import { useBuildingStore, AttendanceCached } from '../stores/building.store';
 import { useSyncStore } from '../stores/sync.store';
@@ -16,35 +16,30 @@ export function useAttendance(isOnline: boolean) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { selectedBuilding, prefetchData, updateActiveAttendance } = useBuildingStore();
+  const { selectedBuilding, prefetchData, updateActiveAttendance, syncActiveAttendance } =
+    useBuildingStore();
   const { setStatus } = useSyncStore();
 
   const activeAttendance = prefetchData?.activeAttendance ?? null;
 
-  async function fetchActiveAttendance(): Promise<AttendanceCached | null> {
-    const active = await apiService.get<ActiveAttendanceResponse | null>(
-      '/attendance/active',
-    );
-    return active ? mapActiveAttendance(active) : null;
+  async function reconcileCheckIn(buildingId: string): Promise<boolean> {
+    const active = await syncActiveAttendance();
+    if (active?.buildingId === buildingId) return true;
+    return false;
   }
 
-  /** Si la red falló pero el servidor sí registró el fichaje, sincroniza estado local. */
-  async function reconcileAfterNetworkError(
-    mode: 'check-in' | 'check-out',
-    buildingId?: string,
-  ): Promise<boolean> {
-    try {
-      const active = await fetchActiveAttendance();
-      if (mode === 'check-in' && buildingId && active?.buildingId === buildingId) {
-        updateActiveAttendance(active);
-        return true;
-      }
-      if (mode === 'check-out' && !active) {
-        updateActiveAttendance(null);
-        return true;
-      }
-    } catch {
-      // ignore reconciliation errors
+  async function reconcileCheckOut(): Promise<boolean> {
+    const active = await syncActiveAttendance();
+    return active === null;
+  }
+
+  function isAlreadyCheckedInError(error: unknown): boolean {
+    if (error instanceof ApiRequestError && error.statusCode === 409) return true;
+    if (
+      error instanceof Error &&
+      error.message.toLowerCase().includes('already have an active check-in')
+    ) {
+      return true;
     }
     return false;
   }
@@ -120,19 +115,22 @@ export function useAttendance(isOnline: boolean) {
       }
       return true;
     } catch (e) {
-      if (isOnline && isNetworkError(e) && selectedBuilding) {
-        const reconciled = await reconcileAfterNetworkError(
-          'check-in',
-          selectedBuilding.id,
-        );
-        if (reconciled) return true;
+      if (isOnline && selectedBuilding) {
+        if (isAlreadyCheckedInError(e)) {
+          const reconciled = await reconcileCheckIn(selectedBuilding.id);
+          if (reconciled) return true;
+        }
+        if (isNetworkError(e)) {
+          const reconciled = await reconcileCheckIn(selectedBuilding.id);
+          if (reconciled) return true;
+        }
       }
       setError(e instanceof Error ? e.message : 'Error al fichar entrada');
       return false;
     } finally {
       setIsLoading(false);
     }
-  }, [selectedBuilding, isOnline, updateActiveAttendance, setStatus]);
+  }, [selectedBuilding, isOnline, updateActiveAttendance, syncActiveAttendance, setStatus]);
 
   const checkOut = useCallback(async (): Promise<boolean> => {
     setIsLoading(true);
@@ -169,16 +167,26 @@ export function useAttendance(isOnline: boolean) {
       }
       return true;
     } catch (e) {
-      if (isOnline && isNetworkError(e)) {
-        const reconciled = await reconcileAfterNetworkError('check-out');
-        if (reconciled) return true;
+      if (isOnline) {
+        if (isNetworkError(e)) {
+          const reconciled = await reconcileCheckOut();
+          if (reconciled) return true;
+        }
       }
       setError(e instanceof Error ? e.message : 'Error al fichar salida');
       return false;
     } finally {
       setIsLoading(false);
     }
-  }, [isOnline, updateActiveAttendance, setStatus]);
+  }, [isOnline, updateActiveAttendance, syncActiveAttendance, setStatus]);
 
-  return { activeAttendance, isLoading, error, checkIn, checkOut, clearError: () => setError(null) };
+  return {
+    activeAttendance,
+    isLoading,
+    error,
+    checkIn,
+    checkOut,
+    syncAttendance: syncActiveAttendance,
+    clearError: () => setError(null),
+  };
 }

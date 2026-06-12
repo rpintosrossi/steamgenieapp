@@ -10,6 +10,16 @@ export interface ApiError {
 
 type RequestOptions = RequestInit & { _retried?: boolean; skipAuth?: boolean };
 
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number,
+  ) {
+    super(message);
+    this.name = 'ApiRequestError';
+  }
+}
+
 function extractErrorMessage(errBody: unknown, fallback: string): string {
   if (!errBody || typeof errBody !== 'object') return fallback;
 
@@ -75,7 +85,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   if (!res.ok) {
     const errBody = await res.json().catch(() => ({ message: res.statusText }));
-    throw new Error(extractErrorMessage(errBody, res.statusText || 'Error desconocido'));
+    const message = extractErrorMessage(errBody, res.statusText || 'Error desconocido');
+    throw new ApiRequestError(message, res.status);
   }
 
   return res.json() as Promise<T>;
@@ -111,7 +122,8 @@ async function requestMultipart<T>(
 
   if (!res.ok) {
     const errBody = await res.json().catch(() => ({ message: res.statusText }));
-    throw new Error(extractErrorMessage(errBody, res.statusText || 'Error desconocido'));
+    const message = extractErrorMessage(errBody, res.statusText || 'Error desconocido');
+    throw new ApiRequestError(message, res.status);
   }
 
   return res.json() as Promise<T>;
@@ -132,4 +144,4 @@ export const apiService = {
     requestMultipart<T>(path, formData),
   getBaseUrl: () => API_BASE_URL,
 };
-
+

@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
 import { apiService } from '../services/api.service';
+import {
+  mapActiveAttendance,
+  type ActiveAttendanceResponse,
+} from '../utils/attendance';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -121,6 +125,7 @@ interface BuildingStore {
   clearBuilding: () => Promise<void>;
   restoreBuilding: () => Promise<string | null>;
   updateActiveAttendance: (attendance: AttendanceCached | null) => void;
+  syncActiveAttendance: () => Promise<AttendanceCached | null>;
   patchWorkOrder: (id: string, patch: Partial<WorkOrderCached>) => void;
 }
 
@@ -182,9 +187,39 @@ export const useBuildingStore = create<BuildingStore>((set, get) => ({
   },
 
   updateActiveAttendance: (attendance) => {
-    const { prefetchData } = get();
-    if (!prefetchData) return;
-    set({ prefetchData: { ...prefetchData, activeAttendance: attendance } });
+    const { prefetchData, selectedBuilding } = get();
+    if (prefetchData) {
+      set({ prefetchData: { ...prefetchData, activeAttendance: attendance } });
+      return;
+    }
+    if (!selectedBuilding) return;
+    set({
+      prefetchData: {
+        serverTime: new Date().toISOString(),
+        building: selectedBuilding,
+        floors: [],
+        zones: [],
+        subzones: [],
+        workOrders: [],
+        serviceExecutions: [],
+        activeAttendance: attendance,
+        rejectionReasons: [],
+        periodicTasks: [],
+      },
+    });
+  },
+
+  syncActiveAttendance: async () => {
+    try {
+      const active = await apiService.get<ActiveAttendanceResponse | null>(
+        '/attendance/active',
+      );
+      const mapped = active ? mapActiveAttendance(active) : null;
+      get().updateActiveAttendance(mapped);
+      return mapped;
+    } catch {
+      return get().prefetchData?.activeAttendance ?? null;
+    }
   },
 
   patchWorkOrder: (id, patch) => {
