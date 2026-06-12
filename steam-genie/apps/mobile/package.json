@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "build:apk": "pnpm dlx eas-cli build --platform android --profile preview",
     "build:android": "pnpm dlx eas-cli build --platform android --profile production",
-    "eas-build-post-install": "bash ../../scripts/eas-build-packages.sh"
+    "eas-build-post-install": "cd ../.. && pnpm --filter @steam-genie/shared-constants build && pnpm --filter @steam-genie/shared-types build && pnpm --filter @steam-genie/shared-validators build"
   },
   "dependencies": {
     "@expo/metro-runtime": "^6.1.2",
