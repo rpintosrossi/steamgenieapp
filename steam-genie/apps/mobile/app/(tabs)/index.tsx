@@ -227,6 +227,7 @@ export default function FichajeScreen() {
           <RefreshControl
             refreshing={isLoadingPrefetch}
             onRefresh={async () => {
+              await syncActiveAttendance();
               await refreshPrefetch();
               await loadWorkOrders();
               await loadLastCheckIn();

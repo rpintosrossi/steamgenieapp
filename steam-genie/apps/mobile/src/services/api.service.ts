@@ -92,6 +92,53 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return res.json() as Promise<T>;
 }
 
+/** POST que solo exige HTTP 2xx; no parsea JSON (evita fallos al leer body grande). */
+async function postOk(
+  path: string,
+  body: unknown,
+  options: RequestOptions = {},
+): Promise<void> {
+  const { _retried, skipAuth, ...fetchOptions } = options;
+  const headers = await buildAuthHeaders(skipAuth);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      ...fetchOptions,
+      headers: {
+        ...headers,
+        ...(fetchOptions.headers ?? {}),
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Network request failed';
+    throw new Error(message);
+  }
+
+  if (res.status === 401 && !skipAuth && !_retried) {
+    const newToken = await useAuthStore.getState().refreshTokens();
+    if (newToken) {
+      return postOk(path, body, { ...options, _retried: true });
+    }
+    throw new Error('Sesión expirada. Volvé a iniciar sesión.');
+  }
+
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({ message: res.statusText }));
+    const message = extractErrorMessage(errBody, res.statusText || 'Error desconocido');
+    throw new ApiRequestError(message, res.status);
+  }
+
+  try {
+    await res.text();
+  } catch {
+    // 2xx pero body perdido — operación probablemente aplicada en servidor.
+  }
+}
+
 // ─── Multipart upload ─────────────────────────────────────────────────────────
 
 async function requestMultipart<T>(
@@ -135,6 +182,7 @@ export const apiService = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
+  postOk: (path: string, body: unknown) => postOk(path, body),
   put: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown) =>

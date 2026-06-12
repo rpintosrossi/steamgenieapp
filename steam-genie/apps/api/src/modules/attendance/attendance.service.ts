@@ -76,6 +76,14 @@ export class AttendanceService {
       where: { userId: user.id, checkOutAt: null, deletedAt: null },
     });
     if (!attendance) {
+      // Idempotente: reintento o UI desincronizada — ya fichó salida.
+      const lastClosed = await this.prisma.attendance.findFirst({
+        where: { userId: user.id, deletedAt: null, checkOutAt: { not: null } },
+        orderBy: { checkOutAt: 'desc' },
+      });
+      if (lastClosed) {
+        return { ok: true as const, attendanceId: lastClosed.id };
+      }
       throw new NotFoundException('No active check-in found for this user');
     }
 
@@ -94,7 +102,7 @@ export class AttendanceService {
       },
     });
 
-    return this.findById(attendance.id);
+    return { ok: true as const, attendanceId: attendance.id };
   }
 
   // ─── FIND ACTIVE ──────────────────────────────────────────────────────────

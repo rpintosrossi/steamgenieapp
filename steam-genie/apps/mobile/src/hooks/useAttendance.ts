@@ -9,8 +9,14 @@ import {
   type ActiveAttendanceResponse,
 } from '../utils/attendance';
 import { isNetworkError } from '../utils/network';
+import { sleep } from '../utils/async';
 
 export type AttendanceAction = 'check-in' | 'check-out';
+
+/** Esperas entre reintentos cuando el POST falla pero el servidor pudo haber procesado. */
+const RECONCILE_DELAYS_MS = [0, 500, 1200, 2500] as const;
+/** Salida suele tardar más en propagarse; más ventana + prefetch como fallback. */
+const RECONCILE_CHECKOUT_DELAYS_MS = [0, 500, 1200, 2500, 4000, 6000] as const;
 
 export function useAttendance(isOnline: boolean) {
   const [isLoading, setIsLoading] = useState(false);
@@ -24,14 +30,51 @@ export function useAttendance(isOnline: boolean) {
   const activeAttendance = prefetchData?.activeAttendance ?? null;
 
   async function reconcileCheckIn(buildingId: string): Promise<boolean> {
-    const active = await syncActiveAttendance();
-    if (active?.buildingId === buildingId) return true;
+    for (const delayMs of RECONCILE_DELAYS_MS) {
+      if (delayMs > 0) await sleep(delayMs);
+      try {
+        const active = await apiService.get<ActiveAttendanceResponse | null>(
+          '/attendance/active',
+        );
+        const mapped = active ? mapActiveAttendance(active) : null;
+        updateActiveAttendance(mapped);
+        if (mapped?.buildingId === buildingId) return true;
+      } catch {
+        // Reintentar: red inestable o el servidor aún no reflejó el fichaje.
+      }
+    }
     return false;
   }
 
   async function reconcileCheckOut(): Promise<boolean> {
-    const active = await syncActiveAttendance();
-    return active === null;
+    const { selectedBuilding, refreshPrefetch } = useBuildingStore.getState();
+
+    for (const delayMs of RECONCILE_CHECKOUT_DELAYS_MS) {
+      if (delayMs > 0) await sleep(delayMs);
+
+      try {
+        const active = await apiService.get<ActiveAttendanceResponse | null>(
+          '/attendance/active',
+        );
+        const mapped = active ? mapActiveAttendance(active) : null;
+        updateActiveAttendance(mapped);
+        if (mapped === null) return true;
+      } catch {
+        // Reintentar
+      }
+
+      if (selectedBuilding) {
+        try {
+          await refreshPrefetch();
+          const activeAfterPrefetch =
+            useBuildingStore.getState().prefetchData?.activeAttendance ?? null;
+          if (activeAfterPrefetch === null) return true;
+        } catch {
+          // Reintentar
+        }
+      }
+    }
+    return false;
   }
 
   function isAlreadyCheckedInError(error: unknown): boolean {
@@ -45,14 +88,33 @@ export function useAttendance(isOnline: boolean) {
     return false;
   }
 
+  function isAlreadyCheckedOutError(error: unknown): boolean {
+    if (error instanceof ApiRequestError && error.statusCode === 404) return true;
+    if (
+      error instanceof Error &&
+      error.message.toLowerCase().includes('no active check-in')
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   async function getGps(): Promise<{ gpsLat: number; gpsLng: number }> {
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
       throw new Error('GPS obligatorio. Habilitá los permisos de ubicación en Configuración.');
     }
 
+    const lastKnown = await Location.getLastKnownPositionAsync();
+    if (lastKnown && Date.now() - lastKnown.timestamp < 60_000) {
+      return {
+        gpsLat: lastKnown.coords.latitude,
+        gpsLng: lastKnown.coords.longitude,
+      };
+    }
+
     const location = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.High,
+      accuracy: Location.Accuracy.Balanced,
     });
 
     return {
@@ -119,13 +181,14 @@ export function useAttendance(isOnline: boolean) {
       return true;
     } catch (e) {
       if (isOnline && selectedBuilding) {
-        if (isAlreadyCheckedInError(e)) {
+        const shouldReconcile =
+          isNetworkError(e) || isAlreadyCheckedInError(e);
+        if (shouldReconcile) {
           const reconciled = await reconcileCheckIn(selectedBuilding.id);
-          if (reconciled) return true;
-        }
-        if (isNetworkError(e)) {
-          const reconciled = await reconcileCheckIn(selectedBuilding.id);
-          if (reconciled) return true;
+          if (reconciled) {
+            setError(null);
+            return true;
+          }
         }
       }
       setError(e instanceof Error ? e.message : 'Error al fichar entrada');
@@ -147,10 +210,11 @@ export function useAttendance(isOnline: boolean) {
       const occurredAt = new Date().toISOString();
 
       if (isOnline) {
-        await apiService.post('/attendance/check-out', {
+        await apiService.postOk('/attendance/check-out', {
           gpsLat,
           gpsLng,
           occurredAt,
+          deviceId: 'mobile',
         });
         updateActiveAttendance(null);
       } else {
@@ -174,9 +238,14 @@ export function useAttendance(isOnline: boolean) {
       return true;
     } catch (e) {
       if (isOnline) {
-        if (isNetworkError(e)) {
+        const shouldReconcile =
+          isNetworkError(e) || isAlreadyCheckedOutError(e);
+        if (shouldReconcile) {
           const reconciled = await reconcileCheckOut();
-          if (reconciled) return true;
+          if (reconciled) {
+            setError(null);
+            return true;
+          }
         }
       }
       setError(e instanceof Error ? e.message : 'Error al fichar salida');

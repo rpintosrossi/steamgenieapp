@@ -413,9 +413,9 @@ export class SyncService {
         return {
           clientOperationId: op.clientOperationId,
           status: 'SUCCESS',
-          serverEntityId: attendance.id,
+          serverEntityId: attendance.attendanceId,
           entityType: 'ATTENDANCE',
-          version: (attendance as { version?: number }).version ?? null,
+          version: null,
           error: null,
         };
       }
