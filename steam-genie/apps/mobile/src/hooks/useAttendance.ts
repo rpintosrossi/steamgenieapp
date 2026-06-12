@@ -1,9 +1,14 @@
 import { useState, useCallback } from 'react';
 import * as Location from 'expo-location';
 import { apiService } from '../services/api.service';
-import { syncQueue, photoQueue, generateClientId } from '../sync/sync-queue';
+import { syncQueue, generateClientId } from '../sync/sync-queue';
 import { useBuildingStore, AttendanceCached } from '../stores/building.store';
 import { useSyncStore } from '../stores/sync.store';
+import {
+  mapActiveAttendance,
+  type ActiveAttendanceResponse,
+} from '../utils/attendance';
+import { isNetworkError } from '../utils/network';
 
 export type AttendanceAction = 'check-in' | 'check-out';
 
@@ -15,6 +20,34 @@ export function useAttendance(isOnline: boolean) {
   const { setStatus } = useSyncStore();
 
   const activeAttendance = prefetchData?.activeAttendance ?? null;
+
+  async function fetchActiveAttendance(): Promise<AttendanceCached | null> {
+    const active = await apiService.get<ActiveAttendanceResponse | null>(
+      '/attendance/active',
+    );
+    return active ? mapActiveAttendance(active) : null;
+  }
+
+  /** Si la red falló pero el servidor sí registró el fichaje, sincroniza estado local. */
+  async function reconcileAfterNetworkError(
+    mode: 'check-in' | 'check-out',
+    buildingId?: string,
+  ): Promise<boolean> {
+    try {
+      const active = await fetchActiveAttendance();
+      if (mode === 'check-in' && buildingId && active?.buildingId === buildingId) {
+        updateActiveAttendance(active);
+        return true;
+      }
+      if (mode === 'check-out' && !active) {
+        updateActiveAttendance(null);
+        return true;
+      }
+    } catch {
+      // ignore reconciliation errors
+    }
+    return false;
+  }
 
   async function getGps(): Promise<{ gpsLat: number; gpsLng: number }> {
     const { status } = await Location.requestForegroundPermissionsAsync();
@@ -45,29 +78,19 @@ export function useAttendance(isOnline: boolean) {
       const occurredAt = new Date().toISOString();
 
       if (isOnline) {
-        const attendance = await apiService.post<{
-          id: string;
-          buildingId: string;
-          checkInAt: string;
-          checkInGpsLat: number | string | null;
-          checkInGpsLng: number | string | null;
-          version?: number;
-        }>('/attendance/check-in', {
-          buildingId: selectedBuilding.id,
-          gpsLat,
-          gpsLng,
-          occurredAt,
-        });
-        updateActiveAttendance({
-          id: attendance.id,
-          buildingId: attendance.buildingId,
-          checkInAt: attendance.checkInAt,
-          checkInGpsLat:
-            attendance.checkInGpsLat != null ? String(attendance.checkInGpsLat) : null,
-          checkInGpsLng:
-            attendance.checkInGpsLng != null ? String(attendance.checkInGpsLng) : null,
-          version: attendance.version ?? 1,
-        });
+        const clientOperationId = generateClientId();
+        const attendance = await apiService.post<ActiveAttendanceResponse>(
+          '/attendance/check-in',
+          {
+            buildingId: selectedBuilding.id,
+            gpsLat,
+            gpsLng,
+            occurredAt,
+            clientOperationId,
+            deviceId: 'mobile',
+          },
+        );
+        updateActiveAttendance(mapActiveAttendance(attendance));
       } else {
         const clientOperationId = generateClientId();
         await syncQueue.enqueue({
@@ -97,6 +120,13 @@ export function useAttendance(isOnline: boolean) {
       }
       return true;
     } catch (e) {
+      if (isOnline && isNetworkError(e) && selectedBuilding) {
+        const reconciled = await reconcileAfterNetworkError(
+          'check-in',
+          selectedBuilding.id,
+        );
+        if (reconciled) return true;
+      }
       setError(e instanceof Error ? e.message : 'Error al fichar entrada');
       return false;
     } finally {
@@ -139,6 +169,10 @@ export function useAttendance(isOnline: boolean) {
       }
       return true;
     } catch (e) {
+      if (isOnline && isNetworkError(e)) {
+        const reconciled = await reconcileAfterNetworkError('check-out');
+        if (reconciled) return true;
+      }
       setError(e instanceof Error ? e.message : 'Error al fichar salida');
       return false;
     } finally {

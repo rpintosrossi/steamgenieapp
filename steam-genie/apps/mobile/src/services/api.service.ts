@@ -50,13 +50,20 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   const headers = await buildAuthHeaders(skipAuth);
 
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    ...fetchOptions,
-    headers: {
-      ...headers,
-      ...(fetchOptions.headers ?? {}),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, {
+      ...fetchOptions,
+      headers: {
+        ...headers,
+        ...(fetchOptions.headers ?? {}),
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Network request failed';
+    throw new Error(message);
+  }
 
   if (res.status === 401 && !skipAuth && !_retried) {
     const newToken = await useAuthStore.getState().refreshTokens();

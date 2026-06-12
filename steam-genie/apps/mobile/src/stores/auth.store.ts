@@ -88,7 +88,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         await persistTokens(data.accessToken, data.refreshToken);
         set({ accessToken: data.accessToken, refreshToken: data.refreshToken });
         return data.accessToken;
-      } catch {
+      } catch (error) {
+        if (
+          error instanceof TypeError ||
+          (error instanceof Error && error.message.toLowerCase().includes('network'))
+        ) {
+          return null;
+        }
         await get().logout();
         return null;
       } finally {
