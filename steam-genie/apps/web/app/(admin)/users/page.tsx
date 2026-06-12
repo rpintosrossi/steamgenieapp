@@ -83,7 +83,9 @@ export default function UsersPage() {
       setItems(usersRes.data);
       setRoles(rolesRes);
       setBuildings(buildingsRes.data);
-      if (!roleId && rolesRes[0]) setRoleId(rolesRes[0].id);
+      const defaultRole =
+        rolesRes.find((role) => role.name === 'cleaner') ?? rolesRes[0];
+      if (!roleId && defaultRole) setRoleId(defaultRole.id);
 
       const details = await Promise.all(
         usersRes.data.map((user) => api.get<UserDetail>(`/users/${user.id}`)),

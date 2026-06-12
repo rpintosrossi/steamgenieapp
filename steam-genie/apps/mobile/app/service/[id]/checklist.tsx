@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import {
   View,
   Text,
@@ -130,6 +130,7 @@ export default function ChecklistScreen() {
   const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   const [selectedSubzoneId, setSelectedSubzoneId] = useState<string | null>(null);
+  const prefetchForReasonsAttempted = useRef(false);
 
   const floors = prefetchData?.floors ?? [];
   const zones = prefetchData?.zones ?? [];
@@ -173,13 +174,18 @@ export default function ChecklistScreen() {
   }, [selectedZone, selectedSubzoneId]);
 
   const loadTasks = useCallback(async (mode: 'initial' | 'refresh' | 'silent' = 'initial') => {
-    if (!seId) return;
+    if (!seId) {
+      if (mode === 'initial') setIsLoading(false);
+      return;
+    }
     if (mode === 'initial') setIsLoading(true);
     if (mode === 'refresh') setIsRefreshing(true);
     try {
       const data = await apiService.get<TaskExecutionItem[]>(`/service-executions/${seId}/tasks`);
       const items = Array.isArray(data) ? data : [];
-      const cachedWo = prefetchData?.workOrders.find((wo) => wo.id === workOrderId);
+      const cachedWo = useBuildingStore
+        .getState()
+        .prefetchData?.workOrders.find((wo) => wo.id === workOrderId);
       setTasks(
         items.map((item) => ({
           ...item,
@@ -196,17 +202,28 @@ export default function ChecklistScreen() {
       if (mode === 'initial') setIsLoading(false);
       if (mode === 'refresh') setIsRefreshing(false);
     }
-  }, [seId, workOrderId, prefetchData?.workOrders]);
+  }, [seId, workOrderId]);
 
   useEffect(() => {
-    if (seId) loadTasks();
-  }, [seId, loadTasks]);
+    prefetchForReasonsAttempted.current = false;
+    if (!seId) {
+      setIsLoading(false);
+      return;
+    }
+    void loadTasks('initial');
+  }, [seId, workOrderId, loadTasks]);
 
   useEffect(() => {
     const needsReasons = tasks.some((t) => t.requiresRejectionReasonSnapshot);
-    if (needsReasons && taskNotDoneReasons.length === 0) {
-      refreshPrefetch();
+    if (
+      !needsReasons ||
+      taskNotDoneReasons.length > 0 ||
+      prefetchForReasonsAttempted.current
+    ) {
+      return;
     }
+    prefetchForReasonsAttempted.current = true;
+    void refreshPrefetch();
   }, [tasks, taskNotDoneReasons.length, refreshPrefetch]);
 
   async function markTask(

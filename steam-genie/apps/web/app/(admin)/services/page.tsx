@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../../lib/api-client';
 import {
   ASSIGNMENT_STATUS_LABELS,
+  ROLE_LABELS,
   WORK_ORDER_STATUS_LABELS,
   WORK_ORDER_TYPE_LABELS,
 } from '../../../lib/labels';
@@ -41,6 +42,7 @@ export default function ServicesPage() {
 
   const [assigningWo, setAssigningWo] = useState<WorkOrderListItem | null>(null);
   const [cleaners, setCleaners] = useState<UserItem[]>([]);
+  const [buildingUsersWrongRole, setBuildingUsersWrongRole] = useState<UserItem[]>([]);
   const [selectedCleanerIds, setSelectedCleanerIds] = useState<string[]>([]);
   const [loadingAssign, setLoadingAssign] = useState(false);
   const [savingAssign, setSavingAssign] = useState(false);
@@ -82,9 +84,18 @@ export default function ServicesPage() {
     );
   }, [assigningWo]);
 
+  function hasCleanerRoleOnBuilding(user: UserItem, buildingId: string): boolean {
+    return (user.buildingRoles ?? []).some(
+      (assignment) =>
+        assignment.role.name === 'cleaner' &&
+        (assignment.buildingId === buildingId || assignment.buildingId === null),
+    );
+  }
+
   async function openAssign(wo: WorkOrderListItem) {
     setAssigningWo(wo);
     setSelectedCleanerIds([]);
+    setBuildingUsersWrongRole([]);
     setLoadingAssign(true);
     setError(null);
     setSuccess(null);
@@ -93,9 +104,19 @@ export default function ServicesPage() {
         `/users?role=cleaner&buildingId=${wo.buildingId}&isActive=true&limit=100`,
       );
       setCleaners(res.data);
+
+      if (res.data.length === 0) {
+        const onBuilding = await api.get<Paginated<UserItem>>(
+          `/users?buildingId=${wo.buildingId}&isActive=true&limit=100`,
+        );
+        setBuildingUsersWrongRole(
+          onBuilding.data.filter((user) => !hasCleanerRoleOnBuilding(user, wo.buildingId)),
+        );
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudieron cargar los limpiadores');
       setCleaners([]);
+      setBuildingUsersWrongRole([]);
     } finally {
       setLoadingAssign(false);
     }
@@ -104,6 +125,7 @@ export default function ServicesPage() {
   function closeAssign() {
     setAssigningWo(null);
     setCleaners([]);
+    setBuildingUsersWrongRole([]);
     setSelectedCleanerIds([]);
   }
 
@@ -263,10 +285,27 @@ export default function ServicesPage() {
             {loadingAssign ? (
               <p className="muted">Cargando limpiadores…</p>
             ) : cleaners.length === 0 ? (
-              <p className="muted">
-                No hay limpiadores activos asignados a este edificio. Creá o editá usuarios con rol
-                limpiador y edificio correspondiente.
-              </p>
+              <div className="stack" style={{ gap: 8 }}>
+                <p className="muted">
+                  No hay limpiadores activos con rol <strong>Limpiador</strong> en este edificio.
+                  En Usuarios, editá cada persona y asignale rol Limpiador + el edificio correspondiente
+                  (no alcanza con Administrador o Encargado).
+                </p>
+                {buildingUsersWrongRole.length > 0 ? (
+                  <div className="alert alert-info">
+                    Usuarios activos en este edificio con otro rol:{' '}
+                    {buildingUsersWrongRole
+                      .map((user) => {
+                        const assignment = (user.buildingRoles ?? []).find(
+                          (item) => item.buildingId === assigningWo.buildingId,
+                        );
+                        const roleName = assignment?.role.name ?? user.primaryRole;
+                        return `${user.fullName} (${ROLE_LABELS[roleName] ?? roleName})`;
+                      })
+                      .join(', ')}
+                  </div>
+                ) : null}
+              </div>
             ) : (
               <div className="checkbox-grid">
                 {cleaners.map((cleaner) => {

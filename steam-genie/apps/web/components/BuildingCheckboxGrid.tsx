@@ -1,5 +1,7 @@
 'use client';
 
+import { ROLE_LABELS } from '../lib/labels';
+
 interface BuildingOption {
   id: string;
   name: string;
@@ -88,13 +90,22 @@ export function formatUserBuildings(
   assignments: Array<{
     buildingId: string | null;
     building: { name: string } | null;
+    role?: { name: string };
   }>,
 ): string {
-  const names = assignments
-    .filter((item) => item.buildingId && item.building?.name)
-    .map((item) => item.building!.name);
+  const scoped = assignments.filter((item) => item.buildingId && item.building?.name);
 
-  if (names.length === 0) return 'Global';
-  if (names.length <= 2) return names.join(', ');
-  return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
+  if (scoped.length === 0) {
+    const hasGlobal = assignments.some((item) => !item.buildingId);
+    return hasGlobal ? 'Global' : '—';
+  }
+
+  const labels = scoped.map((item) => {
+    const roleLabel = item.role?.name ? (ROLE_LABELS[item.role.name] ?? item.role.name) : null;
+    const buildingName = item.building!.name.trim();
+    return roleLabel ? `${roleLabel} · ${buildingName}` : buildingName;
+  });
+
+  if (labels.length <= 2) return labels.join(', ');
+  return `${labels.slice(0, 2).join(', ')} +${labels.length - 2}`;
 }

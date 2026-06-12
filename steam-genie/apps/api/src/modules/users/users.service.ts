@@ -48,24 +48,52 @@ export class UsersService {
       where.isActive = isActive;
     }
 
-    if (role || buildingId) {
-      where.buildingRoles = {
-        some: {
-          ...(role ? { role: { name: role } } : {}),
-          ...(buildingId
-            ? { OR: [{ buildingId }, { buildingId: null }] }
-            : {}),
+    if (role && buildingId) {
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : []),
+        {
+          OR: [
+            {
+              buildingRoles: {
+                some: { role: { name: role }, buildingId },
+              },
+            },
+            {
+              buildingRoles: {
+                some: { role: { name: role }, buildingId: null },
+              },
+            },
+          ],
         },
-      };
+      ];
+    } else if (role) {
+      where.buildingRoles = { some: { role: { name: role } } };
+    } else if (buildingId) {
+      where.buildingRoles = { some: { buildingId } };
     }
+
+    const includeBuildingRoles = Boolean(role || buildingId);
 
     const [data, total] = await Promise.all([
       this.prisma.user.findMany({
         where,
-        select: USER_SELECT,
+        select: {
+          ...USER_SELECT,
+          ...(includeBuildingRoles
+            ? {
+                buildingRoles: {
+                  select: {
+                    buildingId: true,
+                    role: { select: { id: true, name: true } },
+                    building: { select: { id: true, name: true } },
+                  },
+                },
+              }
+            : {}),
+        },
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { fullName: 'asc' },
       }),
       this.prisma.user.count({ where }),
     ]);
@@ -284,6 +312,20 @@ export class UsersService {
             grantedById,
           })),
         });
+      } else {
+        const existingGlobal = await tx.userBuildingRole.findFirst({
+          where: { userId, roleId: dto.roleId, buildingId: null },
+        });
+        if (!existingGlobal) {
+          await tx.userBuildingRole.create({
+            data: {
+              userId,
+              roleId: dto.roleId,
+              buildingId: null,
+              grantedById,
+            },
+          });
+        }
       }
 
       const assignments = await tx.userBuildingRole.findMany({

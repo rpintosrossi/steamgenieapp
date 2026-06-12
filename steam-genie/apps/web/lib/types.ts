@@ -79,6 +79,7 @@ export interface UserItem {
   birthDate?: string | null;
   primaryRole: string;
   isActive: boolean;
+  buildingRoles?: UserBuildingRoleItem[];
 }
 
 export interface UserDetail extends UserItem {
