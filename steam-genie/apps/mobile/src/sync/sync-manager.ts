@@ -1,9 +1,7 @@
 import { syncQueue, photoQueue, generateClientId } from './sync-queue';
 import { useSyncStore } from '../stores/sync.store';
 import { useAuthStore } from '../stores/auth.store';
-
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:4000';
-
+import { API_BASE_URL } from '../config/api';
 // ─── Backend response types ───────────────────────────────────────────────────
 
 interface BatchOperationResult {

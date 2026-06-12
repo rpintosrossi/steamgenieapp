@@ -238,3 +238,52 @@ Redeploy de la API si hace falta (Railway suele recargar vars al instante).
 
 1. Abrí la URL de Vercel → debería redirigir a `/login`
 2. Login admin: DNI `12345678` / pass `01012000` (si corriste seed en Neon)
+
+---
+
+## 11. Deploy (EAS — App móvil Android APK)
+
+La app usa `EXPO_PUBLIC_API_URL` (embebida en el build). El perfil **`preview`** genera un **APK** apuntando a Railway.
+
+### 1. Requisitos
+
+- Cuenta en [expo.dev](https://expo.dev)
+- `pnpm install` en la raíz del monorepo
+
+### 2. Vincular proyecto Expo (una sola vez)
+
+```bash
+cd steam-genie/apps/mobile
+pnpm exec eas login
+pnpm exec eas init
+```
+
+`eas init` crea el proyecto en Expo y agrega `projectId` en `app.config.ts`.
+
+### 3. Generar APK (API real)
+
+```bash
+cd steam-genie/apps/mobile
+pnpm build:apk
+```
+
+Equivalente a:
+
+```bash
+pnpm exec eas build --platform android --profile preview
+```
+
+- Perfil **`preview`**: APK instalable + `EXPO_PUBLIC_API_URL=https://steamgenie.up.railway.app`
+- Al terminar, EAS muestra un link para **descargar el APK**
+- Instalalo en el celular (habilitar “orígenes desconocidos”)
+
+### 4. Cambiar URL de la API
+
+Editá `eas.json` → perfil `preview` → `env.EXPO_PUBLIC_API_URL` y volvé a correr `pnpm build:apk`.
+
+### 5. Play Store (más adelante)
+
+```bash
+pnpm build:android   # perfil production → AAB
+pnpm exec eas submit --platform android
+```

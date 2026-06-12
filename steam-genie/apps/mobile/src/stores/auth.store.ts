@@ -1,12 +1,11 @@
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
 import type { AuthUser, TokenPair } from '@steam-genie/shared-types';
+import { API_BASE_URL } from '../config/api';
 
 const ACCESS_TOKEN_KEY = 'sg_access_token';
 const REFRESH_TOKEN_KEY = 'sg_refresh_token';
 const USER_KEY = 'sg_user';
-
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:4000';
 
 let refreshInFlight: Promise<string | null> | null = null;
 

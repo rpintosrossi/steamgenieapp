@@ -1,0 +1,40 @@
+{
+  "cli": {
+    "version": ">= 13.2.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://10.0.2.2:4000",
+        "EXPO_USE_METRO_WORKSPACE_ROOT": "1"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://steamgenie.up.railway.app",
+        "EXPO_USE_METRO_WORKSPACE_ROOT": "1"
+      },
+      "prebuildCommand": "cd ../.. && pnpm --filter \"./packages/*\" build"
+    },
+    "production": {
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://steamgenie.up.railway.app",
+        "EXPO_USE_METRO_WORKSPACE_ROOT": "1"
+      },
+      "prebuildCommand": "cd ../.. && pnpm --filter \"./packages/*\" build"
+    }
+  }
+}
