@@ -200,3 +200,41 @@ railway variables set DATABASE_URL=...
 ```
 
 Ver `ARQUITECTURA.md` para el diagrama completo y decisiones de diseño.
+
+---
+
+## 10. Deploy (Vercel — Web Admin)
+
+### 1. Importar proyecto
+
+1. [vercel.com/new](https://vercel.com/new) → **Import Git Repository** → `steamgenieapp`
+2. **Root Directory** = `steam-genie/apps/web`
+3. Framework: **Next.js** (detectado automáticamente)
+4. `vercel.json` en esa carpeta ya define install/build para el monorepo pnpm
+
+### 2. Variables de entorno
+
+| Variable | Valor |
+|---|---|
+| `NEXT_PUBLIC_API_URL` | `https://<tu-api>.up.railway.app` |
+
+> `NEXT_PUBLIC_WS_URL` no se usa aún en el admin; podés omitirla.
+
+### 3. Deploy
+
+Click **Deploy**. Al terminar copiá la URL (ej. `https://steam-genie-xxx.vercel.app`).
+
+### 4. CORS en Railway
+
+En Railway → Variables → actualizá `ALLOWED_ORIGINS`:
+
+```
+https://<tu-admin>.vercel.app,http://localhost:3000
+```
+
+Redeploy de la API si hace falta (Railway suele recargar vars al instante).
+
+### 5. Verificar
+
+1. Abrí la URL de Vercel → debería redirigir a `/login`
+2. Login admin: DNI `12345678` / pass `01012000` (si corriste seed en Neon)
