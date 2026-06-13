@@ -117,11 +117,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   login: async (dni: string, password: string) => {
-    const res = await fetch(`${API_BASE_URL}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dni, password }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dni, password }),
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Network request failed';
+      throw new Error(
+        message.toLowerCase().includes('network') || message.toLowerCase().includes('failed to fetch')
+          ? `No se pudo conectar con el servidor (${API_BASE_URL}). Verificá internet o reinstalá la APK actualizada.`
+          : message,
+      );
+    }
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

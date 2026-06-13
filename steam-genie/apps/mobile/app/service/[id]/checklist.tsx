@@ -13,6 +13,7 @@ import {
   FlatList,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -33,6 +34,7 @@ import {
   LocationSubzoneGroup,
   LocationZoneGroup,
 } from '../../../src/utils/location-hierarchy';
+import { isNetworkError } from '../../../src/utils/network';
 import type { WorkOrderCached } from '../../../src/stores/building.store';
 
 // ─── Types (aligned with backend TaskExecutionItem) ───────────────────────────
@@ -104,6 +106,8 @@ const STATUS_ICONS: Record<string, { name: keyof typeof import('@expo/vector-ico
 export default function ChecklistScreen() {
   const { id: workOrderId, seId } = useLocalSearchParams<{ id: string; seId: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const bottomPad = Math.max(insets.bottom, 12);
   const { isConnected } = useNetworkStatus();
   const isOnline = isConnected === true;
   const { setStatus } = useSyncStore();
@@ -173,10 +177,10 @@ export default function ChecklistScreen() {
     }
   }, [selectedZone, selectedSubzoneId]);
 
-  const loadTasks = useCallback(async (mode: 'initial' | 'refresh' | 'silent' = 'initial') => {
+  const loadTasks = useCallback(async (mode: 'initial' | 'refresh' | 'silent' = 'initial'): Promise<TaskExecutionItem[] | null> => {
     if (!seId) {
       if (mode === 'initial') setIsLoading(false);
-      return;
+      return null;
     }
     if (mode === 'initial') setIsLoading(true);
     if (mode === 'refresh') setIsRefreshing(true);
@@ -186,18 +190,19 @@ export default function ChecklistScreen() {
       const cachedWo = useBuildingStore
         .getState()
         .prefetchData?.workOrders.find((wo) => wo.id === workOrderId);
-      setTasks(
-        items.map((item) => ({
-          ...item,
-          zoneId: item.zoneId ?? cachedWo?.zoneId ?? null,
-          subzoneId: item.subzoneId ?? cachedWo?.subzoneId ?? null,
-        })),
-      );
+      const mapped = items.map((item) => ({
+        ...item,
+        zoneId: item.zoneId ?? cachedWo?.zoneId ?? null,
+        subzoneId: item.subzoneId ?? cachedWo?.subzoneId ?? null,
+      }));
+      setTasks(mapped);
+      return mapped;
     } catch (e) {
       if (mode !== 'silent') {
         Alert.alert('Error', e instanceof Error ? e.message : 'No se pudieron cargar las tareas');
       }
       if (mode === 'initial') setTasks([]);
+      return null;
     } finally {
       if (mode === 'initial') setIsLoading(false);
       if (mode === 'refresh') setIsRefreshing(false);
@@ -226,6 +231,16 @@ export default function ChecklistScreen() {
     void refreshPrefetch();
   }, [tasks, taskNotDoneReasons.length, refreshPrefetch]);
 
+  async function reconcileTaskMark(
+    workOrderTaskId: string,
+    expectedStatus: 'DONE' | 'NOT_DONE',
+  ): Promise<boolean> {
+    const items = await loadTasks('silent');
+    if (!items) return false;
+    const task = items.find((t) => t.workOrderTaskId === workOrderTaskId);
+    return task?.execution?.status === expectedStatus;
+  }
+
   async function markTask(
     task: TaskExecutionItem,
     newStatus: 'DONE' | 'NOT_DONE',
@@ -247,7 +262,7 @@ export default function ChecklistScreen() {
       };
 
       if (isOnline) {
-        await apiService.put(
+        await apiService.putOk(
           `/service-executions/${seId}/work-order-tasks/${task.workOrderTaskId}`,
           body,
         );
@@ -287,6 +302,10 @@ export default function ChecklistScreen() {
         await syncManager.refreshPendingCount();
       }
     } catch (e) {
+      if (isOnline && isNetworkError(e)) {
+        const reconciled = await reconcileTaskMark(task.workOrderTaskId, newStatus);
+        if (reconciled) return;
+      }
       Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo marcar la tarea');
     } finally {
       setMarkingTaskId(null);
@@ -461,6 +480,18 @@ export default function ChecklistScreen() {
     );
   }
 
+  function renderFinishButton() {
+    return (
+      <TouchableOpacity
+        style={[styles.finishBtn, { marginBottom: bottomPad }]}
+        onPress={() => router.back()}
+      >
+        <Ionicons name="checkmark-done-outline" size={20} color="#fff" />
+        <Text style={styles.finishBtnText}>Checklist listo — volver al servicio</Text>
+      </TouchableOpacity>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -515,6 +546,7 @@ export default function ChecklistScreen() {
               activeSubzone={activeSubzone}
               selectedSubzoneId={selectedSubzoneId}
               isRefreshing={isRefreshing}
+              bottomPad={bottomPad}
               onBack={() => setSelectedZoneId(null)}
               onSelectSubzone={setSelectedSubzoneId}
               onRefresh={() => loadTasks('refresh')}
@@ -522,7 +554,7 @@ export default function ChecklistScreen() {
             />
           ) : (
             <ScrollView
-              contentContainerStyle={styles.zoneGrid}
+              contentContainerStyle={[styles.zoneGrid, { paddingBottom: 24 + bottomPad }]}
               refreshControl={
                 <RefreshControl refreshing={isRefreshing} onRefresh={() => loadTasks('refresh')} />
               }
@@ -563,22 +595,17 @@ export default function ChecklistScreen() {
           )}
 
           {unlocated.length > 0 && !selectedZoneId ? (
-            <ScrollView contentContainerStyle={styles.unlocatedSection}>
+            <ScrollView contentContainerStyle={[styles.unlocatedSection, { paddingBottom: bottomPad }]}>
               <Text style={styles.sectionTitle}>Sin ubicación</Text>
               {unlocated.map((task) => renderTaskCard(task))}
             </ScrollView>
           ) : null}
 
-          {allResolved ? (
-            <TouchableOpacity style={styles.finishBtn} onPress={() => router.back()}>
-              <Ionicons name="checkmark-done-outline" size={20} color="#fff" />
-              <Text style={styles.finishBtnText}>Checklist listo — volver al servicio</Text>
-            </TouchableOpacity>
-          ) : null}
+          {allResolved ? renderFinishButton() : null}
         </View>
       ) : (
         <ScrollView
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, { paddingBottom: 40 + bottomPad }]}
           refreshControl={
             <RefreshControl refreshing={isRefreshing} onRefresh={() => loadTasks('refresh')} />
           }
@@ -592,12 +619,7 @@ export default function ChecklistScreen() {
 
           {sortedTasks.map((task) => renderTaskCard(task))}
 
-          {allResolved ? (
-            <TouchableOpacity style={styles.finishBtn} onPress={() => router.back()}>
-              <Ionicons name="checkmark-done-outline" size={20} color="#fff" />
-              <Text style={styles.finishBtnText}>Checklist listo — volver al servicio</Text>
-            </TouchableOpacity>
-          ) : null}
+          {allResolved ? renderFinishButton() : null}
         </ScrollView>
       )}
 
@@ -608,7 +630,7 @@ export default function ChecklistScreen() {
         onRequestClose={() => setReasonPickerTask(null)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
+          <View style={[styles.modalSheet, { paddingBottom: 20 + bottomPad }]}>
             <Text style={styles.modalTitle}>Motivo de no realización</Text>
             <Text style={styles.modalSubtitle} numberOfLines={2}>
               {reasonPickerTask?.nameSnapshot}
@@ -712,6 +734,7 @@ function ChecklistZoneDetail({
   activeSubzone,
   selectedSubzoneId,
   isRefreshing,
+  bottomPad,
   onBack,
   onSelectSubzone,
   onRefresh,
@@ -721,6 +744,7 @@ function ChecklistZoneDetail({
   activeSubzone: LocationSubzoneGroup<TaskExecutionItem> | null;
   selectedSubzoneId: string | null;
   isRefreshing: boolean;
+  bottomPad: number;
   onBack: () => void;
   onSelectSubzone: (subId: string) => void;
   onRefresh: () => void;
@@ -779,7 +803,7 @@ function ChecklistZoneDetail({
 
       <ScrollView
         style={styles.taskListScroll}
-        contentContainerStyle={styles.taskListContent}
+        contentContainerStyle={[styles.taskListContent, { paddingBottom: 32 + bottomPad }]}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
       >
         {activeSubzone?.items.length ? (
@@ -1157,7 +1181,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    margin: 16,
+    marginHorizontal: 16,
+    marginTop: 8,
     padding: 16,
     borderRadius: 12,
     backgroundColor: COLORS.success,

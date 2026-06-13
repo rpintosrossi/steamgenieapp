@@ -92,6 +92,53 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return res.json() as Promise<T>;
 }
 
+/** PUT que solo exige HTTP 2xx; no parsea JSON (evita fallos al leer body). */
+async function putOk(
+  path: string,
+  body: unknown,
+  options: RequestOptions = {},
+): Promise<void> {
+  const { _retried, skipAuth, ...fetchOptions } = options;
+  const headers = await buildAuthHeaders(skipAuth);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+      ...fetchOptions,
+      headers: {
+        ...headers,
+        ...(fetchOptions.headers ?? {}),
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Network request failed';
+    throw new Error(message);
+  }
+
+  if (res.status === 401 && !skipAuth && !_retried) {
+    const newToken = await useAuthStore.getState().refreshTokens();
+    if (newToken) {
+      return putOk(path, body, { ...options, _retried: true });
+    }
+    throw new Error('Sesión expirada. Volvé a iniciar sesión.');
+  }
+
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({ message: res.statusText }));
+    const message = extractErrorMessage(errBody, res.statusText || 'Error desconocido');
+    throw new ApiRequestError(message, res.status);
+  }
+
+  try {
+    await res.text();
+  } catch {
+    // 2xx pero body perdido — operación probablemente aplicada en servidor.
+  }
+}
+
 /** POST que solo exige HTTP 2xx; no parsea JSON (evita fallos al leer body grande). */
 async function postOk(
   path: string,
@@ -185,6 +232,7 @@ export const apiService = {
   postOk: (path: string, body: unknown) => postOk(path, body),
   put: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
+  putOk: (path: string, body: unknown) => putOk(path, body),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),

@@ -39,7 +39,7 @@ export default (): ExpoConfig => ({
   ],
   android: {
     package: 'com.steamgenie.app',
-    versionCode: 1,
+    versionCode: 2,
     permissions: [
       'android.permission.ACCESS_FINE_LOCATION',
       'android.permission.ACCESS_COARSE_LOCATION',
@@ -51,6 +51,7 @@ export default (): ExpoConfig => ({
     typedRoutes: true,
   },
   extra: {
+    apiUrl: process.env.EXPO_PUBLIC_API_URL ?? 'https://steamgenie.up.railway.app',
     eas: {
       projectId: 'cd1d9957-f6a4-476e-974a-1f318e0a4947',
     },
