@@ -1,5 +1,4 @@
 import { useState, useCallback, useRef } from 'react';
-import * as Location from 'expo-location';
 import { apiService, ApiRequestError } from '../services/api.service';
 import { syncQueue, generateClientId } from '../sync/sync-queue';
 import { useBuildingStore, AttendanceCached } from '../stores/building.store';
@@ -9,6 +8,7 @@ import {
   type ActiveAttendanceResponse,
 } from '../utils/attendance';
 import { isNetworkError } from '../utils/network';
+import { getRequiredGpsPosition } from '../utils/location';
 import { sleep } from '../utils/async';
 
 export type AttendanceAction = 'check-in' | 'check-out';
@@ -99,30 +99,6 @@ export function useAttendance(isOnline: boolean) {
     return false;
   }
 
-  async function getGps(): Promise<{ gpsLat: number; gpsLng: number }> {
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      throw new Error('GPS obligatorio. Habilitá los permisos de ubicación en Configuración.');
-    }
-
-    const lastKnown = await Location.getLastKnownPositionAsync();
-    if (lastKnown && Date.now() - lastKnown.timestamp < 60_000) {
-      return {
-        gpsLat: lastKnown.coords.latitude,
-        gpsLng: lastKnown.coords.longitude,
-      };
-    }
-
-    const location = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Balanced,
-    });
-
-    return {
-      gpsLat: location.coords.latitude,
-      gpsLng: location.coords.longitude,
-    };
-  }
-
   const checkIn = useCallback(async (): Promise<boolean> => {
     if (!selectedBuilding) {
       setError('No hay edificio seleccionado.');
@@ -134,7 +110,7 @@ export function useAttendance(isOnline: boolean) {
     setError(null);
 
     try {
-      const { gpsLat, gpsLng } = await getGps();
+      const { gpsLat, gpsLng } = await getRequiredGpsPosition();
       const occurredAt = new Date().toISOString();
 
       if (isOnline) {
@@ -206,7 +182,7 @@ export function useAttendance(isOnline: boolean) {
     setError(null);
 
     try {
-      const { gpsLat, gpsLng } = await getGps();
+      const { gpsLat, gpsLng } = await getRequiredGpsPosition();
       const occurredAt = new Date().toISOString();
 
       if (isOnline) {

@@ -35,7 +35,10 @@ import {
   LocationZoneGroup,
 } from '../../../src/utils/location-hierarchy';
 import { isNetworkError } from '../../../src/utils/network';
+import { sleep } from '../../../src/utils/async';
 import type { WorkOrderCached } from '../../../src/stores/building.store';
+
+const RECONCILE_DELAYS_MS = [0, 500, 1200, 2500] as const;
 
 // ─── Types (aligned with backend TaskExecutionItem) ───────────────────────────
 
@@ -235,10 +238,14 @@ export default function ChecklistScreen() {
     workOrderTaskId: string,
     expectedStatus: 'DONE' | 'NOT_DONE',
   ): Promise<boolean> {
-    const items = await loadTasks('silent');
-    if (!items) return false;
-    const task = items.find((t) => t.workOrderTaskId === workOrderTaskId);
-    return task?.execution?.status === expectedStatus;
+    for (const delayMs of RECONCILE_DELAYS_MS) {
+      if (delayMs > 0) await sleep(delayMs);
+      const items = await loadTasks('silent');
+      if (!items) continue;
+      const task = items.find((t) => t.workOrderTaskId === workOrderTaskId);
+      if (task?.execution?.status === expectedStatus) return true;
+    }
+    return false;
   }
 
   async function markTask(
@@ -266,7 +273,14 @@ export default function ChecklistScreen() {
           `/service-executions/${seId}/work-order-tasks/${task.workOrderTaskId}`,
           body,
         );
-        await loadTasks('silent');
+        try {
+          await loadTasks('silent');
+        } catch {
+          const reconciled = await reconcileTaskMark(task.workOrderTaskId, newStatus);
+          if (!reconciled) {
+            throw new Error('No se pudo confirmar la tarea. Revisá tu conexión e intentá de nuevo.');
+          }
+        }
       } else {
         await syncQueue.enqueue({
           id: generateClientId(),

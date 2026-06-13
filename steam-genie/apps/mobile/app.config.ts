@@ -21,6 +21,8 @@ export default (): ExpoConfig => ({
     [
       'expo-location',
       {
+        locationWhenInUsePermission:
+          'Steam Genie necesita tu ubicación para registrar el fichaje en el edificio.',
         locationAlwaysAndWhenInUsePermission:
           'Steam Genie necesita tu ubicación para registrar el fichaje en el edificio.',
       },
@@ -39,7 +41,7 @@ export default (): ExpoConfig => ({
   ],
   android: {
     package: 'com.steamgenie.app',
-    versionCode: 2,
+    versionCode: 4,
     permissions: [
       'android.permission.ACCESS_FINE_LOCATION',
       'android.permission.ACCESS_COARSE_LOCATION',

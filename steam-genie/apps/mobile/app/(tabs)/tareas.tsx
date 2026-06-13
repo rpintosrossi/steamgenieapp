@@ -23,6 +23,10 @@ import { useBuildingStore, RejectionReason } from '../../src/stores/building.sto
 import { SyncStatusBar } from '../../src/components/SyncStatusBar';
 import { BrandedScreenHeader } from '../../src/components/BrandedScreenHeader';
 import { COLORS } from '../../src/constants/colors';
+import { isNetworkError } from '../../src/utils/network';
+import { sleep } from '../../src/utils/async';
+
+const RECONCILE_DELAYS_MS = [0, 500, 1200, 2500] as const;
 
 interface PeriodicDueItem {
   id: string;
@@ -276,6 +280,31 @@ export default function TareasScreen() {
 
   const progress = useMemo(() => countProgress(items), [items]);
 
+  async function reconcileItemMark(
+    itemId: string,
+    expectedStatus: 'DONE' | 'NOT_DONE',
+  ): Promise<boolean> {
+    if (!buildingId) return false;
+
+    for (const delayMs of RECONCILE_DELAYS_MS) {
+      if (delayMs > 0) await sleep(delayMs);
+      try {
+        const data = await apiService.get<PeriodicDueItem[]>(
+          `/tasks/due-today?buildingId=${buildingId}`,
+        );
+        const list = Array.isArray(data) ? data : [];
+        const item = list.find((i) => i.id === itemId);
+        if (item?.execution?.status === expectedStatus) {
+          setItems(list);
+          return true;
+        }
+      } catch {
+        // Reintentar: el servidor pudo haber guardado pero la respuesta se perdió.
+      }
+    }
+    return false;
+  }
+
   async function markItem(
     item: PeriodicDueItem,
     newStatus: 'DONE' | 'NOT_DONE',
@@ -292,8 +321,15 @@ export default function TareasScreen() {
       };
 
       if (isOnline) {
-        await apiService.put(`/tasks/instances/${item.id}/mark`, body);
-        await loadDueToday('silent');
+        await apiService.putOk(`/tasks/instances/${item.id}/mark`, body);
+        try {
+          await loadDueToday('silent');
+        } catch {
+          const reconciled = await reconcileItemMark(item.id, newStatus);
+          if (!reconciled) {
+            throw new Error('No se pudo confirmar la tarea. Revisá tu conexión e intentá de nuevo.');
+          }
+        }
       } else {
         await syncQueue.enqueue({
           id: generateClientId(),
@@ -327,6 +363,10 @@ export default function TareasScreen() {
         setStatus('pending');
       }
     } catch (e) {
+      if (isOnline && isNetworkError(e)) {
+        const reconciled = await reconcileItemMark(item.id, newStatus);
+        if (reconciled) return;
+      }
       Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo marcar la tarea');
     } finally {
       setMarkingId(null);
