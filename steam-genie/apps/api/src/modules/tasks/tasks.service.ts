@@ -43,6 +43,13 @@ const TASK_SELECT = {
   updatedAt: true,
 };
 
+const TASK_LIST_SELECT = {
+  ...TASK_SELECT,
+  building: { select: { id: true, name: true } },
+  zone: { select: { id: true, name: true } },
+  subzone: { select: { id: true, name: true } },
+};
+
 const ALLOWED_MIME_TYPES = [
   'image/jpeg',
   'image/png',
@@ -82,7 +89,13 @@ export class TasksService {
     if (search) where.name = { contains: search, mode: 'insensitive' };
 
     const [data, total] = await Promise.all([
-      this.prisma.task.findMany({ where, select: TASK_SELECT, skip, take: limit, orderBy: { createdAt: 'desc' } }),
+      this.prisma.task.findMany({
+        where,
+        select: TASK_LIST_SELECT,
+        skip,
+        take: limit,
+        orderBy: [{ frequency: 'asc' }, { name: 'asc' }],
+      }),
       this.prisma.task.count({ where }),
     ]);
 

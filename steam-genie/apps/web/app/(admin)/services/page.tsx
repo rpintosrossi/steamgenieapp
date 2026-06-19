@@ -157,7 +157,10 @@ export default function ServicesPage() {
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">Servicios</h1>
+        <div>
+          <h1 className="page-title">Servicios</h1>
+          <p className="page-subtitle">Asigná limpiadores a servicios de checkout.</p>
+        </div>
       </div>
 
       {error ? <div className="alert alert-error">{error}</div> : null}
@@ -196,10 +199,14 @@ export default function ServicesPage() {
         </div>
 
         {loading ? (
-          <p className="muted">Cargando…</p>
+          <div className="loading-state">
+            <div className="spinner" role="status" aria-label="Cargando" />
+            <p className="muted">Cargando servicios…</p>
+          </div>
         ) : items.length === 0 ? (
           <p className="muted">No hay servicios. Creá una reserva para generar uno.</p>
         ) : (
+          <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
@@ -254,6 +261,7 @@ export default function ServicesPage() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

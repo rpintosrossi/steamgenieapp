@@ -17,6 +17,7 @@ import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { TaskPhotosModule } from './modules/task-photos/task-photos.module';
+import { BulkImportModule } from './modules/bulk-import/bulk-import.module';
 import { HealthModule } from './health/health.module';
 
 @Module({
@@ -43,6 +44,7 @@ import { HealthModule } from './health/health.module';
     DashboardModule,
     AuditModule,
     TaskPhotosModule,
+    BulkImportModule,
   ],
 })
 export class AppModule {}

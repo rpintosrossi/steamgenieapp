@@ -205,7 +205,10 @@ export default function UsersPage() {
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">Usuarios</h1>
+        <div>
+          <h1 className="page-title">Usuarios</h1>
+          <p className="page-subtitle">Gestioná altas, roles y asignación por edificio.</p>
+        </div>
       </div>
 
       {error ? <div className="alert alert-error">{error}</div> : null}
@@ -262,8 +265,12 @@ export default function UsersPage() {
       <div className="card">
         <h2 className="card-title">Listado</h2>
         {loading ? (
-          <p className="muted">Cargando…</p>
+          <div className="loading-state">
+            <div className="spinner" role="status" aria-label="Cargando" />
+            <p className="muted">Cargando usuarios…</p>
+          </div>
         ) : (
+          <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
@@ -303,6 +310,7 @@ export default function UsersPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

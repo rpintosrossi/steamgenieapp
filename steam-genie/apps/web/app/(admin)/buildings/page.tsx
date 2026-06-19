@@ -58,7 +58,10 @@ export default function BuildingsPage() {
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">Edificios</h1>
+        <div>
+          <h1 className="page-title">Edificios</h1>
+          <p className="page-subtitle">Administrá la estructura de plantas, zonas y subzonas.</p>
+        </div>
       </div>
 
       {error ? <div className="alert alert-error">{error}</div> : null}
@@ -90,10 +93,14 @@ export default function BuildingsPage() {
       <div className="card">
         <h2 className="card-title">Listado</h2>
         {loading ? (
-          <p className="muted">Cargando…</p>
+          <div className="loading-state">
+            <div className="spinner" role="status" aria-label="Cargando" />
+            <p className="muted">Cargando edificios…</p>
+          </div>
         ) : items.length === 0 ? (
           <p className="muted">No hay edificios cargados.</p>
         ) : (
+          <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
@@ -122,6 +129,7 @@ export default function BuildingsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </>

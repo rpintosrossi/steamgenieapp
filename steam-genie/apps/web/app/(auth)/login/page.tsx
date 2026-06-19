@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { loginSchema } from '@steam-genie/shared-validators';
@@ -44,38 +45,59 @@ export default function LoginPage() {
 
   return (
     <div className="login-page">
-      <div className="card login-card">
-        <h1 style={{ marginTop: 0 }}>Steam Genie Admin</h1>
-        <p className="muted">Ingresá con tu DNI y contraseña de administrador.</p>
+      <div className="login-brand-panel">
+        <div className="login-brand-content">
+          <Image
+            src="/logo.png"
+            alt="Steam Genie"
+            width={120}
+            height={120}
+            className="login-brand-logo"
+            priority
+          />
+          <h1 className="login-brand-title">Steam Genie</h1>
+          <p className="login-brand-tagline">
+            Gestión integral de limpieza para edificios y servicios de checkout.
+          </p>
+        </div>
+      </div>
 
-        {error ? <div className="alert alert-error">{error}</div> : null}
+      <div className="login-form-panel">
+        <div className="login-card">
+          <div className="card">
+            <h1>Iniciar sesión</h1>
+            <p className="muted">Ingresá con tu DNI y contraseña de administrador.</p>
 
-        <form onSubmit={handleSubmit} className="stack">
-          <div className="form-field">
-            <label htmlFor="dni">DNI</label>
-            <input
-              id="dni"
-              inputMode="numeric"
-              value={dni}
-              onChange={(e) => setDni(e.target.value.replace(/\D/g, ''))}
-              placeholder="12345678"
-              autoComplete="username"
-            />
+            {error ? <div className="alert alert-error">{error}</div> : null}
+
+            <form onSubmit={handleSubmit} className="stack" style={{ marginTop: 24 }}>
+              <div className="form-field">
+                <label htmlFor="dni">DNI</label>
+                <input
+                  id="dni"
+                  inputMode="numeric"
+                  value={dni}
+                  onChange={(e) => setDni(e.target.value.replace(/\D/g, ''))}
+                  placeholder="12345678"
+                  autoComplete="username"
+                />
+              </div>
+              <div className="form-field">
+                <label htmlFor="password">Contraseña</label>
+                <input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                />
+              </div>
+              <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%' }}>
+                {loading ? 'Ingresando…' : 'Ingresar'}
+              </button>
+            </form>
           </div>
-          <div className="form-field">
-            <label htmlFor="password">Contraseña</label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-            />
-          </div>
-          <button type="submit" className="btn btn-primary" disabled={loading}>
-            {loading ? 'Ingresando…' : 'Ingresar'}
-          </button>
-        </form>
+        </div>
       </div>
     </div>
   );

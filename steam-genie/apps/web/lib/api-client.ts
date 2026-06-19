@@ -122,4 +122,95 @@ export const api = {
     }),
   delete: <T>(path: string, opts?: FetchOptions) =>
     apiClient<T>(path, { method: 'DELETE', ...opts }),
+  upload: async <T>(path: string, file: File, opts?: FetchOptions): Promise<T> => {
+    const { skipAuth, _retried, ...fetchOptions } = opts ?? {};
+
+    // Snapshot en memoria: Chrome lanza ERR_UPLOAD_FILE_CHANGED si se reutiliza
+    // el mismo File del <input type="file"> en un segundo upload.
+    const bytes = await file.arrayBuffer();
+    const snapshot = new File([bytes], file.name, {
+      type: file.type || 'application/octet-stream',
+      lastModified: file.lastModified,
+    });
+
+    const send = async (retried: boolean): Promise<T> => {
+      const formData = new FormData();
+      formData.append('file', snapshot);
+
+      const headers: HeadersInit = { ...(fetchOptions.headers ?? {}) };
+
+      if (!skipAuth) {
+        const token = getAccessToken();
+        if (!token) {
+          throw new Error('Sesión no iniciada. Volvé a iniciar sesión.');
+        }
+        (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
+      }
+
+      const res = await fetch(`${API_BASE_URL}${path}`, {
+        ...fetchOptions,
+        method: 'POST',
+        headers,
+        body: formData,
+      });
+
+      if (res.status === 401 && !skipAuth && !retried) {
+        const newToken = await refreshAccessToken();
+        if (newToken) {
+          return send(true);
+        }
+        throw new Error('Sesión expirada. Volvé a iniciar sesión.');
+      }
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => null);
+        throw new Error(extractErrorMessage(errBody, res.status, res.statusText));
+      }
+
+      return res.json() as Promise<T>;
+    };
+
+    return send(Boolean(_retried));
+  },
+  download: async (path: string, filename: string, opts?: FetchOptions): Promise<void> => {
+    const { skipAuth, _retried, ...fetchOptions } = opts ?? {};
+    const headers: HeadersInit = { ...(fetchOptions.headers ?? {}) };
+
+    if (!skipAuth) {
+      const token = getAccessToken();
+      if (!token) {
+        throw new Error('Sesión no iniciada. Volvé a iniciar sesión.');
+      }
+      (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
+    }
+
+    const res = await fetch(`${API_BASE_URL}${path}`, {
+      ...fetchOptions,
+      method: 'GET',
+      headers,
+    });
+
+    if (res.status === 401 && !skipAuth && !_retried) {
+      const newToken = await refreshAccessToken();
+      if (newToken) {
+        return api.download(path, filename, { ...opts, _retried: true });
+      }
+      throw new Error('Sesión expirada. Volvé a iniciar sesión.');
+    }
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => null);
+      throw new Error(extractErrorMessage(errBody, res.status, res.statusText));
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  },
 };

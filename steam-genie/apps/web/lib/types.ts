@@ -63,6 +63,9 @@ export interface TaskItem {
   allowsObservation: boolean;
   requiresRejectionReason: boolean;
   isActive: boolean;
+  building?: { id: string; name: string };
+  zone?: { id: string; name: string } | null;
+  subzone?: { id: string; name: string } | null;
 }
 
 export interface UserBuildingRoleItem {
@@ -135,4 +138,48 @@ export interface WorkOrderListItem {
   zone?: { id: string; name: string } | null;
   assignments: WorkOrderAssignmentItem[];
   _count: { workOrderTasks: number; assignments: number };
+}
+
+export type BulkImportRowStatus = 'success' | 'error' | 'skipped';
+
+export interface BulkImportRowInterpretation {
+  building: string;
+  buildingId: string;
+  floor: string;
+  floorCreated: boolean;
+  zone: string;
+  zoneCreated: boolean;
+  subzone?: string;
+  subzoneCreated?: boolean;
+  task?: string;
+  taskCreated?: boolean;
+  taskSkipped?: boolean;
+  frequency?: string;
+  startDate?: string;
+}
+
+export interface BulkImportRowResult {
+  row: number;
+  status: BulkImportRowStatus;
+  message: string;
+  interpretation?: BulkImportRowInterpretation;
+}
+
+export interface BulkImportSummary {
+  buildingsTouched: string[];
+  floorsCreated: number;
+  zonesCreated: number;
+  subzonesCreated: number;
+  tasksCreated: number;
+  tasksSkipped: number;
+}
+
+export interface BulkImportResult {
+  totalRows: number;
+  processedRows: number;
+  successCount: number;
+  errorCount: number;
+  skippedCount: number;
+  rows: BulkImportRowResult[];
+  summary: BulkImportSummary;
 }

@@ -18,9 +18,10 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   if (!ready) {
     return (
-      <main className="admin-main">
+      <div className="loading-state" style={{ minHeight: '100vh' }}>
+        <div className="spinner" role="status" aria-label="Cargando" />
         <p className="muted">Verificando sesión…</p>
-      </main>
+      </div>
     );
   }
 
