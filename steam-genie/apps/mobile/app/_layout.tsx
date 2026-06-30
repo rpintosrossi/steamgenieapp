@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
 import { useAuthStore } from '../src/stores/auth.store';
@@ -7,6 +8,7 @@ import { useBuildingStore } from '../src/stores/building.store';
 import { useSyncStore } from '../src/stores/sync.store';
 import { syncManager } from '../src/sync/sync-manager';
 import { initDatabase } from '../src/db/database';
+import { COLORS } from '../src/constants/colors';
 
 export default function RootLayout() {
   const { accessToken, isHydrated, hydrate } = useAuthStore();
@@ -87,6 +89,7 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
+      <StatusBar style="dark" backgroundColor={COLORS.bg} />
       <Stack screenOptions={{ headerShown: false }} />
     </SafeAreaProvider>
   );

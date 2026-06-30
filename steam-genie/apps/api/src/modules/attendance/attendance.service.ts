@@ -12,6 +12,7 @@ import { QueryAttendanceDto } from './dto/query-attendance.dto';
 import { QueryAttendanceTimelineDto } from './dto/query-attendance-timeline.dto';
 import { CorrectAttendanceDto } from './dto/correct-attendance.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
+import { businessDayInstantRange } from '@steam-genie/shared-constants';
 
 const TIMELINE_SELECT = {
   id: true,
@@ -22,18 +23,6 @@ const TIMELINE_SELECT = {
 } as const;
 
 const TIMELINE_MAX_ROWS = 2000;
-
-function startOfDayUtc(dateStr?: string): Date {
-  const d = dateStr ? new Date(dateStr) : new Date();
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-}
-
-function buildDayRange(dateStr?: string): { start: Date; end: Date } {
-  const start = startOfDayUtc(dateStr);
-  const end = new Date(start);
-  end.setUTCDate(end.getUTCDate() + 1);
-  return { start, end };
-}
 
 @Injectable()
 export class AttendanceService {
@@ -153,10 +142,7 @@ export class AttendanceService {
   }
 
   async findTodaySummary(userId: string) {
-    const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const end = new Date(start);
-    end.setDate(end.getDate() + 1);
+    const { start, end } = businessDayInstantRange();
 
     const buildingSelect = {
       id: true,
@@ -206,7 +192,7 @@ export class AttendanceService {
     if (userId) where.userId = userId;
     if (buildingId) where.buildingId = buildingId;
     if (date) {
-      const { start, end } = buildDayRange(date);
+      const { start, end } = businessDayInstantRange(date);
       where.checkInAt = { gte: start, lt: end };
     }
 
@@ -230,7 +216,7 @@ export class AttendanceService {
   // ─── TIMELINE (admin/manager) ─────────────────────────────────────────────
 
   async findTimeline(query: QueryAttendanceTimelineDto) {
-    const { start, end } = buildDayRange(query.date);
+    const { start, end } = businessDayInstantRange(query.date);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = {

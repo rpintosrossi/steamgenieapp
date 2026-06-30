@@ -7,8 +7,8 @@ const VARIANTS: Record<
 > = {
   login: {
     source: BRAND_IMAGES.logoOnWhiteTransparent,
-    width: 260,
-    height: 130,
+    width: 400,
+    height: 200,
   },
   onBlue: {
     source: BRAND_IMAGES.logoOnBlue,

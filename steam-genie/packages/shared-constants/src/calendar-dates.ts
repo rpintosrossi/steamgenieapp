@@ -63,3 +63,18 @@ export function endOfStoredCalendarDateInBusinessTz(value: string | Date): Date 
   // Argentina no usa DST desde 2009; offset fijo -03:00.
   return new Date(`${key}T23:59:59.999-03:00`);
 }
+
+/**
+ * Rango [inicio, fin) de un día calendario YYYY-MM-DD en Argentina (UTC-3).
+ * Si no se pasa clave, usa el día actual en la zona de negocio.
+ */
+export function businessDayInstantRange(calendarKey?: string): { start: Date; end: Date } {
+  const key = calendarKey ?? calendarDateKeyInBusinessTz(new Date());
+  const start = new Date(`${key}T00:00:00.000-03:00`);
+  const [y, m, d] = key.split('-').map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d + 1));
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const nextKey = `${next.getUTCFullYear()}-${pad(next.getUTCMonth() + 1)}-${pad(next.getUTCDate())}`;
+  const end = new Date(`${nextKey}T00:00:00.000-03:00`);
+  return { start, end };
+}

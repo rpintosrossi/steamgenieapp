@@ -8,7 +8,7 @@ export default (): ExpoConfig => ({
   orientation: 'portrait',
   scheme: 'steamgenie',
   platforms: ['ios', 'android'],
-  userInterfaceStyle: 'automatic',
+  userInterfaceStyle: 'light',
   splash: {
     image: './assets/images/logo-fondoazul.jpeg',
     resizeMode: 'contain',
@@ -41,7 +41,8 @@ export default (): ExpoConfig => ({
   ],
   android: {
     package: 'com.steamgenie.app',
-    versionCode: 4,
+    versionCode: 5,
+    softwareKeyboardLayoutMode: 'resize',
     permissions: [
       'android.permission.ACCESS_FINE_LOCATION',
       'android.permission.ACCESS_COARSE_LOCATION',

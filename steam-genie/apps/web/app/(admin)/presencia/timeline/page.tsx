@@ -4,6 +4,11 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../../../lib/api-client';
 import { fetchBuildingsList } from '../../../../lib/buildings-cache';
+import {
+  BUSINESS_TIMEZONE,
+  calendarDateKeyInBusinessTz,
+  formatStoredCalendarDate,
+} from '@steam-genie/shared-constants';
 import type {
   AttendanceTimelineItem,
   AttendanceTimelineResponse,
@@ -14,21 +19,19 @@ import type {
 const FILTER_DEBOUNCE_MS = 350;
 
 function todayInputValue(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return calendarDateKeyInBusinessTz(new Date());
 }
 
 function formatTime(value: string): string {
   return new Date(value).toLocaleTimeString('es-AR', {
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: BUSINESS_TIMEZONE,
   });
 }
 
 function formatDateLabel(dateStr: string): string {
-  const date = new Date(`${dateStr}T12:00:00`);
-  return date.toLocaleDateString('es-AR', {
+  return formatStoredCalendarDate(dateStr, 'es-AR', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',

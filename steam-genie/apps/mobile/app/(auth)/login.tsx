@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -6,22 +6,54 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  KeyboardAvoidingView,
+  Keyboard,
   Platform,
   ScrollView,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { loginSchema } from '@steam-genie/shared-validators';
 import { useAuthStore } from '../../src/stores/auth.store';
 import { BrandLogo } from '../../src/components/BrandLogo';
 import { COLORS } from '../../src/constants/colors';
 
 export default function LoginScreen() {
+  const insets = useSafeAreaInsets();
+  const scrollRef = useRef<ScrollView>(null);
   const [dni, setDni] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const login = useAuthStore((s) => s.login);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (keyboardHeight > 0) {
+      scrollToSubmitButton();
+    }
+  }, [keyboardHeight]);
+
+  function scrollToSubmitButton() {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    });
+  }
 
   async function handleLogin() {
     const parsed = loginSchema.safeParse({ dni, password });
@@ -40,62 +72,69 @@ export default function LoginScreen() {
     }
   }
 
+  const keyboardPadding =
+    keyboardHeight > 0 ? Math.max(24, keyboardHeight - insets.bottom + 16) : 32;
+
   return (
-    <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView
+    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <ScrollView
+        ref={scrollRef}
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        contentContainerStyle={[styles.scroll, { paddingBottom: keyboardPadding }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+        bounces={false}
       >
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-          bounces={false}
-        >
-          <View style={styles.hero}>
-            <BrandLogo variant="login" />
-          </View>
+        <View style={styles.hero}>
+          <BrandLogo variant="login" />
+        </View>
 
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Iniciar sesión</Text>
-            <Text style={styles.cardSubtitle}>Ingresá con tu DNI y contraseña</Text>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Iniciar sesión</Text>
+          <Text style={styles.cardSubtitle}>Ingresá con tu DNI y contraseña</Text>
 
-            <Text style={styles.label}>DNI</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Ej: 12345678"
-              placeholderTextColor={COLORS.disabled}
-              keyboardType="numeric"
-              autoCapitalize="none"
-              value={dni}
-              onChangeText={setDni}
-            />
+          <Text style={styles.label}>DNI</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Ej: 12345678"
+            placeholderTextColor={COLORS.disabled}
+            keyboardType="numeric"
+            autoCapitalize="none"
+            returnKeyType="next"
+            value={dni}
+            onChangeText={setDni}
+            onFocus={scrollToSubmitButton}
+          />
 
-            <Text style={styles.label}>Contraseña</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Tu contraseña"
-              placeholderTextColor={COLORS.disabled}
-              secureTextEntry
-              value={password}
-              onChangeText={setPassword}
-            />
+          <Text style={styles.label}>Contraseña</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Tu contraseña"
+            placeholderTextColor={COLORS.disabled}
+            secureTextEntry
+            returnKeyType="done"
+            value={password}
+            onChangeText={setPassword}
+            onFocus={scrollToSubmitButton}
+            onSubmitEditing={() => void handleLogin()}
+          />
 
-            {error && <Text style={styles.error}>{error}</Text>}
+          {error ? <Text style={styles.error}>{error}</Text> : null}
 
-            <TouchableOpacity
-              style={[styles.primaryBtn, isSubmitting && styles.primaryBtnDisabled]}
-              onPress={handleLogin}
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.primaryBtnText}>Ingresar</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+          <TouchableOpacity
+            style={[styles.primaryBtn, isSubmitting && styles.primaryBtnDisabled]}
+            onPress={handleLogin}
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.primaryBtnText}>Ingresar</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -104,13 +143,13 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   flex: { flex: 1 },
   scroll: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    padding: 24,
+    paddingHorizontal: 24,
+    paddingTop: 24,
     gap: 28,
   },
   hero: {
     alignItems: 'center',
+    paddingBottom: 4,
   },
   card: {
     backgroundColor: COLORS.surface,
