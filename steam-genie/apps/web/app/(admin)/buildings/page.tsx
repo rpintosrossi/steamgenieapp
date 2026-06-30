@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { CreateBuildingModal } from '../../../components/CreateBuildingModal';
 import { api } from '../../../lib/api-client';
+import { invalidateBuildingsListCache } from '../../../lib/buildings-cache';
 import type { Building, Paginated } from '../../../lib/types';
 
 const PAGE_SIZE = 15;
@@ -87,6 +88,7 @@ export default function BuildingsPage() {
     setPage(1);
     setSearch('');
     setSearchInput('');
+    invalidateBuildingsListCache();
     setRefreshKey((k) => k + 1);
   }
 

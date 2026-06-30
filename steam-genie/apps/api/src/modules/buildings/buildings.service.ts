@@ -33,15 +33,9 @@ export class BuildingsService {
     }
 
     if (user) {
-      const hasGlobalStaffAccess = await this.prisma.userBuildingRole.findFirst({
-        where: {
-          userId: user.id,
-          buildingId: null,
-          role: { name: { in: ['admin', 'manager'] } },
-        },
-      });
+      const canListAll = await this.canListAllBuildings(user);
 
-      if (!hasGlobalStaffAccess) {
+      if (!canListAll) {
         const assignments = await this.prisma.userBuildingRole.findMany({
           where: { userId: user.id, buildingId: { not: null } },
           select: { buildingId: true },
@@ -327,6 +321,20 @@ export class BuildingsService {
   }
 
   // ─── Assertions ────────────────────────────────────────────────────────────
+
+  /** Admin (primaryRole) o staff con rol global en user_building_roles ve todos los edificios. */
+  private async canListAllBuildings(user: AuthUser): Promise<boolean> {
+    if (user.primaryRole === 'admin') return true;
+
+    const globalStaff = await this.prisma.userBuildingRole.findFirst({
+      where: {
+        userId: user.id,
+        buildingId: null,
+        role: { name: { in: ['admin', 'manager'] } },
+      },
+    });
+    return Boolean(globalStaff);
+  }
 
   private async assertBuildingExists(id: string) {
     const b = await this.prisma.building.findFirst({ where: { id, deletedAt: null } });
