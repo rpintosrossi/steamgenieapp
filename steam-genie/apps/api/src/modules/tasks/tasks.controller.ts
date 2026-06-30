@@ -26,6 +26,7 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateCustomFieldDto } from './dto/create-custom-field.dto';
 import { DueTodayQueryDto } from './dto/due-today-query.dto';
+import { QueryRecurringWorkDto } from './dto/query-recurring-work.dto';
 import { MarkTaskDto } from '../service-executions/dto/mark-task.dto';
 import { UploadPhotoDto } from '../service-executions/dto/upload-photo.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
@@ -48,6 +49,15 @@ export class TasksController {
   @RequiredRoles('admin', 'manager', 'cleaner')
   getDueToday(@Query() query: DueTodayQueryDto) {
     return this.tasksService.getDueToday(query);
+  }
+
+  @Get('recurring-work/list')
+  @RequiredRoles('admin', 'manager')
+  listRecurringWork(
+    @Query() query: QueryRecurringWorkDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.tasksService.listRecurringWork(query, user);
   }
 
   @Put('instances/:instanceId/mark')

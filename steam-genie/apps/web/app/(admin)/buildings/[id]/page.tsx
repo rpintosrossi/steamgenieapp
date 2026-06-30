@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { BuildingBulkImportModal } from '../../../../components/BuildingBulkImportModal';
 import { BuildingHierarchyManager } from '../../../../components/BuildingHierarchyManager';
 import { api } from '../../../../lib/api-client';
 import type { BuildingDetail } from '../../../../lib/types';
@@ -15,6 +16,7 @@ export default function BuildingDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -61,9 +63,13 @@ export default function BuildingDetailPage() {
           )}
         </div>
         <div className="page-header-actions">
-          <Link href="/import" className="btn btn-secondary btn-sm">
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => setImportOpen(true)}
+          >
             Importar Excel
-          </Link>
+          </button>
           <Link href="/tasks" className="btn btn-secondary btn-sm">
             Ver tareas
           </Link>
@@ -82,6 +88,19 @@ export default function BuildingDetailPage() {
           setError(null);
         }}
       />
+
+      {importOpen ? (
+        <BuildingBulkImportModal
+          buildingId={building.id}
+          buildingName={building.name}
+          onClose={() => setImportOpen(false)}
+          onSuccess={() => {
+            setSuccess('Importación completada. La estructura se actualizó.');
+            setError(null);
+            void load();
+          }}
+        />
+      ) : null}
     </>
   );
 }

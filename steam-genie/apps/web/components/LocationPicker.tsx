@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { api } from '../lib/api-client';
-import type { BuildingDetail } from '../lib/types';
+import { fetchBuildingsList, fetchBuildingHierarchy } from '../lib/buildings-cache';
+import type { BuildingHierarchy } from '../lib/types';
 
 interface LocationPickerValue {
   buildingId: string;
@@ -16,6 +16,8 @@ interface LocationPickerProps {
   onChange: (value: LocationPickerValue) => void;
   requireSubzone?: boolean;
   hideSubzone?: boolean;
+  /** Lista precargada para evitar un fetch duplicado de edificios. */
+  buildings?: Array<{ id: string; name: string }>;
 }
 
 export function LocationPicker({
@@ -23,37 +25,50 @@ export function LocationPicker({
   onChange,
   requireSubzone = false,
   hideSubzone = false,
+  buildings: buildingsProp,
 }: LocationPickerProps) {
-  const [buildings, setBuildings] = useState<Array<{ id: string; name: string }>>([]);
-  const [buildingDetail, setBuildingDetail] = useState<BuildingDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [buildings, setBuildings] = useState<Array<{ id: string; name: string }>>(buildingsProp ?? []);
+  const [buildingDetail, setBuildingDetail] = useState<BuildingHierarchy | null>(null);
+  const [loadingBuildings, setLoadingBuildings] = useState(!buildingsProp);
+  const [loadingHierarchy, setLoadingHierarchy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (buildingsProp) {
+      setBuildings(buildingsProp);
+      setLoadingBuildings(false);
+      return;
+    }
+
     void (async () => {
       try {
-        setLoading(true);
-        const res = await api.get<{ data: Array<{ id: string; name: string }> }>('/buildings?limit=100');
-        setBuildings(res.data);
+        setLoadingBuildings(true);
+        setBuildings(await fetchBuildingsList());
       } catch (e) {
         setError(e instanceof Error ? e.message : 'No se pudieron cargar edificios');
       } finally {
-        setLoading(false);
+        setLoadingBuildings(false);
       }
     })();
-  }, []);
+  }, [buildingsProp]);
 
   useEffect(() => {
     if (!value.buildingId) {
       setBuildingDetail(null);
       return;
     }
+
     void (async () => {
       try {
-        const detail = await api.get<BuildingDetail>(`/buildings/${value.buildingId}`);
+        setLoadingHierarchy(true);
+        setError(null);
+        const detail = await fetchBuildingHierarchy(value.buildingId);
         setBuildingDetail(detail);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'No se pudo cargar la jerarquía');
+        setBuildingDetail(null);
+      } finally {
+        setLoadingHierarchy(false);
       }
     })();
   }, [value.buildingId]);
@@ -72,8 +87,8 @@ export function LocationPicker({
     onChange({ ...value, ...partial });
   }
 
-  if (loading) return <p className="muted">Cargando ubicaciones…</p>;
-  if (error) return <div className="alert alert-error">{error}</div>;
+  if (loadingBuildings) return <p className="muted">Cargando ubicaciones…</p>;
+  if (error && !buildingDetail) return <div className="alert alert-error">{error}</div>;
 
   return (
     <div className="grid-2">
@@ -98,10 +113,10 @@ export function LocationPicker({
         <label>Planta</label>
         <select
           value={value.floorId}
-          disabled={!value.buildingId}
+          disabled={!value.buildingId || loadingHierarchy}
           onChange={(e) => patch({ floorId: e.target.value, zoneId: '', subzoneId: '' })}
         >
-          <option value="">Seleccionar…</option>
+          <option value="">{loadingHierarchy ? 'Cargando…' : 'Seleccionar…'}</option>
           {floors.map((f) => (
             <option key={f.id} value={f.id}>
               {f.name}
@@ -114,7 +129,7 @@ export function LocationPicker({
         <label>Zona</label>
         <select
           value={value.zoneId}
-          disabled={!value.floorId}
+          disabled={!value.floorId || loadingHierarchy}
           onChange={(e) => patch({ zoneId: e.target.value, subzoneId: '' })}
         >
           <option value="">Seleccionar…</option>
@@ -131,7 +146,7 @@ export function LocationPicker({
           <label>Subzona{requireSubzone ? ' *' : ''}</label>
           <select
             value={value.subzoneId}
-            disabled={!value.zoneId || subzones.length === 0}
+            disabled={!value.zoneId || subzones.length === 0 || loadingHierarchy}
             onChange={(e) => patch({ subzoneId: e.target.value })}
           >
             <option value="">{subzones.length ? 'Seleccionar…' : 'Sin subzonas'}</option>

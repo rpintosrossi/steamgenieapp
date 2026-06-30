@@ -15,7 +15,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
+import { takeTaskPhoto } from '../../../src/utils/camera';
 import * as Location from 'expo-location';
 import { apiService } from '../../../src/services/api.service';
 import { syncQueue, photoQueue, generateClientId } from '../../../src/sync/sync-queue';
@@ -348,20 +348,11 @@ export default function ChecklistScreen() {
     markTask(task, 'NOT_DONE', reason.id);
   }
 
-  async function handlePhotoUpload(
+  async function uploadPhotoAsset(
     task: TaskExecutionItem,
     seIdParam: string,
+    asset: NonNullable<Awaited<ReturnType<typeof takeTaskPhoto>>>,
   ): Promise<boolean> {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.6,
-      allowsEditing: false,
-    });
-
-    if (result.canceled || !result.assets?.[0]) return false;
-
-    const asset = result.assets[0];
-    setUploadingPhotoForWotId(task.workOrderTaskId);
     try {
       let gpsLat: number | undefined;
       let gpsLng: number | undefined;
@@ -397,21 +388,14 @@ export default function ChecklistScreen() {
     } catch (e) {
       Alert.alert('Error al subir foto', e instanceof Error ? e.message : 'Error desconocido');
       return false;
-    } finally {
-      setUploadingPhotoForWotId(null);
     }
   }
 
-  async function handlePhotoQueueOffline(task: TaskExecutionItem, seIdParam: string) {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.6,
-      allowsEditing: false,
-    });
-
-    if (result.canceled || !result.assets?.[0]) return;
-
-    const asset = result.assets[0];
+  async function queuePhotoAsset(
+    task: TaskExecutionItem,
+    seIdParam: string,
+    asset: NonNullable<Awaited<ReturnType<typeof takeTaskPhoto>>>,
+  ) {
     const clientOperationId = generateClientId();
 
     let gpsLat: number | undefined;
@@ -465,10 +449,19 @@ export default function ChecklistScreen() {
       Alert.alert('Fichaje requerido', ATTENDANCE_REQUIRED_MESSAGE);
       return;
     }
-    if (isOnline) {
-      await handlePhotoUpload(task, seId);
-    } else {
-      await handlePhotoQueueOffline(task, seId);
+
+    const asset = await takeTaskPhoto();
+    if (!asset) return;
+
+    setUploadingPhotoForWotId(task.workOrderTaskId);
+    try {
+      if (isOnline) {
+        await uploadPhotoAsset(task, seId, asset);
+      } else {
+        await queuePhotoAsset(task, seId, asset);
+      }
+    } finally {
+      setUploadingPhotoForWotId(null);
     }
   }
 
@@ -888,15 +881,25 @@ function TaskCard({
         </ScrollView>
       )}
 
-      {needsPhoto && (
+      {isUploadingPhoto ? (
+        <View style={styles.photoUploading}>
+          <ActivityIndicator size="small" color={COLORS.primary} />
+          <Text style={styles.photoUploadingText}>Subiendo foto...</Text>
+        </View>
+      ) : needsPhoto ? (
         <View style={styles.photoWarning}>
           <Ionicons name="warning-outline" size={14} color={COLORS.warning} />
           <Text style={styles.photoWarningText}>Esta tarea requiere foto</Text>
         </View>
-      )}
+      ) : null}
 
       {isMarking ? (
         <ActivityIndicator color={COLORS.primary} style={styles.taskLoader} />
+      ) : isUploadingPhoto ? (
+        <View style={styles.photoUploadingActions}>
+          <ActivityIndicator color={COLORS.primary} size="small" />
+          <Text style={styles.photoUploadingText}>Subiendo foto...</Text>
+        </View>
       ) : (
         <View style={styles.taskActions}>
           {showMarkActions && (
@@ -917,14 +920,10 @@ function TaskCard({
             </View>
           )}
           {isDone && canExecute && (
-            isUploadingPhoto ? (
-              <ActivityIndicator color={COLORS.primary} size="small" />
-            ) : (
-              <TouchableOpacity style={[styles.taskBtn, styles.taskBtnPhoto]} onPress={onAddPhoto}>
-                <Ionicons name="camera-outline" size={16} color={COLORS.primary} />
-                <Text style={[styles.taskBtnText, { color: COLORS.primary }]}>Foto</Text>
-              </TouchableOpacity>
-            )
+            <TouchableOpacity style={[styles.taskBtn, styles.taskBtnPhoto]} onPress={onAddPhoto}>
+              <Ionicons name="camera-outline" size={16} color={COLORS.primary} />
+              <Text style={[styles.taskBtnText, { color: COLORS.primary }]}>Foto</Text>
+            </TouchableOpacity>
           )}
         </View>
       )}
@@ -1140,6 +1139,22 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   photoWarningText: { fontSize: 12, color: COLORS.warning, fontWeight: '500' },
+  photoUploading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#eff6ff',
+    borderRadius: 6,
+    padding: 8,
+  },
+  photoUploadingActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 8,
+  },
+  photoUploadingText: { fontSize: 12, color: COLORS.primary, fontWeight: '600' },
   taskActions: { gap: 8 },
   taskActionRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', alignItems: 'center' },
   editIconBtn: { padding: 4, marginLeft: 4 },

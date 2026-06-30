@@ -134,6 +134,7 @@ model User {
   auditLogs         AuditLog[]
   domainEvents      DomainEvent[]
 
+  @@index([deletedAt, fullName])
   @@map("users")
 }
 
@@ -206,6 +207,7 @@ model Building {
   workOrders        WorkOrder[]
   reservations      Reservation[]
 
+  @@index([deletedAt])
   @@map("buildings")
 }
 
@@ -223,6 +225,7 @@ model Floor {
   workOrders   WorkOrder[]
   reservations Reservation[]
 
+  @@index([buildingId, deletedAt])
   @@map("floors")
 }
 
@@ -244,6 +247,8 @@ model Zone {
   workOrders   WorkOrder[]
   reservations Reservation[]
 
+  @@index([floorId, deletedAt])
+  @@index([buildingId, deletedAt])
   @@map("zones")
 }
 
@@ -264,6 +269,7 @@ model Subzone {
   workOrders   WorkOrder[]
   reservations Reservation[]
 
+  @@index([zoneId, deletedAt])
   @@map("subzones")
 }
 
@@ -293,6 +299,7 @@ model Task {
   periodicTaskInstances    PeriodicTaskInstance[]
 
   @@index([buildingId, zoneId, subzoneId, frequency])
+  @@index([buildingId, isActive, deletedAt])
   @@map("tasks")
 }
 
@@ -381,6 +388,9 @@ model Attendance {
   serviceExecutionParticipants     ServiceExecutionParticipant[]
 
   @@index([userId, buildingId, checkInAt])
+  @@index([deletedAt, checkInAt])
+  @@index([buildingId, checkInAt])
+  @@index([userId, checkInAt])
   @@map("attendances")
 }
 
@@ -409,6 +419,8 @@ model Reservation {
   workOrders              WorkOrder[]
   integrationInboundLogs  IntegrationInboundLog[]
 
+  @@index([buildingId, checkoutAt])
+  @@index([checkoutAt])
   @@map("reservations")
 }
 
@@ -448,6 +460,8 @@ model WorkOrder {
   integrationLogs    IntegrationInboundLog[]
 
   @@index([buildingId, status, scheduledDate])
+  @@index([type, buildingId, status, scheduledDate])
+  @@index([reservationId])
   @@map("work_orders")
 }
 
@@ -466,6 +480,7 @@ model WorkOrderAssignment {
   updatedAt        DateTime         @updatedAt
 
   @@index([workOrderId, userId])
+  @@index([userId, status])
   @@map("work_order_assignments")
 }
 
@@ -489,6 +504,7 @@ model WorkOrderTask {
   customFieldSnapshots WorkOrderTaskCustomField[]
   taskExecutions       TaskExecutionRecord[]
 
+  @@index([workOrderId])
   @@map("work_order_tasks")
 }
 
@@ -602,6 +618,7 @@ model TaskExecutionRecord {
   // One execution record per task per service execution — checklist is shared
   // among all participants; no two workers can mark the same task independently.
   @@unique([serviceExecutionId, workOrderTaskId])
+  @@index([periodicTaskInstanceId])
   @@map("task_executions")
 }
 

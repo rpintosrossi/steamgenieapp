@@ -48,17 +48,13 @@ export default function LoginPage() {
       <div className="login-brand-panel">
         <div className="login-brand-content">
           <Image
-            src="/logo.png"
+            src="/logo-fondoazul.jpeg"
             alt="Steam Genie"
-            width={120}
-            height={120}
+            width={480}
+            height={480}
             className="login-brand-logo"
             priority
           />
-          <h1 className="login-brand-title">Steam Genie</h1>
-          <p className="login-brand-tagline">
-            Gestión integral de limpieza para edificios y servicios de checkout.
-          </p>
         </div>
       </div>
 

@@ -9,8 +9,31 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { CheckInDto } from './dto/check-in.dto';
 import { CheckOutDto } from './dto/check-out.dto';
 import { QueryAttendanceDto } from './dto/query-attendance.dto';
+import { QueryAttendanceTimelineDto } from './dto/query-attendance-timeline.dto';
 import { CorrectAttendanceDto } from './dto/correct-attendance.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
+
+const TIMELINE_SELECT = {
+  id: true,
+  checkInAt: true,
+  checkOutAt: true,
+  user: { select: { id: true, fullName: true, dni: true } },
+  building: { select: { id: true, name: true } },
+} as const;
+
+const TIMELINE_MAX_ROWS = 2000;
+
+function startOfDayUtc(dateStr?: string): Date {
+  const d = dateStr ? new Date(dateStr) : new Date();
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
+function buildDayRange(dateStr?: string): { start: Date; end: Date } {
+  const start = startOfDayUtc(dateStr);
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 1);
+  return { start, end };
+}
 
 @Injectable()
 export class AttendanceService {
@@ -183,9 +206,7 @@ export class AttendanceService {
     if (userId) where.userId = userId;
     if (buildingId) where.buildingId = buildingId;
     if (date) {
-      const start = new Date(date);
-      const end = new Date(date);
-      end.setUTCDate(end.getUTCDate() + 1);
+      const { start, end } = buildDayRange(date);
       where.checkInAt = { gte: start, lt: end };
     }
 
@@ -204,6 +225,36 @@ export class AttendanceService {
     ]);
 
     return { data, total, page, limit, pages: Math.ceil(total / limit) };
+  }
+
+  // ─── TIMELINE (admin/manager) ─────────────────────────────────────────────
+
+  async findTimeline(query: QueryAttendanceTimelineDto) {
+    const { start, end } = buildDayRange(query.date);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const where: any = {
+      deletedAt: null,
+      checkInAt: { gte: start, lt: end },
+    };
+    if (query.userId) where.userId = query.userId;
+    if (query.buildingId) where.buildingId = query.buildingId;
+
+    const [data, total] = await Promise.all([
+      this.prisma.attendance.findMany({
+        where,
+        orderBy: { checkInAt: 'asc' },
+        take: TIMELINE_MAX_ROWS,
+        select: TIMELINE_SELECT,
+      }),
+      this.prisma.attendance.count({ where }),
+    ]);
+
+    return {
+      data,
+      total,
+      truncated: total > TIMELINE_MAX_ROWS,
+    };
   }
 
   // ─── CORRECT (admin/manager) ──────────────────────────────────────────────

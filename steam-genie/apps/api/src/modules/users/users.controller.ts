@@ -17,6 +17,7 @@ import { RequiredRoles } from '../../common/decorators/required-roles.decorator'
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UsersService } from './users.service';
 import { QueryUsersDto } from './dto/query-users.dto';
+import { QueryUserDetailDto } from './dto/query-user-detail.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { AssignBuildingRoleDto } from './dto/assign-building-role.dto';
@@ -49,8 +50,8 @@ export class UsersController {
 
   @Get(':id')
   @RequiredRoles('admin', 'manager')
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.usersService.findOne(id);
+  findOne(@Param('id', ParseUUIDPipe) id: string, @Query() query: QueryUserDetailDto) {
+    return this.usersService.findOne(id, query);
   }
 
   @Patch(':id')

@@ -1,21 +1,16 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { TASK_FREQUENCIES } from '@steam-genie/shared-constants';
-import { LocationPicker } from '../../../components/LocationPicker';
+import { CreateTaskModal } from '../../../components/CreateTaskModal';
 import { api } from '../../../lib/api-client';
+import { fetchBuildingsList } from '../../../lib/buildings-cache';
 import { TASK_FREQUENCY_LABELS } from '../../../lib/labels';
 import type { Paginated, TaskItem } from '../../../lib/types';
+import { LocationDisplay } from '../../../components/LocationDisplay';
 
 const PAGE_SIZE = 20;
-
-const FREQUENCY_ORDER = Object.values(TASK_FREQUENCIES);
-
-function formatLocation(task: TaskItem): string {
-  const zone = task.zone?.name ?? '—';
-  const subzone = task.subzone?.name;
-  return subzone ? `${zone} / ${subzone}` : zone;
-}
 
 export default function TasksPage() {
   const [items, setItems] = useState<TaskItem[]>([]);
@@ -25,7 +20,7 @@ export default function TasksPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const [buildings, setBuildings] = useState<Array<{ id: string; name: string }>>([]);
@@ -34,18 +29,6 @@ export default function TasksPage() {
   const [activeFilter, setActiveFilter] = useState('');
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
-
-  const [location, setLocation] = useState({
-    buildingId: '',
-    floorId: '',
-    zoneId: '',
-    subzoneId: '',
-  });
-  const [name, setName] = useState('');
-  const [frequency, setFrequency] = useState<string>(TASK_FREQUENCIES.EVENTUAL);
-  const [requiresPhoto, setRequiresPhoto] = useState(false);
-  const [allowsObservation, setAllowsObservation] = useState(true);
-  const [requiresRejectionReason, setRequiresRejectionReason] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -74,67 +57,14 @@ export default function TasksPage() {
   }, [page, buildingFilter, frequencyFilter, activeFilter, search]);
 
   useEffect(() => {
-    void api
-      .get<{ data: Array<{ id: string; name: string }> }>('/buildings?limit=100')
-      .then((res) => setBuildings(res.data))
+    void fetchBuildingsList()
+      .then(setBuildings)
       .catch(() => setBuildings([]));
   }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
-
-  const groupedItems = useMemo(() => {
-    const map = new Map<string, TaskItem[]>();
-    for (const task of items) {
-      const list = map.get(task.frequency) ?? [];
-      list.push(task);
-      map.set(task.frequency, list);
-    }
-
-    const order = frequencyFilter
-      ? [frequencyFilter]
-      : FREQUENCY_ORDER.filter((f) => map.has(f));
-
-    return order.map((freq) => ({
-      frequency: freq,
-      label: TASK_FREQUENCY_LABELS[freq] ?? freq,
-      tasks: map.get(freq) ?? [],
-    }));
-  }, [items, frequencyFilter]);
-
-  async function handleCreate(e: FormEvent) {
-    e.preventDefault();
-    if (!location.buildingId || !location.zoneId) {
-      setError('Seleccioná edificio y zona.');
-      return;
-    }
-
-    setCreating(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      await api.post('/tasks', {
-        buildingId: location.buildingId,
-        zoneId: location.zoneId,
-        subzoneId: location.subzoneId || undefined,
-        name,
-        frequency,
-        requiresPhoto,
-        allowsObservation,
-        requiresRejectionReason,
-        isActive: true,
-      });
-      setName('');
-      setSuccess('Tarea creada.');
-      setPage(1);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo crear la tarea');
-    } finally {
-      setCreating(false);
-    }
-  }
 
   async function toggleActive(task: TaskItem) {
     setTogglingId(task.id);
@@ -168,12 +98,35 @@ export default function TasksPage() {
 
   const hasFilters = Boolean(buildingFilter || frequencyFilter || activeFilter || search);
 
+  function handleCreated() {
+    setCreateOpen(false);
+    setSuccess('Tarea creada.');
+    setPage(1);
+    void load();
+  }
+
   return (
     <>
       <div className="page-header">
         <div>
+          <Link href="/configuracion" className="back-link">
+            ← Configuración
+          </Link>
           <h1 className="page-title">Tareas</h1>
           <p className="page-subtitle">Definí tareas periódicas y eventuales de checkout.</p>
+        </div>
+        <div className="page-header-actions">
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => {
+              setCreateOpen(true);
+              setError(null);
+              setSuccess(null);
+            }}
+          >
+            Crear tarea
+          </button>
         </div>
       </div>
 
@@ -181,48 +134,26 @@ export default function TasksPage() {
       {success ? <div className="alert alert-success">{success}</div> : null}
 
       <div className="card">
-        <h2 className="card-title">Nueva tarea</h2>
-        <p className="muted">
-          Las tareas <strong>Eventual (checkout)</strong> se usan al crear reservas. Las demás son periódicas.
-        </p>
-        <form onSubmit={handleCreate} className="stack">
-          <LocationPicker value={location} onChange={setLocation} />
-
-          <div className="grid-2">
-            <div className="form-field">
-              <label>Nombre *</label>
-              <input value={name} onChange={(e) => setName(e.target.value)} required />
-            </div>
-            <div className="form-field">
-              <label>Frecuencia *</label>
-              <select value={frequency} onChange={(e) => setFrequency(e.target.value)}>
-                {Object.values(TASK_FREQUENCIES).map((f) => (
-                  <option key={f} value={f}>
-                    {TASK_FREQUENCY_LABELS[f] ?? f}
-                  </option>
-                ))}
-              </select>
-            </div>
+        <form className="inline-form" style={{ marginBottom: 16 }} onSubmit={applySearch}>
+          <div className="form-field" style={{ flex: 1 }}>
+            <label>Buscar por nombre</label>
+            <input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Ej: Limpiar baño"
+            />
           </div>
-
-          <div className="grid-3">
-            <label><input type="checkbox" checked={requiresPhoto} onChange={(e) => setRequiresPhoto(e.target.checked)} /> Requiere foto</label>
-            <label><input type="checkbox" checked={allowsObservation} onChange={(e) => setAllowsObservation(e.target.checked)} /> Permite observación</label>
-            <label><input type="checkbox" checked={requiresRejectionReason} onChange={(e) => setRequiresRejectionReason(e.target.checked)} /> Motivo si no se hace</label>
-          </div>
-
-          <div className="form-actions">
-            <button type="submit" className="btn btn-primary" disabled={creating}>
-              {creating ? 'Creando…' : 'Crear tarea'}
+          <button type="submit" className="btn btn-secondary btn-sm">
+            Buscar
+          </button>
+          {hasFilters ? (
+            <button type="button" className="btn btn-secondary btn-sm" onClick={clearFilters}>
+              Limpiar filtros
             </button>
-          </div>
+          ) : null}
         </form>
-      </div>
 
-      <div className="card">
-        <h2 className="card-title">Listado</h2>
-
-        <div className="grid-3" style={{ marginBottom: 12 }}>
+        <div className="grid-3" style={{ marginBottom: 16 }}>
           <div className="form-field">
             <label>Edificio</label>
             <select
@@ -234,7 +165,9 @@ export default function TasksPage() {
             >
               <option value="">Todos</option>
               {buildings.map((b) => (
-                <option key={b.id} value={b.id}>{b.name}</option>
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
               ))}
             </select>
           </div>
@@ -249,7 +182,9 @@ export default function TasksPage() {
             >
               <option value="">Todas</option>
               {Object.values(TASK_FREQUENCIES).map((f) => (
-                <option key={f} value={f}>{TASK_FREQUENCY_LABELS[f] ?? f}</option>
+                <option key={f} value={f}>
+                  {TASK_FREQUENCY_LABELS[f] ?? f}
+                </option>
               ))}
             </select>
           </div>
@@ -269,23 +204,6 @@ export default function TasksPage() {
           </div>
         </div>
 
-        <form className="inline-form" style={{ marginBottom: 16 }} onSubmit={applySearch}>
-          <div className="form-field" style={{ flex: 1 }}>
-            <label>Buscar por nombre</label>
-            <input
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Ej: Limpiar baño"
-            />
-          </div>
-          <button type="submit" className="btn btn-secondary btn-sm">Buscar</button>
-          {hasFilters ? (
-            <button type="button" className="btn btn-secondary btn-sm" onClick={clearFilters}>
-              Limpiar filtros
-            </button>
-          ) : null}
-        </form>
-
         {loading ? (
           <div className="loading-state">
             <div className="spinner" role="status" aria-label="Cargando" />
@@ -295,59 +213,57 @@ export default function TasksPage() {
           <p className="muted">No hay tareas con los filtros seleccionados.</p>
         ) : (
           <>
-            {groupedItems.map((group) => (
-              <section key={group.frequency} className="task-frequency-group">
-                <h3 className="task-frequency-group-title">
-                  {group.label}
-                  <span className="muted" style={{ fontWeight: 400, marginLeft: 8 }}>
-                    ({group.tasks.length} en esta página)
-                  </span>
-                </h3>
-                <div className="table-wrap">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Nombre</th>
-                        <th>Edificio</th>
-                        <th>Ubicación</th>
-                        <th>Foto</th>
-                        <th>Estado</th>
-                        <th>Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {group.tasks.map((task) => (
-                        <tr key={task.id} className={!task.isActive ? 'row-muted' : undefined}>
-                          <td>{task.name}</td>
-                          <td>{task.building?.name ?? '—'}</td>
-                          <td>{formatLocation(task)}</td>
-                          <td>{task.requiresPhoto ? 'Sí' : 'No'}</td>
-                          <td>
-                            <span className={`badge ${task.isActive ? 'badge-success' : 'badge-warning'}`}>
-                              {task.isActive ? 'Activa' : 'No activa'}
-                            </span>
-                          </td>
-                          <td>
-                            <button
-                              type="button"
-                              className="btn btn-secondary btn-sm"
-                              disabled={togglingId === task.id}
-                              onClick={() => void toggleActive(task)}
-                            >
-                              {togglingId === task.id
-                                ? 'Guardando…'
-                                : task.isActive
-                                  ? 'Desactivar'
-                                  : 'Activar'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-            ))}
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Nombre</th>
+                    <th>Frecuencia</th>
+                    <th>Edificio</th>
+                    <th>Ubicación</th>
+                    <th>Foto</th>
+                    <th>Estado</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((task) => (
+                    <tr key={task.id} className={!task.isActive ? 'row-muted' : undefined}>
+                      <td>{task.name}</td>
+                      <td>{TASK_FREQUENCY_LABELS[task.frequency] ?? task.frequency}</td>
+                      <td>{task.building?.name ?? '—'}</td>
+                      <td>
+                        <LocationDisplay
+                          floor={task.zone?.floor}
+                          zone={task.zone}
+                          subzone={task.subzone}
+                        />
+                      </td>
+                      <td>{task.requiresPhoto ? 'Sí' : 'No'}</td>
+                      <td>
+                        <span className={`badge ${task.isActive ? 'badge-success' : 'badge-warning'}`}>
+                          {task.isActive ? 'Activa' : 'No activa'}
+                        </span>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={togglingId === task.id}
+                          onClick={() => void toggleActive(task)}
+                        >
+                          {togglingId === task.id
+                            ? 'Guardando…'
+                            : task.isActive
+                              ? 'Desactivar'
+                              : 'Activar'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
             <div className="pagination">
               <button
@@ -373,6 +289,14 @@ export default function TasksPage() {
           </>
         )}
       </div>
+
+      {createOpen ? (
+        <CreateTaskModal
+          buildings={buildings}
+          onClose={() => setCreateOpen(false)}
+          onCreated={handleCreated}
+        />
+      ) : null}
     </>
   );
 }

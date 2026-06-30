@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ReservationSource, WorkOrderType, WorkOrderStatus } from '@prisma/client';
 import { calendarDateFromInstant } from '@steam-genie/shared-constants';
+import { snapshotEventualTasks } from '../../common/work-order-snapshot';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { UpdateReservationDto } from './dto/update-reservation.dto';
@@ -161,48 +162,7 @@ export class ReservationsService {
       });
 
       // 3. Snapshot EVENTUAL tasks → work_order_tasks
-      for (let i = 0; i < eventualTasks.length; i++) {
-        const task = eventualTasks[i];
-        const wot = await tx.workOrderTask.create({
-          data: {
-            workOrderId: workOrder.id,
-            taskId: task.id,
-            nameSnapshot: task.name,
-            requiresPhotoSnapshot: task.requiresPhoto,
-            allowsObservationSnapshot: task.allowsObservation,
-            requiresRejectionReasonSnapshot: task.requiresRejectionReason,
-            sortOrder: i,
-          },
-        });
-
-        // 3a. Snapshot custom fields
-        for (let fi = 0; fi < task.customFields.length; fi++) {
-          const field = task.customFields[fi];
-          const wotField = await tx.workOrderTaskCustomField.create({
-            data: {
-              workOrderTaskId: wot.id,
-              originalFieldId: field.id,
-              labelSnapshot: field.label,
-              fieldType: field.fieldType,
-              isRequired: field.isRequired,
-              showInReport: field.showInReport,
-              sortOrder: field.sortOrder,
-            },
-          });
-
-          // 3b. Snapshot field options
-          for (const opt of field.options) {
-            await tx.workOrderTaskCustomFieldOption.create({
-              data: {
-                workOrderTaskFieldId: wotField.id,
-                originalOptionId: opt.id,
-                labelSnapshot: opt.label,
-                sortOrder: opt.sortOrder,
-              },
-            });
-          }
-        }
-      }
+      await snapshotEventualTasks(tx, workOrder.id, eventualTasks);
 
       return { reservation, workOrder, taskCount: eventualTasks.length };
     });

@@ -20,6 +20,8 @@ import { UpdateCustomFieldDto } from './dto/update-custom-field.dto';
 import { CreateFieldOptionDto } from './dto/create-field-option.dto';
 import { UpdateFieldOptionDto } from './dto/update-field-option.dto';
 import { DueTodayQueryDto } from './dto/due-today-query.dto';
+import { QueryRecurringWorkDto } from './dto/query-recurring-work.dto';
+import type { RecurringWorkDisplayStatus } from './dto/query-recurring-work.dto';
 
 /** Returns midnight UTC of the given date string, or today if omitted. */
 function startOfDay(dateStr?: string): Date {
@@ -46,7 +48,13 @@ const TASK_SELECT = {
 const TASK_LIST_SELECT = {
   ...TASK_SELECT,
   building: { select: { id: true, name: true } },
-  zone: { select: { id: true, name: true } },
+  zone: {
+    select: {
+      id: true,
+      name: true,
+      floor: { select: { id: true, name: true } },
+    },
+  },
   subzone: { select: { id: true, name: true } },
 };
 
@@ -265,12 +273,67 @@ export class TasksService {
       this.isTaskDueToday(t.frequency, t.startDate, todayDate),
     );
 
-    // Upsert periodic_task_instances for each due task
-    const instances = await Promise.all(
-      dueTasks.map((task) => this.upsertPeriodicInstance(task, todayDate)),
-    );
+    const instances = await this.loadPeriodicInstances(dueTasks, todayDate, {
+      createMissing: true,
+    });
+    return this.enrichPeriodicInstancesBatch(instances);
+  }
 
-    return Promise.all(instances.map((instance) => this.enrichPeriodicInstance(instance)));
+  // ─── RECURRING WORK LIST (ADMIN) ───────────────────────────────────────────
+
+  async listRecurringWork(query: QueryRecurringWorkDto, user: AuthUser) {
+    const { page = 1, limit = 20, buildingId, status, search, periodDate } = query;
+    const refDate = startOfDay(periodDate);
+    const today = startOfDay();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const taskWhere: any = {
+      deletedAt: null,
+      isActive: true,
+      frequency: { not: TaskFrequency.EVENTUAL },
+      startDate: { lte: refDate },
+    };
+
+    const allowedBuildingIds = await this.getAllowedBuildingIds(user, buildingId);
+    if (allowedBuildingIds !== null) {
+      if (allowedBuildingIds.length === 0) {
+        return { data: [], total: 0, page, limit, pages: 0 };
+      }
+      taskWhere.buildingId = { in: allowedBuildingIds };
+    }
+
+    if (search?.trim()) {
+      taskWhere.name = { contains: search.trim(), mode: 'insensitive' };
+    }
+
+    const tasks = await this.prisma.task.findMany({
+      where: taskWhere,
+      select: TASK_LIST_SELECT,
+      orderBy: [{ building: { name: 'asc' } }, { name: 'asc' }],
+    });
+
+    const instances = await this.loadPeriodicInstances(
+      tasks.map((task) => ({
+        id: task.id,
+        frequency: task.frequency,
+        startDate: task.startDate,
+      })),
+      refDate,
+      { createMissing: false },
+    );
+    const enriched = await this.enrichPeriodicInstancesBatch(instances);
+    const rows = tasks.map((task, index) => {
+      const instance = enriched[index];
+      const displayStatus = this.computeRecurringDisplayStatus(instance, today);
+      return this.formatRecurringWorkRow(task, instance, displayStatus);
+    });
+
+    const filtered = status ? rows.filter((row) => row.displayStatus === status) : rows;
+    const total = filtered.length;
+    const pages = Math.max(1, Math.ceil(total / limit));
+    const data = filtered.slice((page - 1) * limit, page * limit);
+
+    return { data, total, page, limit, pages };
   }
 
   // ─── MARK PERIODIC INSTANCE ────────────────────────────────────────────────
@@ -584,29 +647,99 @@ export class TasksService {
     return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
   }
 
-  private async upsertPeriodicInstance(
-    task: { id: string; frequency: TaskFrequency; startDate: Date },
-    today: Date,
-  ) {
-    const periodLabel = this.getPeriodLabel(task.frequency, today);
-    const { start, end } = this.getPeriodBounds(task.frequency, today);
+  private buildPeriodSpec(task: { id: string; frequency: TaskFrequency }, refDate: Date) {
+    const periodLabel = this.getPeriodLabel(task.frequency, refDate);
+    const { start, end } = this.getPeriodBounds(task.frequency, refDate);
+    return {
+      taskId: task.id,
+      periodLabel,
+      periodStart: start,
+      periodEnd: end,
+    };
+  }
 
-    const instance = await this.prisma.periodicTaskInstance.upsert({
-      where: { taskId_periodLabel: { taskId: task.id, periodLabel } },
-      create: {
-        taskId: task.id,
-        periodLabel,
-        periodStart: start,
-        periodEnd: end,
-        status: PeriodicTaskInstanceStatus.PENDING,
-      },
-      update: {},
-      include: {
-        task: { select: TASK_SELECT },
+  private async loadPeriodicInstances(
+    tasks: Array<{ id: string; frequency: TaskFrequency; startDate: Date }>,
+    refDate: Date,
+    options: { createMissing: boolean },
+  ) {
+    if (tasks.length === 0) return [];
+
+    const specs = tasks.map((task) => ({
+      task,
+      ...this.buildPeriodSpec(task, refDate),
+    }));
+
+    const existing = await this.prisma.periodicTaskInstance.findMany({
+      where: {
+        OR: specs.map((spec) => ({
+          taskId: spec.taskId,
+          periodLabel: spec.periodLabel,
+        })),
       },
     });
 
-    return instance;
+    const existingMap = new Map(
+      existing.map((instance) => [`${instance.taskId}:${instance.periodLabel}`, instance]),
+    );
+
+    if (options.createMissing) {
+      const missing = specs.filter(
+        (spec) => !existingMap.has(`${spec.taskId}:${spec.periodLabel}`),
+      );
+
+      if (missing.length > 0) {
+        await this.prisma.periodicTaskInstance.createMany({
+          data: missing.map((spec) => ({
+            taskId: spec.taskId,
+            periodLabel: spec.periodLabel,
+            periodStart: spec.periodStart,
+            periodEnd: spec.periodEnd,
+            status: PeriodicTaskInstanceStatus.PENDING,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      const persisted = await this.prisma.periodicTaskInstance.findMany({
+        where: {
+          OR: specs.map((spec) => ({
+            taskId: spec.taskId,
+            periodLabel: spec.periodLabel,
+          })),
+        },
+        include: { task: { select: TASK_SELECT } },
+      });
+
+      const persistedMap = new Map(
+        persisted.map((instance) => [`${instance.taskId}:${instance.periodLabel}`, instance]),
+      );
+
+      return specs.map((spec) => {
+        const instance = persistedMap.get(`${spec.taskId}:${spec.periodLabel}`);
+        if (!instance) {
+          throw new Error(`Failed to ensure periodic instance for task ${spec.taskId}`);
+        }
+        return instance;
+      });
+    }
+
+    return specs.map((spec) => {
+      const instance = existingMap.get(`${spec.taskId}:${spec.periodLabel}`);
+      if (instance) return instance;
+
+      return {
+        id: `virtual:${spec.taskId}:${spec.periodLabel}`,
+        taskId: spec.taskId,
+        periodLabel: spec.periodLabel,
+        periodStart: spec.periodStart,
+        periodEnd: spec.periodEnd,
+        status: PeriodicTaskInstanceStatus.PENDING,
+        completedAt: null,
+        createdAt: refDate,
+        updatedAt: refDate,
+      };
+    });
   }
 
   private async validateHierarchy(
@@ -650,44 +783,211 @@ export class TasksService {
     return task;
   }
 
-  private async enrichPeriodicInstance(
-    instance: Awaited<ReturnType<typeof this.upsertPeriodicInstance>>,
-  ) {
-    const execution = await this.prisma.taskExecutionRecord.findFirst({
-      where: { periodicTaskInstanceId: instance.id },
-      select: {
-        id: true,
-        status: true,
-        observation: true,
-        executedAt: true,
-        photos: {
-          where: { deletedAt: null },
-          orderBy: { createdAt: 'asc' },
-          select: {
-            id: true,
-            storageKey: true,
-            originalFilename: true,
-            mimeType: true,
-            fileSizeBytes: true,
-            capturedAt: true,
-            uploadedAt: true,
-          },
+  private async enrichPeriodicInstancesBatch<
+    T extends {
+      id: string;
+      taskId: string;
+      periodLabel: string;
+      periodStart: Date;
+      periodEnd: Date;
+      status: PeriodicTaskInstanceStatus;
+      completedAt: Date | null;
+      createdAt: Date;
+      updatedAt: Date;
+    },
+  >(instances: T[]) {
+    if (instances.length === 0) return [];
+
+    const realIds = instances
+      .map((instance) => instance.id)
+      .filter((id) => !id.startsWith('virtual:'));
+
+    const executionSelect = {
+      id: true,
+      periodicTaskInstanceId: true,
+      status: true,
+      observation: true,
+      executedAt: true,
+      executedBy: { select: { id: true, fullName: true, dni: true } },
+      photos: {
+        where: { deletedAt: null },
+        orderBy: { createdAt: 'asc' as const },
+        select: {
+          id: true,
+          storageKey: true,
+          originalFilename: true,
+          mimeType: true,
+          fileSizeBytes: true,
+          capturedAt: true,
+          uploadedAt: true,
         },
       },
+    };
+
+    const executions =
+      realIds.length === 0
+        ? []
+        : await this.prisma.taskExecutionRecord.findMany({
+            where: { periodicTaskInstanceId: { in: realIds } },
+            select: executionSelect,
+          });
+
+    const executionByInstanceId = new Map(
+      executions.map((execution) => [execution.periodicTaskInstanceId!, execution]),
+    );
+
+    return instances.map((instance) => {
+      const execution = executionByInstanceId.get(instance.id);
+      return {
+        ...instance,
+        execution: execution
+          ? {
+              id: execution.id,
+              status: execution.status,
+              observation: execution.observation,
+              executedAt: execution.executedAt,
+              executedBy: execution.executedBy,
+              photos: execution.photos.map((photo) => this.formatPhoto(photo)),
+            }
+          : null,
+      };
     });
+  }
+
+  private computeRecurringDisplayStatus(
+    instance: {
+      status: PeriodicTaskInstanceStatus;
+      periodEnd: Date;
+    },
+    today: Date,
+  ): RecurringWorkDisplayStatus {
+    if (instance.status === PeriodicTaskInstanceStatus.COMPLETED) {
+      return 'COMPLETED';
+    }
+    if (instance.status === PeriodicTaskInstanceStatus.EXPIRED) {
+      return 'OVERDUE';
+    }
+
+    const periodEnd = new Date(
+      Date.UTC(
+        instance.periodEnd.getUTCFullYear(),
+        instance.periodEnd.getUTCMonth(),
+        instance.periodEnd.getUTCDate(),
+      ),
+    );
+    if (periodEnd < today) {
+      return 'OVERDUE';
+    }
+
+    return 'SCHEDULED';
+  }
+
+  private formatRecurringWorkRow(
+    task: {
+      id: string;
+      name: string;
+      frequency: TaskFrequency;
+      building: { id: string; name: string } | null;
+      zone: {
+        id: string;
+        name: string;
+        floor: { id: string; name: string } | null;
+      } | null;
+      subzone: { id: string; name: string } | null;
+    },
+    instance: {
+      id: string;
+      periodLabel: string;
+      periodStart: Date;
+      periodEnd: Date;
+      status: PeriodicTaskInstanceStatus;
+      completedAt: Date | null;
+      execution: {
+        id: string;
+        status: TaskExecutionStatus;
+        observation: string | null;
+        executedAt: Date;
+        executedBy: { id: string; fullName: string; dni: string };
+        photos: ReturnType<TasksService['formatPhoto']>[];
+      } | null;
+    },
+    displayStatus: RecurringWorkDisplayStatus,
+  ) {
+    const periodStart = instance.periodStart;
+    const periodEnd = instance.periodEnd;
+    const sameDay =
+      periodStart.getUTCFullYear() === periodEnd.getUTCFullYear() &&
+      periodStart.getUTCMonth() === periodEnd.getUTCMonth() &&
+      periodStart.getUTCDate() === periodEnd.getUTCDate();
+
+    const fmt = (d: Date) =>
+      d.toLocaleDateString('es-AR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        timeZone: 'UTC',
+      });
+
+    const floor = task.zone?.floor ?? null;
+    const zone = task.zone ? { id: task.zone.id, name: task.zone.name } : null;
 
     return {
-      ...instance,
-      execution: execution
-        ? {
-            id: execution.id,
-            status: execution.status,
-            observation: execution.observation,
-            executedAt: execution.executedAt,
-            photos: execution.photos.map((p) => this.formatPhoto(p)),
-          }
-        : null,
+      id: instance.id,
+      taskId: task.id,
+      taskName: task.name,
+      frequency: task.frequency,
+      building: task.building,
+      floor,
+      zone,
+      subzone: task.subzone,
+      periodLabel: instance.periodLabel,
+      periodStart: periodStart.toISOString(),
+      periodEnd: periodEnd.toISOString(),
+      periodLabelDisplay: sameDay ? fmt(periodStart) : `${fmt(periodStart)} – ${fmt(periodEnd)}`,
+      displayStatus,
+      instanceStatus: instance.status,
+      completedAt: instance.completedAt?.toISOString() ?? null,
+      execution: instance.execution,
     };
+  }
+
+  private async getAllowedBuildingIds(
+    user: AuthUser,
+    buildingId?: string,
+  ): Promise<string[] | null> {
+    const globalStaff = await this.prisma.userBuildingRole.findFirst({
+      where: {
+        userId: user.id,
+        buildingId: null,
+        role: { name: { in: ['admin', 'manager'] } },
+      },
+    });
+    if (globalStaff) {
+      return buildingId ? [buildingId] : null;
+    }
+
+    const assignments = await this.prisma.userBuildingRole.findMany({
+      where: {
+        userId: user.id,
+        buildingId: { not: null },
+        role: { name: { in: ['admin', 'manager'] } },
+      },
+      select: { buildingId: true },
+    });
+
+    const ids = [
+      ...new Set(
+        assignments
+          .map((item) => item.buildingId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+
+    if (buildingId) {
+      return ids.includes(buildingId) ? [buildingId] : [];
+    }
+
+    return ids;
   }
 
   private async assertBuildingAccess(userId: string, buildingId: string) {

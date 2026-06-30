@@ -1,7 +1,8 @@
-﻿import {
+import {
   Controller,
   Get,
   Post,
+  Delete,
   Body,
   Param,
   Query,
@@ -18,6 +19,7 @@ import { WorkOrdersService } from './work-orders.service';
 import { QueryWorkOrdersDto } from './dto/query-work-orders.dto';
 import { AssignWorkOrderDto } from './dto/assign-work-order.dto';
 import { RejectWorkOrderDto } from './dto/reject-work-order.dto';
+import { CreateCheckoutCleaningDto } from './dto/create-checkout-cleaning.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
 
 @Controller('work-orders')
@@ -29,6 +31,15 @@ export class WorkOrdersController {
   @RequiredRoles('admin', 'manager', 'cleaner')
   findAll(@Query() query: QueryWorkOrdersDto, @CurrentUser() user: AuthUser) {
     return this.workOrdersService.findAll(query, user);
+  }
+
+  @Post('checkout-cleaning')
+  @RequiredRoles('admin', 'manager')
+  createCheckoutCleaning(
+    @Body() dto: CreateCheckoutCleaningDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.workOrdersService.createCheckoutCleaning(dto, user.id);
   }
 
   @Get(':id')
@@ -79,5 +90,14 @@ export class WorkOrdersController {
     @Request() req: { user: AuthUser },
   ) {
     return this.workOrdersService.complete(id, req.user);
+  }
+
+  @Delete(':id')
+  @RequiredRoles('admin', 'manager')
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.workOrdersService.remove(id, user);
   }
 }

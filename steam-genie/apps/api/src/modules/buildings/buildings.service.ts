@@ -93,6 +93,106 @@ export class BuildingsService {
     return building;
   }
 
+  /** Jerarquía ligera (id + nombre) para selectores de ubicación. */
+  async findHierarchy(id: string) {
+    const building = await this.prisma.building.findFirst({
+      where: { id, deletedAt: null },
+      select: {
+        id: true,
+        name: true,
+        floors: {
+          where: { deletedAt: null },
+          orderBy: { sortOrder: 'asc' },
+          select: {
+            id: true,
+            name: true,
+            sortOrder: true,
+            buildingId: true,
+            zones: {
+              where: { deletedAt: null },
+              orderBy: { name: 'asc' },
+              select: {
+                id: true,
+                name: true,
+                floorId: true,
+                buildingId: true,
+                subzones: {
+                  where: { deletedAt: null },
+                  orderBy: { name: 'asc' },
+                  select: {
+                    id: true,
+                    name: true,
+                    zoneId: true,
+                    buildingId: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!building) throw new NotFoundException('Building not found');
+    return building;
+  }
+
+  /** Limpiadores asignables en un edificio (rol cleaner global o del edificio). */
+  async findAssignableCleaners(buildingId: string) {
+    await this.assertBuildingExists(buildingId);
+
+    const cleaners = await this.prisma.user.findMany({
+      where: {
+        deletedAt: null,
+        isActive: true,
+        buildingRoles: {
+          some: {
+            role: { name: 'cleaner' },
+            OR: [{ buildingId }, { buildingId: null }],
+          },
+        },
+      },
+      select: { id: true, fullName: true, dni: true },
+      orderBy: { fullName: 'asc' },
+    });
+
+    let otherUsersOnBuilding: Array<{ id: string; fullName: string; dni: string; primaryRole: string }> = [];
+    if (cleaners.length === 0) {
+      const usersOnBuilding = await this.prisma.user.findMany({
+        where: {
+          deletedAt: null,
+          isActive: true,
+          buildingRoles: { some: { buildingId } },
+        },
+        select: {
+          id: true,
+          fullName: true,
+          dni: true,
+          primaryRole: true,
+          buildingRoles: {
+            where: { buildingId },
+            select: { role: { select: { name: true } } },
+          },
+        },
+        orderBy: { fullName: 'asc' },
+        take: 20,
+      });
+
+      otherUsersOnBuilding = usersOnBuilding
+        .filter(
+          (user) =>
+            !user.buildingRoles.some((assignment) => assignment.role.name === 'cleaner'),
+        )
+        .map((user) => ({
+          id: user.id,
+          fullName: user.fullName,
+          dni: user.dni,
+          primaryRole: user.buildingRoles[0]?.role.name ?? user.primaryRole,
+        }));
+    }
+
+    return { cleaners, otherUsersOnBuilding };
+  }
+
   async create(dto: CreateBuildingDto) {
     return this.prisma.building.create({
       data: {

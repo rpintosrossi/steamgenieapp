@@ -1,16 +1,20 @@
-﻿import {
+import {
   Injectable,
   NotFoundException,
   ForbiddenException,
   ConflictException,
   UnprocessableEntityException,
+  BadRequestException,
 } from '@nestjs/common';
-import { WorkOrderStatus } from '@prisma/client';
-import { endOfStoredCalendarDateInBusinessTz } from '@steam-genie/shared-constants';
+import { WorkOrderStatus, WorkOrderType } from '@prisma/client';
+import { calendarDateFromInstant, endOfStoredCalendarDateInBusinessTz } from '@steam-genie/shared-constants';
+import { snapshotEventualTasks } from '../../common/work-order-snapshot';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { QueryWorkOrdersDto } from './dto/query-work-orders.dto';
 import { AssignWorkOrderDto } from './dto/assign-work-order.dto';
 import { RejectWorkOrderDto } from './dto/reject-work-order.dto';
+import { CreateCheckoutCleaningDto } from './dto/create-checkout-cleaning.dto';
+import { WORK_ORDER_LIST_SELECT } from './work-order-list.select';
 import type { AuthUser } from '@steam-genie/shared-types';
 
 const WO_DETAIL_INCLUDE = {
@@ -83,9 +87,20 @@ export class WorkOrdersService {
 
     let effectiveAssignedTo = assignedTo;
     if (user) {
-      const isStaff = await this.hasStaffBuildingAccess(user.id, buildingId);
-      if (!isStaff) {
-        effectiveAssignedTo = user.id;
+      const globalStaff = await this.hasGlobalStaffAccess(user.id);
+      if (!globalStaff) {
+        const staffBuildingIds = await this.getStaffBuildingIds(user.id);
+        if (staffBuildingIds.length > 0) {
+          if (buildingId) {
+            if (!staffBuildingIds.includes(buildingId)) {
+              return { data: [], total: 0, page, limit, pages: 0 };
+            }
+          } else {
+            where.buildingId = { in: staffBuildingIds };
+          }
+        } else {
+          effectiveAssignedTo = effectiveAssignedTo ?? user.id;
+        }
       }
     }
 
@@ -103,28 +118,75 @@ export class WorkOrdersService {
         where,
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: { scheduledDate: 'asc' },
-        select: {
-          id: true, type: true, status: true, title: true,
-          buildingId: true, zoneId: true, subzoneId: true,
-          scheduledDate: true, deadlineAt: true, createdAt: true,
-          building: { select: { id: true, name: true } },
-          zone: { select: { id: true, name: true } },
-          assignments: {
-            select: {
-              id: true,
-              userId: true,
-              status: true,
-              user: { select: { id: true, fullName: true, dni: true } },
-            },
-          },
-          _count: { select: { workOrderTasks: true, assignments: true } },
-        },
+        orderBy: [{ scheduledDate: 'desc' }, { createdAt: 'desc' }],
+        select: WORK_ORDER_LIST_SELECT,
       }),
       this.prisma.workOrder.count({ where }),
     ]);
 
     return { data, total, page, limit, pages: Math.ceil(total / limit) };
+  }
+
+  // ─── CREATE CHECKOUT CLEANING (manual, sin reserva) ───────────────────────
+
+  async createCheckoutCleaning(dto: CreateCheckoutCleaningDto, createdById: string) {
+    const scheduledAt = new Date(dto.scheduledAt);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      throw new BadRequestException('scheduledAt is invalid');
+    }
+
+    const deadlineAt = dto.deadlineAt ? new Date(dto.deadlineAt) : null;
+    if (deadlineAt && Number.isNaN(deadlineAt.getTime())) {
+      throw new BadRequestException('deadlineAt is invalid');
+    }
+    if (deadlineAt && deadlineAt <= scheduledAt) {
+      throw new BadRequestException('deadlineAt must be after scheduledAt');
+    }
+
+    await this.validateHierarchy(dto.buildingId, dto.floorId, dto.zoneId);
+
+    const [zone, eventualTasks] = await Promise.all([
+      this.prisma.zone.findFirst({
+        where: { id: dto.zoneId },
+        select: { name: true },
+      }),
+      this.findEventualTasksForZone(dto.buildingId, dto.zoneId),
+    ]);
+    const hasNoTasks = eventualTasks.length === 0;
+
+    const title = dto.title?.trim() || `Limpieza checkout – ${zone?.name ?? dto.zoneId}`;
+    const scheduledDate = calendarDateFromInstant(scheduledAt);
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const workOrder = await tx.workOrder.create({
+        data: {
+          type: WorkOrderType.CHECKOUT_CLEANING,
+          reservationId: null,
+          buildingId: dto.buildingId,
+          floorId: dto.floorId,
+          zoneId: dto.zoneId,
+          subzoneId: null,
+          title,
+          description: dto.description?.trim() || null,
+          scheduledDate,
+          scheduledTime: scheduledAt,
+          deadlineAt,
+          status: WorkOrderStatus.UNASSIGNED,
+          createdById,
+        },
+      });
+
+      await snapshotEventualTasks(tx, workOrder.id, eventualTasks);
+
+      return { workOrder, taskCount: eventualTasks.length };
+    });
+
+    return {
+      ...result,
+      warning: hasNoTasks
+        ? 'No hay tareas EVENTUAL configuradas para esta zona ni sus subzonas'
+        : undefined,
+    };
   }
 
   // ─── GET ONE ──────────────────────────────────────────────────────────────
@@ -137,15 +199,22 @@ export class WorkOrdersService {
     if (!wo) throw new NotFoundException('Work order not found');
 
     if (user) {
-      const isStaff = await this.hasStaffBuildingAccess(user.id, wo.buildingId);
-      if (!isStaff) {
-        const hasAssignment = wo.assignments.some(
-          (assignment) =>
-            assignment.userId === user.id &&
-            (assignment.status === 'PENDING' || assignment.status === 'ACCEPTED'),
-        );
-        if (!hasAssignment) {
-          throw new ForbiddenException('No tenés asignado este servicio.');
+      const globalStaff = await this.hasGlobalStaffAccess(user.id);
+      if (!globalStaff) {
+        const staffBuildingIds = await this.getStaffBuildingIds(user.id);
+        if (staffBuildingIds.length > 0) {
+          if (!staffBuildingIds.includes(wo.buildingId)) {
+            throw new ForbiddenException('No tenés acceso a servicios de este edificio.');
+          }
+        } else {
+          const hasAssignment = wo.assignments.some(
+            (assignment) =>
+              assignment.userId === user.id &&
+              (assignment.status === 'PENDING' || assignment.status === 'ACCEPTED'),
+          );
+          if (!hasAssignment) {
+            throw new ForbiddenException('No tenés asignado este servicio.');
+          }
         }
       }
     }
@@ -172,19 +241,27 @@ export class WorkOrdersService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      for (const userId of dto.userIds) {
-        // Block if already PENDING or ACCEPTED for this user
-        const existing = await tx.workOrderAssignment.findFirst({
-          where: { workOrderId: id, userId, status: { in: ['PENDING', 'ACCEPTED'] } },
-        });
-        if (existing) continue; // Silently skip duplicates
+      const existing = await tx.workOrderAssignment.findMany({
+        where: {
+          workOrderId: id,
+          userId: { in: dto.userIds },
+          status: { in: ['PENDING', 'ACCEPTED'] },
+        },
+        select: { userId: true },
+      });
+      const existingUserIds = new Set(existing.map((item) => item.userId));
+      const toCreate = dto.userIds.filter((userId) => !existingUserIds.has(userId));
 
-        await tx.workOrderAssignment.create({
-          data: { workOrderId: id, userId, status: 'PENDING' },
+      if (toCreate.length > 0) {
+        await tx.workOrderAssignment.createMany({
+          data: toCreate.map((userId) => ({
+            workOrderId: id,
+            userId,
+            status: 'PENDING',
+          })),
         });
       }
 
-      // Update WO status to ASSIGNED if still UNASSIGNED
       if (wo.status === WorkOrderStatus.UNASSIGNED) {
         await tx.workOrder.update({
           where: { id },
@@ -193,7 +270,16 @@ export class WorkOrdersService {
       }
     });
 
-    return this.findOne(id);
+    return this.findOneForList(id);
+  }
+
+  private async findOneForList(id: string) {
+    const wo = await this.prisma.workOrder.findFirst({
+      where: { id, deletedAt: null },
+      select: WORK_ORDER_LIST_SELECT,
+    });
+    if (!wo) throw new NotFoundException('Work order not found');
+    return wo;
   }
 
   // ─── ACCEPT ───────────────────────────────────────────────────────────────
@@ -475,6 +561,38 @@ export class WorkOrdersService {
     return this.findOne(id);
   }
 
+  // ─── DELETE ───────────────────────────────────────────────────────────────
+
+  async remove(id: string, user: AuthUser) {
+    const wo = await this.prisma.workOrder.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, buildingId: true, status: true },
+    });
+    if (!wo) throw new NotFoundException('Work order not found');
+
+    const globalStaff = await this.hasGlobalStaffAccess(user.id);
+    if (!globalStaff) {
+      const staffBuildingIds = await this.getStaffBuildingIds(user.id);
+      if (!staffBuildingIds.includes(wo.buildingId)) {
+        throw new ForbiddenException('No tenés acceso a servicios de este edificio.');
+      }
+    }
+
+    if (wo.status === WorkOrderStatus.IN_PROGRESS) {
+      throw new ConflictException('No se puede eliminar un servicio en curso.');
+    }
+    if (wo.status === WorkOrderStatus.COMPLETED) {
+      throw new ConflictException('No se puede eliminar un servicio completado.');
+    }
+
+    await this.prisma.workOrder.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+
+    return { message: 'Work order deleted' };
+  }
+
   private async assertWorkOrderExists(id: string) {
     const wo = await this.prisma.workOrder.findFirst({
       where: { id, deletedAt: null },
@@ -513,17 +631,82 @@ export class WorkOrdersService {
     }
   }
 
-  /** Admin/manager global o del edificio consultado. */
-  private async hasStaffBuildingAccess(
-    userId: string,
-    buildingId?: string,
-  ): Promise<boolean> {
+  /** Admin/manager con rol global (cualquier edificio). */
+  private async hasGlobalStaffAccess(userId: string): Promise<boolean> {
     return !!(await this.prisma.userBuildingRole.findFirst({
       where: {
         userId,
+        buildingId: null,
         role: { name: { in: ['admin', 'manager'] } },
-        OR: [{ buildingId: null }, ...(buildingId ? [{ buildingId }] : [])],
       },
     }));
+  }
+
+  /** Edificios donde el usuario es admin o encargado (rol acotado). */
+  private async getStaffBuildingIds(userId: string): Promise<string[]> {
+    const assignments = await this.prisma.userBuildingRole.findMany({
+      where: {
+        userId,
+        buildingId: { not: null },
+        role: { name: { in: ['admin', 'manager'] } },
+      },
+      select: { buildingId: true },
+    });
+
+    return [
+      ...new Set(
+        assignments
+          .map((item) => item.buildingId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+  }
+
+  private async validateHierarchy(buildingId: string, floorId: string, zoneId: string) {
+    const building = await this.prisma.building.findFirst({
+      where: { id: buildingId, deletedAt: null },
+    });
+    if (!building) throw new NotFoundException('Building not found');
+
+    const floor = await this.prisma.floor.findFirst({
+      where: { id: floorId, buildingId, deletedAt: null },
+    });
+    if (!floor) throw new NotFoundException('Floor not found or does not belong to this building');
+
+    const zone = await this.prisma.zone.findFirst({
+      where: { id: zoneId, buildingId, floorId, deletedAt: null },
+    });
+    if (!zone) throw new NotFoundException('Zone not found or does not belong to this floor');
+  }
+
+  private async findEventualTasksForZone(buildingId: string, zoneId: string) {
+    const subzones = await this.prisma.subzone.findMany({
+      where: { zoneId, buildingId, deletedAt: null },
+      select: { id: true },
+    });
+    const subzoneIds = subzones.map((s) => s.id);
+
+    return this.prisma.task.findMany({
+      where: {
+        buildingId,
+        zoneId,
+        frequency: 'EVENTUAL',
+        isActive: true,
+        deletedAt: null,
+        OR: [
+          { subzoneId: null },
+          ...(subzoneIds.length > 0 ? [{ subzoneId: { in: subzoneIds } }] : []),
+        ],
+      },
+      include: {
+        customFields: {
+          orderBy: { sortOrder: 'asc' as const },
+          include: {
+            options: { orderBy: { sortOrder: 'asc' as const } },
+          },
+        },
+      },
+      orderBy: [{ subzoneId: 'asc' }, { createdAt: 'asc' }],
+    });
   }
 }

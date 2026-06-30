@@ -40,6 +40,19 @@ export class BuildingsController {
     return this.buildingsService.create(dto);
   }
 
+  @Get(':id/hierarchy')
+  @RequiredRoles('admin', 'manager', 'cleaner')
+  findHierarchy(@Param('id', ParseUUIDPipe) id: string) {
+    return this.buildingsService.findHierarchy(id);
+  }
+
+  @Get(':id/assignable-cleaners')
+  @RequiredRoles('admin', 'manager')
+  @BuildingScoped()
+  findAssignableCleaners(@Param('id', ParseUUIDPipe) id: string) {
+    return this.buildingsService.findAssignableCleaners(id);
+  }
+
   @Get(':id')
   @RequiredRoles('admin', 'manager')
   findOne(@Param('id', ParseUUIDPipe) id: string) {

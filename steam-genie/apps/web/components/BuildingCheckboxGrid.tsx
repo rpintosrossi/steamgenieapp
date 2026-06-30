@@ -86,6 +86,23 @@ export function getBuildingIdsForRole(
     .map((item) => item.buildingId as string);
 }
 
+export function summarizeUserBuildings(
+  assignments: Array<{
+    buildingId: string | null;
+    building?: { name: string } | null;
+  }>,
+): string {
+  const scoped = assignments.filter((item) => item.buildingId && item.building?.name);
+
+  if (scoped.length === 0) {
+    const hasGlobal = assignments.some((item) => !item.buildingId);
+    return hasGlobal ? 'Global' : '—';
+  }
+
+  if (scoped.length === 1) return '1 edificio';
+  return `${scoped.length} edificios`;
+}
+
 export function formatUserBuildings(
   assignments: Array<{
     buildingId: string | null;

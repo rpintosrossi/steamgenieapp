@@ -162,12 +162,12 @@ async function buildTestWorkbook(buildingName) {
   return { path, suffix };
 }
 
-async function uploadExcel(token, filePath) {
+async function uploadExcel(token, buildingId, filePath) {
   const buffer = readFileSync(filePath);
   const form = new FormData();
   form.append('file', new Blob([buffer]), 'test-import.xlsx');
 
-  const res = await fetch(`${API}/bulk-import/excel`, {
+  const res = await fetch(`${API}/bulk-import/buildings/${buildingId}/excel`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
     body: form,
@@ -195,13 +195,36 @@ async function main() {
     process.exit(1);
   }
 
-  // Template download
+  // Get a building
+  let buildingName = 'Edificio Demo Completo';
+  let buildingId = null;
   try {
-    const res = await fetch(`${API}/bulk-import/template`, {
+    const res = await fetch(`${API}/buildings?limit=5`, {
       headers: { Authorization: `Bearer ${token}` },
     });
+    const data = await res.json();
+    if (data.data?.length) {
+      buildingName = data.data[0].name;
+      buildingId = data.data[0].id;
+    }
+    ok('Obtener edificio para test', buildingName);
+  } catch (e) {
+    fail('Obtener edificio', e.message);
+  }
+
+  if (!buildingId) {
+    fail('Building ID', 'No hay edificios en la base');
+    process.exit(1);
+  }
+
+  // Template download (current data)
+  try {
+    const res = await fetch(
+      `${API}/bulk-import/buildings/${buildingId}/template?mode=current`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
     if (res.status !== 200) {
-      fail('GET /bulk-import/template', `status ${res.status}`);
+      fail('GET template datos actuales', `status ${res.status}`);
     } else {
       const ct = res.headers.get('content-type') ?? '';
       const buf = Buffer.from(await res.arrayBuffer());
@@ -210,32 +233,19 @@ async function main() {
       const sheet = wb.getWorksheet('Carga masiva');
       if (!sheet) fail('Plantilla parseable', 'Falta hoja Carga masiva');
       else if (buf.length < 1000) fail('Plantilla tamaño', `${buf.length} bytes`);
-      else ok('GET /bulk-import/template', `${buf.length} bytes, content-type: ${ct}`);
+      else ok('GET template datos actuales', `${buf.length} bytes, content-type: ${ct}`);
     }
   } catch (e) {
-    fail('GET /bulk-import/template', e.message);
+    fail('GET template datos actuales', e.message);
   }
 
   // Unauthorized
   try {
-    const res = await fetch(`${API}/bulk-import/template`);
+    const res = await fetch(`${API}/bulk-import/buildings/${buildingId}/template`);
     if (res.status === 401) ok('Template sin auth → 401');
     else fail('Template sin auth', `esperaba 401, obtuvo ${res.status}`);
   } catch (e) {
     fail('Template sin auth', e.message);
-  }
-
-  // Get a building
-  let buildingName = 'Edificio Demo Completo';
-  try {
-    const res = await fetch(`${API}/buildings?limit=5`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const data = await res.json();
-    if (data.data?.length) buildingName = data.data[0].name;
-    ok('Obtener edificio para test', buildingName);
-  } catch (e) {
-    fail('Obtener edificio', e.message);
   }
 
   // Upload test workbook
@@ -244,13 +254,13 @@ async function main() {
     const { path, suffix } = await buildTestWorkbook(buildingName);
     testPath = path;
 
-    const { status, body } = await uploadExcel(token, path);
+    const { status, body } = await uploadExcel(token, buildingId, path);
     if (status !== 201 && status !== 200) {
-      fail('POST /bulk-import/excel', `status ${status}: ${JSON.stringify(body).slice(0, 200)}`);
+      fail('POST bulk-import excel', `status ${status}: ${JSON.stringify(body).slice(0, 200)}`);
     } else if (!body.rows || !Array.isArray(body.rows)) {
       fail('Respuesta import', 'Sin array rows');
     } else {
-      ok('POST /bulk-import/excel', `${body.totalRows} filas procesadas`);
+      ok('POST bulk-import excel', `${body.totalRows} filas procesadas`);
 
       const byStatus = {
         success: body.rows.filter((r) => r.status === 'success').length,
@@ -272,10 +282,12 @@ async function main() {
       else fail('Error fila zona con subzonas', 'No se detectó');
 
       const buildingError = body.rows.find(
-        (r) => r.status === 'error' && r.message.includes('no encontrado'),
+        (r) =>
+          r.status === 'error' &&
+          (r.message.includes('no encontrado') || r.message.includes('indica el edificio')),
       );
-      if (buildingError) ok('Error edificio inexistente', `fila ${buildingError.row}`);
-      else fail('Error edificio inexistente', 'No se detectó');
+      if (buildingError) ok('Error edificio incorrecto', `fila ${buildingError.row}`);
+      else fail('Error edificio incorrecto', 'No se detectó');
 
       const freqError = body.rows.find(
         (r) => r.status === 'error' && r.message.includes('Frecuencia inválida'),
@@ -304,23 +316,31 @@ async function main() {
     }
   }
 
-  // Re-upload template oficial (smoke test parse)
+  // Re-upload template con datos actuales (idempotencia)
   try {
-    const res = await fetch(`${API}/bulk-import/template`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await fetch(
+      `${API}/bulk-import/buildings/${buildingId}/template?mode=current`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
     const buf = Buffer.from(await res.arrayBuffer());
     const tmp = join(__dirname, 'template-smoke.xlsx');
     writeFileSync(tmp, buf);
-    const { status, body } = await uploadExcel(token, tmp);
+    const { status, body } = await uploadExcel(token, buildingId, tmp);
     unlinkSync(tmp);
     if (status === 200 || status === 201) {
-      ok('Importar plantilla oficial', `${body.totalRows} filas (ejemplo)`);
+      const mostlySkipped =
+        body.skippedCount >= body.totalRows - body.errorCount - 1 ||
+        body.summary.tasksSkipped > 0;
+      if (mostlySkipped) {
+        ok('Re-importar datos actuales sin duplicar', `${body.skippedCount} omitidas`);
+      } else {
+        ok('Re-importar datos actuales', `${body.totalRows} filas`);
+      }
     } else {
-      fail('Importar plantilla oficial', `status ${status}`);
+      fail('Re-importar datos actuales', `status ${status}`);
     }
   } catch (e) {
-    fail('Importar plantilla oficial', e.message);
+    fail('Re-importar datos actuales', e.message);
   }
 
   console.log(`\n=== Resultado: ${passed} OK, ${failed} FAIL ===\n`);

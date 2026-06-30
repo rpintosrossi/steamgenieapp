@@ -13,6 +13,7 @@ export interface BulkImportRowInterpretation {
   subzoneCreated?: boolean;
   task?: string;
   taskCreated?: boolean;
+  taskUpdated?: boolean;
   taskSkipped?: boolean;
   frequency?: TaskFrequency;
   startDate?: string;
@@ -31,7 +32,21 @@ export interface BulkImportSummary {
   zonesCreated: number;
   subzonesCreated: number;
   tasksCreated: number;
+  tasksUpdated: number;
   tasksSkipped: number;
+}
+
+export interface TemplateRowData {
+  buildingName: string;
+  floorName: string;
+  zoneName: string;
+  subzoneName?: string;
+  taskName?: string;
+  frequencyRaw?: string;
+  startDateRaw?: string;
+  requiresPhoto?: boolean;
+  allowsObservation?: boolean;
+  requiresRejectionReason?: boolean;
 }
 
 export interface BulkImportResult {

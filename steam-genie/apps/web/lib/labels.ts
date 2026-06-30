@@ -45,3 +45,15 @@ export const ASSIGNMENT_STATUS_LABELS: Record<string, string> = {
   ACCEPTED: 'Aceptado',
   REJECTED: 'Rechazado',
 };
+
+export const RECURRING_WORK_STATUS_LABELS: Record<string, string> = {
+  COMPLETED: 'Completada',
+  SCHEDULED: 'Programada',
+  OVERDUE: 'Vencida',
+};
+
+export const TASK_EXECUTION_STATUS_LABELS: Record<string, string> = {
+  DONE: 'Realizada',
+  NOT_DONE: 'No realizada',
+  SKIPPED: 'Omitida',
+};

@@ -1,6 +1,6 @@
 import * as ExcelJS from 'exceljs';
 import { TASK_FREQUENCIES } from '@steam-genie/shared-constants';
-import type { ParsedImportRow } from './bulk-import.types';
+import type { ParsedImportRow, TemplateRowData } from './bulk-import.types';
 
 export const TEMPLATE_HEADERS = [
   'Edificio',
@@ -42,6 +42,31 @@ const FREQUENCY_LABELS: Record<string, string> = {
   BIANNUAL: 'Semestral',
   ANNUAL: 'Anual',
 };
+
+export function frequencyLabel(code: string): string {
+  return FREQUENCY_LABELS[code] ?? code;
+}
+
+function formatBooleanForExport(value: boolean): string {
+  return value ? 'Sí' : 'No';
+}
+
+function templateRowToArray(row: TemplateRowData): (string | undefined)[] {
+  return [
+    row.buildingName,
+    row.floorName,
+    row.zoneName,
+    row.subzoneName ?? '',
+    row.taskName ?? '',
+    row.frequencyRaw ?? '',
+    row.startDateRaw ?? '',
+    row.requiresPhoto !== undefined ? formatBooleanForExport(row.requiresPhoto) : '',
+    row.allowsObservation !== undefined ? formatBooleanForExport(row.allowsObservation) : '',
+    row.requiresRejectionReason !== undefined
+      ? formatBooleanForExport(row.requiresRejectionReason)
+      : '',
+  ];
+}
 
 function normalizeHeader(value: string): string {
   return value
@@ -160,7 +185,10 @@ export async function parseImportWorkbook(buffer: Buffer): Promise<ParsedImportR
   return rows;
 }
 
-export async function buildImportTemplateBuffer(): Promise<Buffer> {
+export async function buildImportTemplateBuffer(
+  dataRows?: TemplateRowData[],
+  options?: { buildingName?: string; buildingScoped?: boolean },
+): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Steam Genie';
   workbook.created = new Date();
@@ -179,64 +207,108 @@ export async function buildImportTemplateBuffer(): Promise<Buffer> {
     fgColor: { argb: 'FFE8F0FE' },
   };
 
-  sheet.addRow([
-    'Edificio Demo Completo',
-    'Planta PB',
-    'Cocina',
-    'Bacha',
-    'Limpiar y desinfectar bacha',
-    'Diaria',
-    '2026-01-01',
-    'Sí',
-    'Sí',
-    'Sí',
-  ]);
-  sheet.addRow([
-    'Edificio Demo Completo',
-    'Planta PB',
-    'Baño',
-    '',
-    'Desinfectar piso',
-    'Semanal',
-    '',
-    'No',
-    'Sí',
-    'Sí',
-  ]);
-  sheet.addRow([
-    'Edificio Demo Completo',
-    'Planta 1',
-    'Habitación 1',
-    'Cama',
-    'Cambiar ropa de cama',
-    'Eventual (checkout)',
-    '',
-    'Sí',
-    'Sí',
-    'Sí',
-  ]);
+  const rowsToWrite =
+    dataRows ??
+    (options?.buildingName
+      ? [
+          {
+            buildingName: options.buildingName,
+            floorName: 'Planta PB',
+            zoneName: 'Cocina',
+            subzoneName: 'Bacha',
+            taskName: 'Limpiar y desinfectar bacha',
+            frequencyRaw: 'Diaria',
+            startDateRaw: '2026-01-01',
+            requiresPhoto: true,
+            allowsObservation: true,
+            requiresRejectionReason: true,
+          },
+        ]
+      : [
+          {
+            buildingName: 'Edificio Demo Completo',
+            floorName: 'Planta PB',
+            zoneName: 'Cocina',
+            subzoneName: 'Bacha',
+            taskName: 'Limpiar y desinfectar bacha',
+            frequencyRaw: 'Diaria',
+            startDateRaw: '2026-01-01',
+            requiresPhoto: true,
+            allowsObservation: true,
+            requiresRejectionReason: true,
+          },
+          {
+            buildingName: 'Edificio Demo Completo',
+            floorName: 'Planta PB',
+            zoneName: 'Baño',
+            taskName: 'Desinfectar piso',
+            frequencyRaw: 'Semanal',
+            requiresPhoto: false,
+            allowsObservation: true,
+            requiresRejectionReason: true,
+          },
+          {
+            buildingName: 'Edificio Demo Completo',
+            floorName: 'Planta 1',
+            zoneName: 'Habitación 1',
+            subzoneName: 'Cama',
+            taskName: 'Cambiar ropa de cama',
+            frequencyRaw: 'Eventual (checkout)',
+            requiresPhoto: true,
+            allowsObservation: true,
+            requiresRejectionReason: true,
+          },
+        ]);
+
+  for (const row of rowsToWrite) {
+    sheet.addRow(templateRowToArray(row));
+  }
 
   const instructions = workbook.addWorksheet('Instrucciones');
   instructions.getColumn(1).width = 110;
-  const lines = [
-    'INSTRUCCIONES — Carga masiva de estructura y tareas',
-    '',
-    'Columnas obligatorias: Edificio, Planta, Zona.',
-    'El edificio debe existir previamente en el sistema (se identifica por nombre, sin distinguir mayúsculas).',
-    'Si la planta, zona o subzona no existen, se crean automáticamente.',
-    '',
-    'Tarea y Frecuencia: completar ambas para crear una tarea. Si dejás Tarea vacía, solo se crea/valida la estructura.',
-    'Si una zona tiene subzonas (existentes o creadas en el mismo archivo), la tarea debe indicar Subzona.',
-    'Si intentás cargar una tarea directamente en una zona con subzonas, esa fila fallará con un error claro.',
-    '',
-    'Frecuencias válidas:',
-    ...Object.entries(FREQUENCY_LABELS).map(([code, label]) => `  • ${label} (o ${code})`),
-    '',
-    'Fecha inicio: formato YYYY-MM-DD o DD/MM/YYYY. Si se omite, se usa la fecha de hoy.',
-    'Campos Sí/No: Requiere foto, Permite observación, Requiere motivo si no se hace.',
-    '',
-    'Valores de ejemplo incluidos en la hoja "Carga masiva". Podés borrarlos y pegar tus datos.',
-  ];
+  const lines = options?.buildingScoped
+    ? [
+        'INSTRUCCIONES — Carga masiva de estructura y tareas (edificio)',
+        '',
+        'Columnas obligatorias: Edificio, Planta, Zona.',
+        'El edificio debe coincidir con el edificio desde el que descargaste la plantilla.',
+        'Si la planta, zona o subzona no existen, se crean automáticamente.',
+        'Si ya existen, no se duplican.',
+        '',
+        'Tarea y Frecuencia: completar ambas para crear o actualizar una tarea.',
+        'Si dejás Tarea vacía, solo se crea/valida la estructura.',
+        'Si una zona tiene subzonas, la tarea debe indicar Subzona.',
+        '',
+        'Al volver a cargar la plantilla con datos actuales:',
+        '  • Filas sin cambios se omiten (no se duplican tareas).',
+        '  • Filas nuevas crean estructura o tareas.',
+        '  • Filas con tareas existentes actualizan frecuencia, fecha y opciones si cambiaron.',
+        '',
+        'Frecuencias válidas:',
+        ...Object.entries(FREQUENCY_LABELS).map(([code, label]) => `  • ${label} (o ${code})`),
+        '',
+        'Fecha inicio: formato YYYY-MM-DD o DD/MM/YYYY.',
+        'Campos Sí/No: Requiere foto, Permite observación, Requiere motivo si no se hace.',
+      ]
+    : [
+        'INSTRUCCIONES — Carga masiva de estructura y tareas',
+        '',
+        'Columnas obligatorias: Edificio, Planta, Zona.',
+        'El edificio debe existir previamente en el sistema (se identifica por nombre, sin distinguir mayúsculas).',
+        'Si la planta, zona o subzona no existen, se crean automáticamente.',
+        '',
+        'Tarea y Frecuencia: completar ambas para crear una tarea. Si dejás Tarea vacía, solo se crea/valida la estructura.',
+        'Si una zona tiene subzonas (existentes o creadas en el mismo archivo), la tarea debe indicar Subzona.',
+        'Si intentás cargar una tarea directamente en una zona con subzonas, esa fila fallará con un error claro.',
+        '',
+        'Frecuencias válidas:',
+        ...Object.entries(FREQUENCY_LABELS).map(([code, label]) => `  • ${label} (o ${code})`),
+        '',
+        'Fecha inicio: formato YYYY-MM-DD o DD/MM/YYYY. Si se omite, se usa la fecha de hoy.',
+        'Campos Sí/No: Requiere foto, Permite observación, Requiere motivo si no se hace.',
+        '',
+        'Valores de ejemplo incluidos en la hoja "Carga masiva". Podés borrarlos y pegar tus datos.',
+      ];
   lines.forEach((line, index) => {
     const row = instructions.addRow([line]);
     if (index === 0) row.font = { bold: true, size: 12 };

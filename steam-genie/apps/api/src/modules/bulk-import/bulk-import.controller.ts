@@ -2,7 +2,10 @@ import {
   BadRequestException,
   Controller,
   Get,
+  Param,
+  ParseUUIDPipe,
   Post,
+  Query,
   Res,
   UploadedFile,
   UseGuards,
@@ -13,7 +16,9 @@ import { memoryStorage } from 'multer';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { BuildingAccessGuard } from '../../common/guards/building-access.guard';
 import { RequiredRoles } from '../../common/decorators/required-roles.decorator';
+import { BuildingScoped } from '../../common/decorators/building-scoped.decorator';
 import { BulkImportService } from './bulk-import.service';
 
 const ALLOWED_MIME_TYPES = new Set([
@@ -25,24 +30,40 @@ const ALLOWED_MIME_TYPES = new Set([
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
 
 @Controller('bulk-import')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, BuildingAccessGuard)
 export class BulkImportController {
   constructor(private readonly bulkImportService: BulkImportService) {}
 
-  @Get('template')
+  @Get('buildings/:buildingId/template')
   @RequiredRoles('admin', 'manager')
-  async downloadTemplate(@Res() res: Response) {
-    const buffer = await this.bulkImportService.generateTemplate();
+  @BuildingScoped()
+  async downloadBuildingTemplate(
+    @Param('buildingId', ParseUUIDPipe) buildingId: string,
+    @Query('mode') mode: string | undefined,
+    @Res() res: Response,
+  ) {
+    const templateMode = mode === 'empty' ? 'empty' : 'current';
+    const buffer = await this.bulkImportService.generateTemplateForBuilding(
+      buildingId,
+      templateMode,
+    );
+
+    const filename =
+      templateMode === 'empty'
+        ? 'plantilla-vacia.xlsx'
+        : 'plantilla-datos-actuales.xlsx';
+
     res.set({
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': 'attachment; filename="plantilla-carga-masiva.xlsx"',
+      'Content-Disposition': `attachment; filename="${filename}"`,
       'Content-Length': buffer.length,
     });
     res.send(buffer);
   }
 
-  @Post('excel')
+  @Post('buildings/:buildingId/excel')
   @RequiredRoles('admin', 'manager')
+  @BuildingScoped()
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
@@ -63,11 +84,14 @@ export class BulkImportController {
       },
     }),
   )
-  async uploadExcel(@UploadedFile() file: Express.Multer.File) {
+  async uploadBuildingExcel(
+    @Param('buildingId', ParseUUIDPipe) buildingId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
     if (!file?.buffer?.length) {
       throw new BadRequestException('No se recibió ningún archivo.');
     }
 
-    return this.bulkImportService.processExcel(file.buffer);
+    return this.bulkImportService.processExcelForBuilding(buildingId, file.buffer);
   }
 }

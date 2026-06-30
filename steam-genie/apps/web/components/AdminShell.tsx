@@ -5,10 +5,16 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { clearTokens } from '../lib/auth';
 
+type NavChild = {
+  href: string;
+  label: string;
+};
+
 type NavItem = {
   href: string;
   label: string;
   icon: React.ReactNode;
+  children?: NavChild[];
 };
 
 const NAV_ITEMS: NavItem[] = [
@@ -22,65 +28,67 @@ const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
-    href: '/buildings',
-    label: 'Edificios',
+    href: '/configuracion',
+    label: 'Configuración',
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6" />
+        <circle cx="12" cy="12" r="3" />
+        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
       </svg>
     ),
+    children: [
+      { href: '/buildings', label: 'Edificios' },
+      { href: '/users', label: 'Usuarios' },
+      { href: '/tasks', label: 'Tareas' },
+    ],
   },
   {
-    href: '/tasks',
-    label: 'Tareas',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-      </svg>
-    ),
-  },
-  {
-    href: '/users',
-    label: 'Usuarios',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
-      </svg>
-    ),
-  },
-  {
-    href: '/reservations',
-    label: 'Reservas',
+    href: '/trabajos-eventuales',
+    label: 'Trabajos eventuales',
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <rect x="3" y="4" width="18" height="18" rx="2" />
-        <path d="M16 2v4M8 2v4M3 10h18" />
+        <path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01" />
       </svg>
     ),
+    children: [
+      { href: '/trabajos-eventuales/reservas', label: 'Reservas' },
+      { href: '/trabajos-eventuales/servicios', label: 'Servicios' },
+    ],
   },
   {
-    href: '/services',
-    label: 'Servicios',
+    href: '/trabajos-recurrentes',
+    label: 'Trabajos recurrentes',
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+        <path d="M17 1l4 4-4 4" />
+        <path d="M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4" />
+        <path d="M21 13v2a4 4 0 0 1-4 4H3" />
       </svg>
     ),
+    children: [{ href: '/trabajos-recurrentes/listado', label: 'Listado de Trabajos' }],
   },
   {
-    href: '/import',
-    label: 'Importar Excel',
+    href: '/presencia',
+    label: 'Presencia',
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-        <path d="M14 2v6h6M12 18v-6M9 15l3 3 3-3" />
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 6v6l4 2" />
       </svg>
     ),
+    children: [{ href: '/presencia/timeline', label: 'Timeline de Presencia' }],
   },
 ];
 
 function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function isNavItemActive(pathname: string, item: NavItem) {
+  if (isActive(pathname, item.href)) return true;
+  if (item.children?.some((child) => isActive(pathname, child.href))) return true;
+  return false;
 }
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
@@ -96,25 +104,47 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     <div className="admin-shell">
       <aside className="admin-sidebar">
         <div className="admin-brand">
-          <Image src="/logo.png" alt="Steam Genie" width={40} height={40} className="admin-brand-logo" priority />
-          <div className="admin-brand-text">
-            <span className="admin-brand-name">Steam Genie</span>
-            <span className="admin-brand-sub">Administración</span>
-          </div>
+          <Link href="/dashboard" className="admin-brand-link" aria-label="Ir al inicio">
+            <Image
+              src="/logoFondoAzul.png"
+              alt="Steam Genie"
+              width={360}
+              height={108}
+              className="admin-brand-logo"
+              priority
+            />
+          </Link>
         </div>
 
         <nav className="admin-nav" aria-label="Navegación principal">
           <span className="admin-nav-section">Menú</span>
-          {NAV_ITEMS.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`admin-nav-link ${isActive(pathname, item.href) ? 'active' : ''}`}
-            >
-              {item.icon}
-              {item.label}
-            </Link>
-          ))}
+          {NAV_ITEMS.map((item) => {
+            const itemActive = isNavItemActive(pathname, item);
+            return (
+              <div key={item.href} className="admin-nav-group">
+                <Link
+                  href={item.href}
+                  className={`admin-nav-link ${itemActive ? 'active' : ''}`}
+                >
+                  {item.icon}
+                  {item.label}
+                </Link>
+                {item.children ? (
+                  <div className="admin-nav-sub">
+                    {item.children.map((child) => (
+                      <Link
+                        key={child.href}
+                        href={child.href}
+                        className={`admin-nav-link admin-nav-link--sub ${isActive(pathname, child.href) ? 'active' : ''}`}
+                      >
+                        {child.label}
+                      </Link>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
         </nav>
 
         <div className="admin-sidebar-footer">

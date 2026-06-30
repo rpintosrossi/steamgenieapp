@@ -16,6 +16,7 @@ export interface Building {
   longitude?: string | number | null;
   gpsRadiusM?: number;
   isActive?: boolean;
+  createdAt?: string;
 }
 
 export interface Floor {
@@ -51,6 +52,31 @@ export interface BuildingDetail extends Building {
   >;
 }
 
+/** Jerarquía mínima para selectores (LocationPicker). */
+export interface BuildingHierarchy {
+  id: string;
+  name: string;
+  floors: Array<
+    Floor & {
+      zones: Array<
+        Zone & {
+          subzones: Subzone[];
+        }
+      >;
+    }
+  >;
+}
+
+export interface AssignableCleanersResponse {
+  cleaners: Array<{ id: string; fullName: string; dni: string }>;
+  otherUsersOnBuilding: Array<{
+    id: string;
+    fullName: string;
+    dni: string;
+    primaryRole: string;
+  }>;
+}
+
 export interface TaskItem {
   id: string;
   buildingId: string;
@@ -64,8 +90,39 @@ export interface TaskItem {
   requiresRejectionReason: boolean;
   isActive: boolean;
   building?: { id: string; name: string };
-  zone?: { id: string; name: string } | null;
+  floor?: { id: string; name: string } | null;
+  zone?: { id: string; name: string; floor?: { id: string; name: string } | null } | null;
   subzone?: { id: string; name: string } | null;
+}
+
+export interface RecurringWorkListItem {
+  id: string;
+  taskId: string;
+  taskName: string;
+  frequency: string;
+  building: { id: string; name: string } | null;
+  floor: { id: string; name: string } | null;
+  zone: { id: string; name: string } | null;
+  subzone: { id: string; name: string } | null;
+  periodLabel: string;
+  periodStart: string;
+  periodEnd: string;
+  periodLabelDisplay: string;
+  displayStatus: 'COMPLETED' | 'SCHEDULED' | 'OVERDUE';
+  instanceStatus: string;
+  completedAt: string | null;
+  execution: {
+    id: string;
+    status: string;
+    observation: string | null;
+    executedAt: string;
+    executedBy: { id: string; fullName: string; dni: string };
+    photos: Array<{
+      id: string;
+      url: string;
+      originalFilename: string | null;
+    }>;
+  } | null;
 }
 
 export interface UserBuildingRoleItem {
@@ -95,6 +152,20 @@ export interface RoleItem {
   description?: string | null;
 }
 
+export interface AttendanceTimelineItem {
+  id: string;
+  checkInAt: string;
+  checkOutAt: string | null;
+  user: { id: string; fullName: string; dni: string };
+  building: { id: string; name: string };
+}
+
+export interface AttendanceTimelineResponse {
+  data: AttendanceTimelineItem[];
+  total: number;
+  truncated: boolean;
+}
+
 export interface ReservationItem {
   id: string;
   buildingId: string;
@@ -111,6 +182,12 @@ export interface ReservationItem {
 
 export interface CreateReservationResponse {
   reservation: ReservationItem;
+  workOrder: { id: string; title: string; status: string; type: string };
+  taskCount: number;
+  warning?: string;
+}
+
+export interface CreateCheckoutCleaningResponse {
   workOrder: { id: string; title: string; status: string; type: string };
   taskCount: number;
   warning?: string;
@@ -153,6 +230,7 @@ export interface BulkImportRowInterpretation {
   subzoneCreated?: boolean;
   task?: string;
   taskCreated?: boolean;
+  taskUpdated?: boolean;
   taskSkipped?: boolean;
   frequency?: string;
   startDate?: string;
@@ -171,6 +249,7 @@ export interface BulkImportSummary {
   zonesCreated: number;
   subzonesCreated: number;
   tasksCreated: number;
+  tasksUpdated: number;
   tasksSkipped: number;
 }
 

@@ -13,8 +13,8 @@ import {
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
+import { takeTaskPhoto } from '../../src/utils/camera';
 import { apiService } from '../../src/services/api.service';
 import { syncQueue, generateClientId } from '../../src/sync/sync-queue';
 import { useNetworkStatus } from '../../src/hooks/useNetworkStatus';
@@ -80,6 +80,10 @@ function countProgress(tasks: PeriodicDueItem[]) {
   const total = tasks.length;
   const resolved = tasks.filter((t) => t.execution?.status).length;
   return { total, resolved };
+}
+
+function isTaskPending(item: PeriodicDueItem): boolean {
+  return !item.execution?.status;
 }
 
 function getFloorShortName(name: string, sortOrder: number): string {
@@ -168,6 +172,10 @@ export default function TareasScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [markingId, setMarkingId] = useState<string | null>(null);
+  const [uploadingPhotoForItemId, setUploadingPhotoForItemId] = useState<string | null>(null);
+  const [isBulkMarking, setIsBulkMarking] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [reasonPickerItem, setReasonPickerItem] = useState<PeriodicDueItem | null>(null);
   const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
@@ -187,7 +195,14 @@ export default function TareasScreen() {
     setSelectedFloorId(null);
     setSelectedZoneId(null);
     setSelectedSubzoneId(null);
+    setSelectionMode(false);
+    setSelectedIds(new Set());
   }, [buildingId]);
+
+  const clearSelection = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }, []);
 
   const activeAttendance =
     prefetchData?.activeAttendance?.buildingId === selectedBuilding?.id
@@ -220,7 +235,8 @@ export default function TareasScreen() {
   useEffect(() => {
     setSelectedZoneId(null);
     setSelectedSubzoneId(null);
-  }, [selectedFloorId]);
+    clearSelection();
+  }, [selectedFloorId, clearSelection]);
 
   useEffect(() => {
     if (!selectedZone) {
@@ -309,7 +325,8 @@ export default function TareasScreen() {
     item: PeriodicDueItem,
     newStatus: 'DONE' | 'NOT_DONE',
     rejectionReasonId?: string,
-  ) {
+    options?: { silent?: boolean; skipReload?: boolean },
+  ): Promise<boolean> {
     setMarkingId(item.id);
     try {
       const clientOperationId = generateClientId();
@@ -322,12 +339,14 @@ export default function TareasScreen() {
 
       if (isOnline) {
         await apiService.putOk(`/tasks/instances/${item.id}/mark`, body);
-        try {
-          await loadDueToday('silent');
-        } catch {
-          const reconciled = await reconcileItemMark(item.id, newStatus);
-          if (!reconciled) {
-            throw new Error('No se pudo confirmar la tarea. Revisá tu conexión e intentá de nuevo.');
+        if (!options?.skipReload) {
+          try {
+            await loadDueToday('silent');
+          } catch {
+            const reconciled = await reconcileItemMark(item.id, newStatus);
+            if (!reconciled) {
+              throw new Error('No se pudo confirmar la tarea. Revisá tu conexión e intentá de nuevo.');
+            }
           }
         }
       } else {
@@ -362,15 +381,81 @@ export default function TareasScreen() {
         );
         setStatus('pending');
       }
+      return true;
     } catch (e) {
       if (isOnline && isNetworkError(e)) {
         const reconciled = await reconcileItemMark(item.id, newStatus);
-        if (reconciled) return;
+        if (reconciled) return true;
       }
-      Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo marcar la tarea');
+      if (!options?.silent) {
+        Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo marcar la tarea');
+      }
+      return false;
     } finally {
       setMarkingId(null);
     }
+  }
+
+  function toggleSelectItem(itemId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  }
+
+  function selectAllPendingInSubzone(tasks: PeriodicDueItem[]) {
+    setSelectedIds(new Set(tasks.filter(isTaskPending).map((t) => t.id)));
+  }
+
+  function deselectAllInSubzone() {
+    setSelectedIds(new Set());
+  }
+
+  async function markSelectedAsDone(tasks: PeriodicDueItem[]) {
+    const toMark = tasks.filter((t) => selectedIds.has(t.id) && isTaskPending(t));
+    if (toMark.length === 0) return;
+
+    Alert.alert(
+      'Marcar tareas',
+      `¿Marcar ${toMark.length} tarea${toMark.length === 1 ? '' : 's'} como hecha${toMark.length === 1 ? '' : 's'}?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Confirmar',
+          onPress: async () => {
+            setIsBulkMarking(true);
+            let succeeded = 0;
+            try {
+              for (const item of toMark) {
+                const ok = await markItem(item, 'DONE', undefined, {
+                  silent: true,
+                  skipReload: true,
+                });
+                if (ok) succeeded += 1;
+              }
+              if (isOnline) {
+                try {
+                  await loadDueToday('silent');
+                } catch {
+                  // El marcado pudo haberse aplicado en el servidor.
+                }
+              }
+              clearSelection();
+              if (succeeded < toMark.length) {
+                Alert.alert(
+                  'Marcado parcial',
+                  `Se marcaron ${succeeded} de ${toMark.length} tareas. Revisá las pendientes e intentá de nuevo.`,
+                );
+              }
+            } finally {
+              setIsBulkMarking(false);
+            }
+          },
+        },
+      ],
+    );
   }
 
   function handleMarkNotDone(item: PeriodicDueItem) {
@@ -396,15 +481,10 @@ export default function TareasScreen() {
   }
 
   async function handlePhotoUpload(item: PeriodicDueItem): Promise<boolean> {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.6,
-      allowsEditing: false,
-    });
+    const asset = await takeTaskPhoto();
+    if (!asset) return false;
 
-    if (result.canceled || !result.assets?.[0]) return false;
-
-    const asset = result.assets[0];
+    setUploadingPhotoForItemId(item.id);
     try {
       let gpsLat: number | undefined;
       let gpsLng: number | undefined;
@@ -438,6 +518,8 @@ export default function TareasScreen() {
     } catch (e) {
       Alert.alert('Error al subir foto', e instanceof Error ? e.message : 'Error desconocido');
       return false;
+    } finally {
+      setUploadingPhotoForItemId(null);
     }
   }
 
@@ -503,11 +585,33 @@ export default function TareasScreen() {
               activeSubzone={activeSubzone}
               selectedSubzoneId={selectedSubzoneId}
               markingId={markingId}
+              uploadingPhotoForItemId={uploadingPhotoForItemId}
+              isBulkMarking={isBulkMarking}
+              selectionMode={selectionMode}
+              selectedIds={selectedIds}
               isRefreshing={isRefreshing}
-              onBack={() => setSelectedZoneId(null)}
-              onSelectSubzone={setSelectedSubzoneId}
+              onBack={() => {
+                clearSelection();
+                setSelectedZoneId(null);
+              }}
+              onSelectSubzone={(subId) => {
+                clearSelection();
+                setSelectedSubzoneId(subId);
+              }}
               onRefresh={handleRefresh}
-              onDone={(item) => markItem(item, 'DONE')}
+              onToggleSelectionMode={() => {
+                if (selectionMode) clearSelection();
+                else setSelectionMode(true);
+              }}
+              onToggleSelectItem={toggleSelectItem}
+              onSelectAllPending={() =>
+                selectAllPendingInSubzone(activeSubzone?.tasks ?? [])
+              }
+              onDeselectAll={deselectAllInSubzone}
+              onBulkMarkDone={() => markSelectedAsDone(activeSubzone?.tasks ?? [])}
+              onDone={(item) => {
+                void markItem(item, 'DONE');
+              }}
               onNotDone={handleMarkNotDone}
               onAddPhoto={handlePhotoUpload}
             />
@@ -660,10 +764,19 @@ function ZoneDetailView({
   activeSubzone,
   selectedSubzoneId,
   markingId,
+  uploadingPhotoForItemId,
+  isBulkMarking,
+  selectionMode,
+  selectedIds,
   isRefreshing,
   onBack,
   onSelectSubzone,
   onRefresh,
+  onToggleSelectionMode,
+  onToggleSelectItem,
+  onSelectAllPending,
+  onDeselectAll,
+  onBulkMarkDone,
   onDone,
   onNotDone,
   onAddPhoto,
@@ -672,23 +785,58 @@ function ZoneDetailView({
   activeSubzone: SubzoneGroup | null;
   selectedSubzoneId: string | null;
   markingId: string | null;
+  uploadingPhotoForItemId: string | null;
+  isBulkMarking: boolean;
+  selectionMode: boolean;
+  selectedIds: Set<string>;
   isRefreshing: boolean;
   onBack: () => void;
   onSelectSubzone: (subId: string) => void;
   onRefresh: () => void;
+  onToggleSelectionMode: () => void;
+  onToggleSelectItem: (itemId: string) => void;
+  onSelectAllPending: () => void;
+  onDeselectAll: () => void;
+  onBulkMarkDone: () => void;
   onDone: (item: PeriodicDueItem) => void;
   onNotDone: (item: PeriodicDueItem) => void;
   onAddPhoto: (item: PeriodicDueItem) => void;
 }) {
   const zoneProgress = countProgress(zone.tasks);
+  const subzoneTasks = activeSubzone?.tasks ?? [];
+  const pendingInSubzone = subzoneTasks.filter(isTaskPending);
+  const selectedCount = subzoneTasks.filter(
+    (t) => selectedIds.has(t.id) && isTaskPending(t),
+  ).length;
+  const allPendingSelected =
+    pendingInSubzone.length > 0 &&
+    pendingInSubzone.every((t) => selectedIds.has(t.id));
 
   return (
     <View style={styles.zoneDetail}>
       <View style={styles.zoneDetailHeader}>
-        <TouchableOpacity style={styles.backBtn} onPress={onBack}>
-          <Ionicons name="chevron-back" size={20} color={COLORS.primary} />
-          <Text style={styles.backText}>Zonas</Text>
-        </TouchableOpacity>
+        <View style={styles.zoneDetailHeaderTop}>
+          <TouchableOpacity style={styles.backBtn} onPress={onBack}>
+            <Ionicons name="chevron-back" size={20} color={COLORS.primary} />
+            <Text style={styles.backText}>Zonas</Text>
+          </TouchableOpacity>
+          {pendingInSubzone.length > 0 && (
+            <TouchableOpacity
+              style={styles.selectionToggleBtn}
+              onPress={onToggleSelectionMode}
+              disabled={isBulkMarking}
+            >
+              <Ionicons
+                name={selectionMode ? 'close' : 'checkbox-outline'}
+                size={16}
+                color={COLORS.primary}
+              />
+              <Text style={styles.selectionToggleText}>
+                {selectionMode ? 'Cancelar' : 'Seleccionar'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
         <View style={styles.zoneDetailTitleRow}>
           <View style={styles.zoneNumberBadgeLg}>
             <Text style={styles.zoneNumberTextLg}>{zone.zoneIndex}</Text>
@@ -736,16 +884,47 @@ function ZoneDetailView({
         })}
       </ScrollView>
 
+      {selectionMode && pendingInSubzone.length > 0 && (
+        <View style={styles.selectionToolbar}>
+          <TouchableOpacity
+            style={styles.selectAllBtn}
+            onPress={() => {
+              if (allPendingSelected) onDeselectAll();
+              else onSelectAllPending();
+            }}
+          >
+            <Ionicons
+              name={allPendingSelected ? 'checkbox' : 'square-outline'}
+              size={18}
+              color={COLORS.primary}
+            />
+            <Text style={styles.selectAllText}>
+              {allPendingSelected ? 'Deseleccionar todas' : 'Seleccionar todas'}
+            </Text>
+          </TouchableOpacity>
+          <Text style={styles.selectionCount}>
+            {selectedCount} seleccionada{selectedCount === 1 ? '' : 's'}
+          </Text>
+        </View>
+      )}
+
       <ScrollView
         style={styles.taskListScroll}
-        contentContainerStyle={styles.taskListContent}
+        contentContainerStyle={[
+          styles.taskListContent,
+          selectionMode && selectedCount > 0 && styles.taskListContentWithBar,
+        ]}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
       >
-        {(activeSubzone?.tasks ?? []).map((item) => (
+        {subzoneTasks.map((item) => (
           <TaskRow
             key={item.id}
             item={item}
-            isMarking={markingId === item.id}
+            isMarking={markingId === item.id || isBulkMarking}
+            isUploadingPhoto={uploadingPhotoForItemId === item.id}
+            selectionMode={selectionMode}
+            isSelected={selectedIds.has(item.id)}
+            onToggleSelect={() => onToggleSelectItem(item.id)}
             onDone={() => onDone(item)}
             onNotDone={() => onNotDone(item)}
             onAddPhoto={() => onAddPhoto(item)}
@@ -756,6 +935,27 @@ function ZoneDetailView({
           <Text style={styles.emptySubzone}>Sin tareas en esta subzona</Text>
         )}
       </ScrollView>
+
+      {selectionMode && selectedCount > 0 && (
+        <View style={styles.bulkActionBar}>
+          <TouchableOpacity
+            style={[styles.bulkMarkBtn, isBulkMarking && styles.bulkMarkBtnDisabled]}
+            onPress={onBulkMarkDone}
+            disabled={isBulkMarking}
+          >
+            {isBulkMarking ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="checkmark-done" size={18} color="#fff" />
+                <Text style={styles.bulkMarkBtnText}>
+                  Marcar {selectedCount} como hecha{selectedCount === 1 ? '' : 's'}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }
@@ -763,12 +963,20 @@ function ZoneDetailView({
 function TaskRow({
   item,
   isMarking,
+  isUploadingPhoto,
+  selectionMode,
+  isSelected,
+  onToggleSelect,
   onDone,
   onNotDone,
   onAddPhoto,
 }: {
   item: PeriodicDueItem;
   isMarking: boolean;
+  isUploadingPhoto: boolean;
+  selectionMode: boolean;
+  isSelected: boolean;
+  onToggleSelect: () => void;
   onDone: () => void;
   onNotDone: () => void;
   onAddPhoto: () => void;
@@ -780,13 +988,27 @@ function TaskRow({
   const photoCount = item.execution?.photos?.length ?? 0;
   const needsPhoto = isDone && item.task.requiresPhoto && photoCount === 0;
   const showMarkActions = !isResolved || isEditing;
+  const canSelect = selectionMode && isTaskPending(item);
 
   useEffect(() => {
     setIsEditing(false);
   }, [item.id, execStatus]);
 
-  return (
-    <View style={styles.taskRow}>
+  const rowContent = (
+    <>
+      {canSelect && (
+        <TouchableOpacity
+          style={styles.selectCheckbox}
+          onPress={onToggleSelect}
+          accessibilityLabel={isSelected ? 'Deseleccionar tarea' : 'Seleccionar tarea'}
+        >
+          <Ionicons
+            name={isSelected ? 'checkbox' : 'square-outline'}
+            size={22}
+            color={isSelected ? COLORS.primary : COLORS.disabled}
+          />
+        </TouchableOpacity>
+      )}
       <View style={styles.taskInfo}>
         <Ionicons
           name={
@@ -806,46 +1028,73 @@ function TaskRow({
           {isResolved && (
             <Text style={styles.taskStatus}>{STATUS_LABELS[execStatus] ?? execStatus}</Text>
           )}
-          {needsPhoto && (
+          {isUploadingPhoto ? (
+            <View style={styles.photoUploadingRow}>
+              <ActivityIndicator size="small" color={COLORS.primary} />
+              <Text style={styles.photoUploadingText}>Subiendo foto...</Text>
+            </View>
+          ) : needsPhoto ? (
             <Text style={styles.photoWarning}>Falta foto obligatoria</Text>
-          )}
+          ) : null}
         </View>
       </View>
 
-      {isMarking ? (
-        <ActivityIndicator size="small" color={COLORS.primary} />
-      ) : showMarkActions ? (
-        <View style={styles.actions}>
-          <TouchableOpacity style={styles.btnDone} onPress={onDone}>
-            <Text style={styles.btnDoneText}>Hecho</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.btnNotDone} onPress={onNotDone}>
-            <Text style={styles.btnNotDoneText}>No</Text>
-          </TouchableOpacity>
-          {isEditing && (
-            <TouchableOpacity style={styles.btnEdit} onPress={() => setIsEditing(false)}>
-              <Ionicons name="close" size={18} color={COLORS.textMuted} />
-            </TouchableOpacity>
+      {!selectionMode && (
+        <>
+          {isMarking || isUploadingPhoto ? (
+            <ActivityIndicator size="small" color={COLORS.primary} />
+          ) : showMarkActions ? (
+            <View style={styles.actions}>
+              <TouchableOpacity style={styles.btnDone} onPress={onDone}>
+                <Text style={styles.btnDoneText}>Hecho</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.btnNotDone} onPress={onNotDone}>
+                <Text style={styles.btnNotDoneText}>No</Text>
+              </TouchableOpacity>
+              {isEditing && (
+                <TouchableOpacity style={styles.btnEdit} onPress={() => setIsEditing(false)}>
+                  <Ionicons name="close" size={18} color={COLORS.textMuted} />
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : (
+            <View style={styles.actions}>
+              {needsPhoto && (
+                <TouchableOpacity
+                  style={styles.btnPhoto}
+                  onPress={onAddPhoto}
+                  disabled={isUploadingPhoto}
+                >
+                  <Ionicons name="camera-outline" size={18} color={COLORS.primary} />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={styles.btnEdit}
+                onPress={() => setIsEditing(true)}
+                accessibilityLabel="Corregir respuesta"
+              >
+                <Ionicons name="pencil-outline" size={18} color={COLORS.primary} />
+              </TouchableOpacity>
+            </View>
           )}
-        </View>
-      ) : (
-        <View style={styles.actions}>
-          {needsPhoto && (
-            <TouchableOpacity style={styles.btnPhoto} onPress={onAddPhoto}>
-              <Ionicons name="camera-outline" size={18} color={COLORS.primary} />
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity
-            style={styles.btnEdit}
-            onPress={() => setIsEditing(true)}
-            accessibilityLabel="Corregir respuesta"
-          >
-            <Ionicons name="pencil-outline" size={18} color={COLORS.primary} />
-          </TouchableOpacity>
-        </View>
+        </>
       )}
-    </View>
+    </>
   );
+
+  if (canSelect) {
+    return (
+      <TouchableOpacity
+        style={[styles.taskRow, isSelected && styles.taskRowSelected]}
+        onPress={onToggleSelect}
+        activeOpacity={0.85}
+      >
+        {rowContent}
+      </TouchableOpacity>
+    );
+  }
+
+  return <View style={styles.taskRow}>{rowContent}</View>;
 }
 
 const styles = StyleSheet.create({
@@ -961,6 +1210,23 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.border,
     gap: 8,
   },
+  zoneDetailHeaderTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  selectionToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  selectionToggleText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
   backBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   backText: { fontSize: 14, color: COLORS.primary, fontWeight: '600' },
   zoneDetailTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
@@ -1034,6 +1300,66 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingBottom: 32,
   },
+  taskListContentWithBar: {
+    paddingBottom: 88,
+  },
+  selectionToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#eff6ff',
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  selectAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  selectAllText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
+  selectionCount: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    fontWeight: '600',
+  },
+  bulkActionBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    padding: 16,
+    backgroundColor: COLORS.surface,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 8,
+  },
+  bulkMarkBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: COLORS.success,
+    borderRadius: 10,
+    paddingVertical: 14,
+  },
+  bulkMarkBtnDisabled: {
+    opacity: 0.7,
+  },
+  bulkMarkBtnText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
   emptySubzone: {
     textAlign: 'center',
     color: COLORS.textMuted,
@@ -1052,11 +1378,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
+  taskRowSelected: {
+    borderColor: COLORS.primary,
+    backgroundColor: '#f0f7ff',
+  },
+  selectCheckbox: {
+    marginRight: 2,
+  },
   taskInfo: { flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   taskTextWrap: { flex: 1, gap: 2 },
   taskName: { fontSize: 13, color: COLORS.text },
   taskStatus: { fontSize: 11, color: COLORS.textMuted },
   photoWarning: { fontSize: 11, color: COLORS.warning, fontWeight: '600' },
+  photoUploadingRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
+  photoUploadingText: { fontSize: 11, color: COLORS.primary, fontWeight: '600' },
   actions: { flexDirection: 'row', gap: 6, alignItems: 'center' },
   btnDone: {
     backgroundColor: COLORS.success,

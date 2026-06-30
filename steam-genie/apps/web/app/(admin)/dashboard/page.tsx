@@ -2,64 +2,36 @@ import Link from 'next/link';
 
 const MODULES = [
   {
-    href: '/buildings',
-    title: 'Edificios',
-    description: 'Gestioná plantas, zonas y subzonas de cada edificio.',
+    href: '/configuracion',
+    title: 'Configuración',
+    description: 'Edificios, usuarios y tareas maestras del sistema.',
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6" />
+        <circle cx="12" cy="12" r="3" />
+        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
       </svg>
     ),
   },
   {
-    href: '/tasks',
-    title: 'Tareas',
-    description: 'Maestro de tareas periódicas y eventuales de checkout.',
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-      </svg>
-    ),
-  },
-  {
-    href: '/users',
-    title: 'Usuarios',
-    description: 'Altas, edición y asignación de roles por edificio.',
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
-      </svg>
-    ),
-  },
-  {
-    href: '/reservations',
-    title: 'Reservas',
-    description: 'Creá reservas de checkout que generan servicios de limpieza.',
+    href: '/trabajos-eventuales',
+    title: 'Trabajos eventuales',
+    description: 'Reservas, servicios checkout y creación manual de trabajos eventuales.',
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <rect x="3" y="4" width="18" height="18" rx="2" />
-        <path d="M16 2v4M8 2v4M3 10h18" />
+        <path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01" />
       </svg>
     ),
   },
   {
-    href: '/services',
-    title: 'Servicios',
-    description: 'Asigná limpiadores a servicios eventuales de checkout.',
+    href: '/trabajos-recurrentes',
+    title: 'Trabajos recurrentes',
+    description: 'Seguimiento de tareas periódicas con estado, responsable y fotos.',
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-      </svg>
-    ),
-  },
-  {
-    href: '/import',
-    title: 'Importar Excel',
-    description: 'Carga masiva de plantas, zonas, subzonas y tareas desde un archivo.',
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-        <path d="M14 2v6h6M12 18v-6M9 15l3 3 3-3" />
+        <path d="M17 1l4 4-4 4" />
+        <path d="M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4" />
+        <path d="M21 13v2a4 4 0 0 1-4 4H3" />
       </svg>
     ),
   },
@@ -71,7 +43,7 @@ export default function DashboardPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Panel de administración</h1>
-          <p className="page-subtitle">Gestioná edificios, tareas, usuarios y servicios desde un solo lugar.</p>
+          <p className="page-subtitle">Gestioná la configuración, trabajos eventuales y recurrentes desde un solo lugar.</p>
         </div>
       </div>
 

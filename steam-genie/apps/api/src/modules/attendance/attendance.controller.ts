@@ -18,6 +18,7 @@ import { AttendanceService } from './attendance.service';
 import { CheckInDto } from './dto/check-in.dto';
 import { CheckOutDto } from './dto/check-out.dto';
 import { QueryAttendanceDto } from './dto/query-attendance.dto';
+import { QueryAttendanceTimelineDto } from './dto/query-attendance-timeline.dto';
 import { CorrectAttendanceDto } from './dto/correct-attendance.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
 
@@ -63,6 +64,12 @@ export class AttendanceController {
   @Get('active')
   findActive(@CurrentUser() user: AuthUser) {
     return this.attendanceService.findActive(user.id);
+  }
+
+  @Get('timeline')
+  @RequiredRoles('admin', 'manager')
+  findTimeline(@Query() query: QueryAttendanceTimelineDto) {
+    return this.attendanceService.findTimeline(query);
   }
 
   @Get()

@@ -9,6 +9,7 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
+import { QueryUserDetailDto } from './dto/query-user-detail.dto';
 import { AssignBuildingRoleDto } from './dto/assign-building-role.dto';
 import { SyncBuildingRolesDto } from './dto/sync-building-roles.dto';
 import { RegisterDeviceDto } from './dto/register-device.dto';
@@ -31,7 +32,7 @@ export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(query: QueryUsersDto) {
-    const { page = 1, limit = 20, search, role, buildingId, isActive } = query;
+    const { page = 1, limit = 20, search, role, buildingId, isActive, includeBuildingRoles } = query;
     const skip = (page - 1) * limit;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -72,14 +73,14 @@ export class UsersService {
       where.buildingRoles = { some: { buildingId } };
     }
 
-    const includeBuildingRoles = Boolean(role || buildingId);
+    const shouldIncludeRoles = includeBuildingRoles || Boolean(role || buildingId);
 
     const [data, total] = await Promise.all([
       this.prisma.user.findMany({
         where,
         select: {
           ...USER_SELECT,
-          ...(includeBuildingRoles
+          ...(shouldIncludeRoles
             ? {
                 buildingRoles: {
                   select: {
@@ -101,7 +102,9 @@ export class UsersService {
     return { data, total, page, limit, pages: Math.ceil(total / limit) };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, query: QueryUserDetailDto = {}) {
+    const includeDevices = query.includeDevices === true;
+
     const user = await this.prisma.user.findFirst({
       where: { id, deletedAt: null },
       select: {
@@ -115,17 +118,21 @@ export class UsersService {
             createdAt: true,
           },
         },
-        devices: {
-          where: { isActive: true },
-          select: {
-            id: true,
-            deviceId: true,
-            platform: true,
-            appVersion: true,
-            lastSeenAt: true,
-            isActive: true,
-          },
-        },
+        ...(includeDevices
+          ? {
+              devices: {
+                where: { isActive: true },
+                select: {
+                  id: true,
+                  deviceId: true,
+                  platform: true,
+                  appVersion: true,
+                  lastSeenAt: true,
+                  isActive: true,
+                },
+              },
+            }
+          : {}),
       },
     });
 

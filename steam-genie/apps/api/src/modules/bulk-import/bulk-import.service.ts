@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { TaskFrequency } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { TasksService } from '../tasks/tasks.service';
 import {
   buildImportTemplateBuffer,
+  frequencyLabel,
   parseFrequency,
   parseImportWorkbook,
   parseStartDate,
@@ -14,6 +15,7 @@ import type {
   BulkImportRowInterpretation,
   BulkImportRowResult,
   ParsedImportRow,
+  TemplateRowData,
 } from './bulk-import.types';
 
 interface ImportSessionCache {
@@ -21,6 +23,7 @@ interface ImportSessionCache {
   zonesCreated: number;
   subzonesCreated: number;
   tasksCreated: number;
+  tasksUpdated: number;
   tasksSkipped: number;
   buildingsTouched: Set<string>;
   zonesWithSubzones: Set<string>;
@@ -33,11 +36,137 @@ export class BulkImportService {
     private readonly tasksService: TasksService,
   ) {}
 
-  async generateTemplate(): Promise<Buffer> {
-    return buildImportTemplateBuffer();
+  async generateTemplateForBuilding(
+    buildingId: string,
+    mode: 'empty' | 'current',
+  ): Promise<Buffer> {
+    const building = await this.prisma.building.findFirst({
+      where: { id: buildingId, deletedAt: null },
+      select: { id: true, name: true },
+    });
+
+    if (!building) {
+      throw new NotFoundException('Edificio no encontrado.');
+    }
+
+    if (mode === 'empty') {
+      return buildImportTemplateBuffer(undefined, {
+        buildingName: building.name,
+        buildingScoped: true,
+      });
+    }
+
+    const rows = await this.collectBuildingExportRows(building.id, building.name);
+    return buildImportTemplateBuffer(rows, { buildingScoped: true });
   }
 
-  async processExcel(buffer: Buffer): Promise<BulkImportResult> {
+  async processExcelForBuilding(
+    buildingId: string,
+    buffer: Buffer,
+  ): Promise<BulkImportResult> {
+    const building = await this.prisma.building.findFirst({
+      where: { id: buildingId, deletedAt: null },
+      select: { id: true, name: true },
+    });
+
+    if (!building) {
+      throw new NotFoundException('Edificio no encontrado.');
+    }
+
+    return this.processExcel(buffer, building);
+  }
+
+  private async collectBuildingExportRows(
+    buildingId: string,
+    buildingName: string,
+  ): Promise<TemplateRowData[]> {
+    const building = await this.prisma.building.findFirst({
+      where: { id: buildingId, deletedAt: null },
+      include: {
+        floors: {
+          where: { deletedAt: null },
+          orderBy: { sortOrder: 'asc' },
+          include: {
+            zones: {
+              where: { deletedAt: null },
+              orderBy: { name: 'asc' },
+              include: {
+                subzones: { where: { deletedAt: null }, orderBy: { name: 'asc' } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!building) return [];
+
+    const tasks = await this.prisma.task.findMany({
+      where: { buildingId, deletedAt: null },
+      include: {
+        zone: { include: { floor: true } },
+        subzone: true,
+      },
+      orderBy: [{ zone: { floor: { sortOrder: 'asc' } } }, { name: 'asc' }],
+    });
+
+    const rows: TemplateRowData[] = [];
+
+    for (const task of tasks) {
+      if (!task.zone?.floor) continue;
+
+      rows.push({
+        buildingName,
+        floorName: task.zone.floor.name,
+        zoneName: task.zone.name,
+        subzoneName: task.subzone?.name,
+        taskName: task.name,
+        frequencyRaw: frequencyLabel(task.frequency),
+        startDateRaw: task.startDate.toISOString().slice(0, 10),
+        requiresPhoto: task.requiresPhoto,
+        allowsObservation: task.allowsObservation,
+        requiresRejectionReason: task.requiresRejectionReason,
+      });
+    }
+
+    for (const floor of building.floors) {
+      for (const zone of floor.zones) {
+        if (zone.subzones.length > 0) {
+          for (const subzone of zone.subzones) {
+            const hasTask = tasks.some(
+              (task) => task.zoneId === zone.id && task.subzoneId === subzone.id,
+            );
+            if (!hasTask) {
+              rows.push({
+                buildingName,
+                floorName: floor.name,
+                zoneName: zone.name,
+                subzoneName: subzone.name,
+              });
+            }
+          }
+        } else {
+          const hasTask = tasks.some(
+            (task) => task.zoneId === zone.id && !task.subzoneId,
+          );
+          if (!hasTask) {
+            rows.push({
+              buildingName,
+              floorName: floor.name,
+              zoneName: zone.name,
+            });
+          }
+        }
+      }
+    }
+
+    return rows;
+  }
+
+  private async processExcel(
+    buffer: Buffer,
+    scopedBuilding?: { id: string; name: string },
+  ): Promise<BulkImportResult> {
     let parsedRows: ParsedImportRow[];
 
     try {
@@ -57,6 +186,7 @@ export class BulkImportService {
       zonesCreated: 0,
       subzonesCreated: 0,
       tasksCreated: 0,
+      tasksUpdated: 0,
       tasksSkipped: 0,
       buildingsTouched: new Set<string>(),
       zonesWithSubzones: new Set<string>(),
@@ -65,7 +195,7 @@ export class BulkImportService {
     const rows: BulkImportRowResult[] = [];
 
     for (const row of parsedRows) {
-      rows.push(await this.processRow(row, cache));
+      rows.push(await this.processRow(row, cache, scopedBuilding));
     }
 
     const successCount = rows.filter((r) => r.status === 'success').length;
@@ -85,6 +215,7 @@ export class BulkImportService {
         zonesCreated: cache.zonesCreated,
         subzonesCreated: cache.subzonesCreated,
         tasksCreated: cache.tasksCreated,
+        tasksUpdated: cache.tasksUpdated,
         tasksSkipped: cache.tasksSkipped,
       },
     };
@@ -93,6 +224,7 @@ export class BulkImportService {
   private async processRow(
     row: ParsedImportRow,
     cache: ImportSessionCache,
+    scopedBuilding?: { id: string; name: string },
   ): Promise<BulkImportRowResult> {
     const { rowNumber } = row;
 
@@ -107,7 +239,10 @@ export class BulkImportService {
     }
 
     try {
-      const building = await this.findBuildingByName(row.buildingName);
+      const building = scopedBuilding
+        ? await this.assertScopedBuilding(row.buildingName, scopedBuilding)
+        : await this.findBuildingByName(row.buildingName);
+
       cache.buildingsTouched.add(building.name);
 
       const { floor, created: floorCreated } = await this.findOrCreateFloor(
@@ -198,6 +333,10 @@ export class BulkImportService {
         );
       }
 
+      const requiresPhoto = row.requiresPhoto ?? false;
+      const allowsObservation = row.allowsObservation ?? true;
+      const requiresRejectionReason = row.requiresRejectionReason ?? true;
+
       const existingTask = await this.prisma.task.findFirst({
         where: {
           buildingId: building.id,
@@ -206,21 +345,57 @@ export class BulkImportService {
           name: { equals: row.taskName.trim(), mode: 'insensitive' },
           deletedAt: null,
         },
-        select: { id: true, name: true },
       });
 
       if (existingTask) {
-        cache.tasksSkipped += 1;
+        const existingStartDate = existingTask.startDate.toISOString().slice(0, 10);
+        const targetStartDate = startDate ?? existingStartDate;
+        const unchanged =
+          existingTask.frequency === frequencyCode &&
+          existingStartDate === targetStartDate &&
+          existingTask.requiresPhoto === requiresPhoto &&
+          existingTask.allowsObservation === allowsObservation &&
+          existingTask.requiresRejectionReason === requiresRejectionReason;
+
+        if (unchanged) {
+          cache.tasksSkipped += 1;
+          return {
+            row: rowNumber,
+            status: 'skipped',
+            message: `La tarea "${existingTask.name}" ya existe sin cambios. Se omitió.`,
+            interpretation: {
+              ...interpretation,
+              task: existingTask.name,
+              taskSkipped: true,
+              frequency: frequencyCode as TaskFrequency,
+              startDate: targetStartDate,
+            },
+          };
+        }
+
+        await this.prisma.task.update({
+          where: { id: existingTask.id },
+          data: {
+            frequency: frequencyCode as TaskFrequency,
+            startDate: new Date(targetStartDate),
+            requiresPhoto,
+            allowsObservation,
+            requiresRejectionReason,
+          },
+        });
+
+        cache.tasksUpdated += 1;
+
         return {
           row: rowNumber,
-          status: 'skipped',
-          message: `La tarea "${existingTask.name}" ya existe en esa ubicación. Se omitió.`,
+          status: 'success',
+          message: `Tarea "${existingTask.name}" actualizada (${frequencyCode}).`,
           interpretation: {
             ...interpretation,
             task: existingTask.name,
-            taskSkipped: true,
+            taskUpdated: true,
             frequency: frequencyCode as TaskFrequency,
-            startDate,
+            startDate: targetStartDate,
           },
         };
       }
@@ -232,9 +407,9 @@ export class BulkImportService {
         name: row.taskName.trim(),
         frequency: frequencyCode as TaskFrequency,
         startDate,
-        requiresPhoto: row.requiresPhoto ?? false,
-        allowsObservation: row.allowsObservation ?? true,
-        requiresRejectionReason: row.requiresRejectionReason ?? true,
+        requiresPhoto,
+        allowsObservation,
+        requiresRejectionReason,
         isActive: true,
       });
 
@@ -257,6 +432,21 @@ export class BulkImportService {
         error instanceof Error ? error.message : 'Error desconocido al procesar la fila.';
       return this.errorRow(rowNumber, message);
     }
+  }
+
+  private async assertScopedBuilding(
+    rowBuildingName: string,
+    scopedBuilding: { id: string; name: string },
+  ) {
+    if (
+      rowBuildingName.trim().toLowerCase() !== scopedBuilding.name.trim().toLowerCase()
+    ) {
+      throw new Error(
+        `La fila indica el edificio "${rowBuildingName.trim()}" pero la importación es para "${scopedBuilding.name}". Corregí la columna Edificio o descargá la plantilla de este edificio.`,
+      );
+    }
+
+    return scopedBuilding;
   }
 
   private async findBuildingByName(name: string) {
