@@ -95,6 +95,27 @@ async function main() {
   }
 
   console.log(`  ✓ Global admin role assigned`);
+
+  // ── Motivos de no realización de tareas ─────────────────────────────────────
+  const TASK_NOT_DONE_REASONS = [
+    'Falta de insumos',
+    'Acceso restringido',
+    'No corresponde / daño preexistente',
+    'Falta de tiempo en el turno',
+  ];
+
+  for (const text of TASK_NOT_DONE_REASONS) {
+    const existing = await prisma.rejectionReason.findFirst({
+      where: { type: 'TASK_NOT_DONE', text, deletedAt: null },
+    });
+    if (!existing) {
+      await prisma.rejectionReason.create({
+        data: { type: 'TASK_NOT_DONE', text, isActive: true },
+      });
+      console.log(`  ✓ Motivo tarea: ${text}`);
+    }
+  }
+
   console.log('✅ Seed completed successfully.');
 }
 

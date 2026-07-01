@@ -2,6 +2,10 @@
 
 import Link from 'next/link';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
+import {
+  calendarDateKeyFromStored,
+  formatStoredCalendarDate,
+} from '@steam-genie/shared-constants';
 import { api } from '../../../lib/api-client';
 import { fetchBuildingsList } from '../../../lib/buildings-cache';
 import { AssignBuildingsModal } from '../../../components/AssignBuildingsModal';
@@ -31,16 +35,8 @@ const EMPTY_EDIT: EditFormState = {
 
 const PAGE_SIZE = 20;
 
-function toDateInputValue(iso?: string | null): string {
-  if (!iso) return '';
-  return iso.slice(0, 10);
-}
-
 function formatBirthDate(iso?: string | null): string {
-  if (!iso) return '—';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '—';
-  return date.toLocaleDateString('es-AR', {
+  return formatStoredCalendarDate(iso, 'es-AR', {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
@@ -93,7 +89,7 @@ export default function UsersPage() {
     setEditForm({
       dni: user.dni,
       fullName: user.fullName,
-      birthDate: toDateInputValue(user.birthDate),
+      birthDate: calendarDateKeyFromStored(user.birthDate),
       isActive: user.isActive,
     });
   }
@@ -135,7 +131,7 @@ export default function UsersPage() {
       await api.patch(`/users/${editingUser.id}`, {
         dni: editForm.dni,
         fullName: editForm.fullName,
-        birthDate: editForm.birthDate ? `${editForm.birthDate}T00:00:00.000Z` : null,
+        birthDate: editForm.birthDate || null,
         isActive: editForm.isActive,
       });
 

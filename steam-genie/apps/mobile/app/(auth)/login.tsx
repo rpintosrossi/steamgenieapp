@@ -128,7 +128,10 @@ export default function LoginScreen() {
             disabled={isSubmitting}
           >
             {isSubmitting ? (
-              <ActivityIndicator color="#fff" />
+              <>
+                <ActivityIndicator color="#fff" />
+                <Text style={styles.submittingHint}>Conectando con el servidor…</Text>
+              </>
             ) : (
               <Text style={styles.primaryBtnText}>Ingresar</Text>
             )}
@@ -202,11 +205,17 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
+    gap: 8,
   },
   primaryBtnDisabled: { opacity: 0.7 },
   primaryBtnText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '700',
+  },
+  submittingHint: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 12,
+    fontWeight: '500',
   },
 });

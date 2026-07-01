@@ -39,11 +39,27 @@ export default (): ExpoConfig => ({
     'expo-font',
     'expo-sqlite',
   ],
+  ios: {
+    bundleIdentifier: 'com.steamgenie.app',
+    buildNumber: '1',
+    supportsTablet: false,
+    infoPlist: {
+      ITSAppUsesNonExemptEncryption: false,
+      NSLocationWhenInUseUsageDescription:
+        'Steam Genie necesita tu ubicación para registrar el fichaje en el edificio.',
+      NSCameraUsageDescription:
+        'Steam Genie necesita acceso a la cámara para tomar fotos de las tareas.',
+      NSPhotoLibraryUsageDescription:
+        'Steam Genie necesita acceso a tu galería para adjuntar fotos a las tareas.',
+    },
+  },
   android: {
     package: 'com.steamgenie.app',
-    versionCode: 5,
+    versionCode: 6,
     softwareKeyboardLayoutMode: 'resize',
     permissions: [
+      'android.permission.INTERNET',
+      'android.permission.ACCESS_NETWORK_STATE',
       'android.permission.ACCESS_FINE_LOCATION',
       'android.permission.ACCESS_COARSE_LOCATION',
       'android.permission.CAMERA',

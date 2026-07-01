@@ -18,6 +18,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { TaskPhotosModule } from './modules/task-photos/task-photos.module';
 import { BulkImportModule } from './modules/bulk-import/bulk-import.module';
+import { RejectionReasonsModule } from './modules/rejection-reasons/rejection-reasons.module';
 import { HealthModule } from './health/health.module';
 
 @Module({
@@ -45,6 +46,7 @@ import { HealthModule } from './health/health.module';
     AuditModule,
     TaskPhotosModule,
     BulkImportModule,
+    RejectionReasonsModule,
   ],
 })
 export class AppModule {}

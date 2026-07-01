@@ -833,18 +833,28 @@ function TaskCard({
   onAddPhoto,
 }: TaskCardProps) {
   const [isEditing, setIsEditing] = useState(false);
+  const wasMarking = useRef(false);
   const status = getTaskStatus(task);
   const photos = getTaskPhotos(task);
   const iconConfig = STATUS_ICONS[status] ?? STATUS_ICONS.NOT_STARTED;
   const isDone = status === 'DONE';
   const isNotDone = status === 'NOT_DONE';
   const isResolved = isTaskResolved(task);
+  const canChangeNotDoneReason = isNotDone && task.requiresRejectionReasonSnapshot;
+  const disableNotDoneBtn = isEditing && isNotDone && !canChangeNotDoneReason;
   const needsPhoto = task.requiresPhotoSnapshot && isDone && photos.length === 0;
   const showMarkActions = canExecute && (canMarkTask(task) || isEditing);
 
   useEffect(() => {
     setIsEditing(false);
   }, [task.workOrderTaskId, status]);
+
+  useEffect(() => {
+    if (wasMarking.current && !isMarking) {
+      setIsEditing(false);
+    }
+    wasMarking.current = isMarking;
+  }, [isMarking]);
 
   return (
     <View style={[styles.taskCard, isDone && styles.taskCardDone, isNotDone && styles.taskCardNotDone]}>
@@ -904,13 +914,56 @@ function TaskCard({
         <View style={styles.taskActions}>
           {showMarkActions && (
             <View style={styles.taskActionRow}>
-              <TouchableOpacity style={[styles.taskBtn, styles.taskBtnDone]} onPress={onMarkDone}>
-                <Ionicons name="checkmark" size={16} color="#fff" />
-                <Text style={styles.taskBtnText}>Realizada</Text>
+              <TouchableOpacity
+                style={[
+                  styles.taskBtn,
+                  styles.taskBtnDone,
+                  isEditing && isDone && styles.taskBtnCurrent,
+                ]}
+                onPress={onMarkDone}
+                disabled={isEditing && isDone}
+              >
+                <Ionicons
+                  name="checkmark"
+                  size={16}
+                  color={isEditing && isDone ? COLORS.textMuted : '#fff'}
+                />
+                <Text
+                  style={[
+                    styles.taskBtnText,
+                    isEditing && isDone && styles.taskBtnCurrentText,
+                  ]}
+                >
+                  Realizada
+                </Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.taskBtn, styles.taskBtnNotDone]} onPress={onMarkNotDone}>
-                <Ionicons name="close" size={16} color="#fff" />
-                <Text style={styles.taskBtnText}>No realizada</Text>
+              <TouchableOpacity
+                style={[
+                  styles.taskBtn,
+                  styles.taskBtnNotDone,
+                  isEditing && isNotDone && !canChangeNotDoneReason && styles.taskBtnCurrent,
+                  isEditing && canChangeNotDoneReason && styles.taskBtnNotDoneChangeReason,
+                ]}
+                onPress={onMarkNotDone}
+                disabled={disableNotDoneBtn}
+              >
+                <Ionicons
+                  name="close"
+                  size={16}
+                  color={
+                    isEditing && isNotDone && !canChangeNotDoneReason
+                      ? COLORS.textMuted
+                      : '#fff'
+                  }
+                />
+                <Text
+                  style={[
+                    styles.taskBtnText,
+                    isEditing && isNotDone && !canChangeNotDoneReason && styles.taskBtnCurrentText,
+                  ]}
+                >
+                  {isEditing && canChangeNotDoneReason ? 'Cambiar motivo' : 'No realizada'}
+                </Text>
               </TouchableOpacity>
               {isEditing && (
                 <TouchableOpacity style={styles.editCancelBtn} onPress={() => setIsEditing(false)}>
@@ -1171,6 +1224,9 @@ const styles = StyleSheet.create({
   taskBtnNotDone: { backgroundColor: COLORS.error },
   taskBtnPhoto: { borderWidth: 1, borderColor: COLORS.primary, backgroundColor: '#eff6ff' },
   taskBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  taskBtnCurrent: { backgroundColor: COLORS.border },
+  taskBtnCurrentText: { color: COLORS.textMuted },
+  taskBtnNotDoneChangeReason: { backgroundColor: '#dc2626' },
   taskLoader: { alignSelf: 'center', padding: 8 },
   modalOverlay: {
     flex: 1,

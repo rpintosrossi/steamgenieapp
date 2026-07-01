@@ -1077,6 +1077,53 @@ textarea {
   align-items: end;
 }
 
+.subnav {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.subnav-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-decoration: none;
+  transition: background var(--transition), color var(--transition);
+}
+
+.subnav-link:hover {
+  color: var(--color-text);
+  background: rgba(47, 111, 237, 0.06);
+  text-decoration: none;
+}
+
+.subnav-link.active {
+  color: var(--color-primary);
+  background: rgba(47, 111, 237, 0.1);
+}
+
+.table-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.checkbox-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
 /* ── Login ── */
 
 .login-page {

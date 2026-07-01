@@ -921,6 +921,7 @@ function ZoneDetailView({
             key={item.id}
             item={item}
             isMarking={markingId === item.id || isBulkMarking}
+            isMarkingThisItem={markingId === item.id}
             isUploadingPhoto={uploadingPhotoForItemId === item.id}
             selectionMode={selectionMode}
             isSelected={selectedIds.has(item.id)}
@@ -963,6 +964,7 @@ function ZoneDetailView({
 function TaskRow({
   item,
   isMarking,
+  isMarkingThisItem,
   isUploadingPhoto,
   selectionMode,
   isSelected,
@@ -973,6 +975,7 @@ function TaskRow({
 }: {
   item: PeriodicDueItem;
   isMarking: boolean;
+  isMarkingThisItem: boolean;
   isUploadingPhoto: boolean;
   selectionMode: boolean;
   isSelected: boolean;
@@ -982,9 +985,13 @@ function TaskRow({
   onAddPhoto: () => void;
 }) {
   const [isEditing, setIsEditing] = useState(false);
+  const wasMarkingThisItem = useRef(false);
   const execStatus = item.execution?.status;
   const isResolved = !!execStatus;
   const isDone = execStatus === 'DONE';
+  const isNotDone = execStatus === 'NOT_DONE';
+  const canChangeNotDoneReason = isNotDone && item.task.requiresRejectionReason;
+  const disableNotDoneBtn = isEditing && isNotDone && !canChangeNotDoneReason;
   const photoCount = item.execution?.photos?.length ?? 0;
   const needsPhoto = isDone && item.task.requiresPhoto && photoCount === 0;
   const showMarkActions = !isResolved || isEditing;
@@ -993,6 +1000,13 @@ function TaskRow({
   useEffect(() => {
     setIsEditing(false);
   }, [item.id, execStatus]);
+
+  useEffect(() => {
+    if (wasMarkingThisItem.current && !isMarkingThisItem) {
+      setIsEditing(false);
+    }
+    wasMarkingThisItem.current = isMarkingThisItem;
+  }, [isMarkingThisItem]);
 
   const rowContent = (
     <>
@@ -1045,11 +1059,37 @@ function TaskRow({
             <ActivityIndicator size="small" color={COLORS.primary} />
           ) : showMarkActions ? (
             <View style={styles.actions}>
-              <TouchableOpacity style={styles.btnDone} onPress={onDone}>
-                <Text style={styles.btnDoneText}>Hecho</Text>
+              <TouchableOpacity
+                style={[styles.btnDone, isEditing && isDone && styles.btnMarkCurrent]}
+                onPress={onDone}
+                disabled={isEditing && isDone}
+              >
+                <Text
+                  style={[
+                    styles.btnDoneText,
+                    isEditing && isDone && styles.btnMarkCurrentText,
+                  ]}
+                >
+                  Hecho
+                </Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.btnNotDone} onPress={onNotDone}>
-                <Text style={styles.btnNotDoneText}>No</Text>
+              <TouchableOpacity
+                style={[
+                  styles.btnNotDone,
+                  isEditing && isNotDone && !canChangeNotDoneReason && styles.btnMarkCurrentOutline,
+                  isEditing && canChangeNotDoneReason && styles.btnNotDoneChangeReason,
+                ]}
+                onPress={onNotDone}
+                disabled={disableNotDoneBtn}
+              >
+                <Text
+                  style={[
+                    styles.btnNotDoneText,
+                    isEditing && isNotDone && !canChangeNotDoneReason && styles.btnMarkCurrentOutlineText,
+                  ]}
+                >
+                  {isEditing && canChangeNotDoneReason ? 'Motivo' : 'No'}
+                </Text>
               </TouchableOpacity>
               {isEditing && (
                 <TouchableOpacity style={styles.btnEdit} onPress={() => setIsEditing(false)}>
@@ -1409,6 +1449,21 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   btnNotDoneText: { color: COLORS.error, fontSize: 12, fontWeight: '700' },
+  btnMarkCurrent: {
+    backgroundColor: COLORS.border,
+    opacity: 0.85,
+  },
+  btnMarkCurrentText: { color: COLORS.textMuted },
+  btnMarkCurrentOutline: {
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bg,
+    opacity: 0.85,
+  },
+  btnMarkCurrentOutlineText: { color: COLORS.textMuted },
+  btnNotDoneChangeReason: {
+    borderColor: COLORS.error,
+    backgroundColor: '#fff5f5',
+  },
   btnPhoto: {
     padding: 8,
     borderRadius: 8,

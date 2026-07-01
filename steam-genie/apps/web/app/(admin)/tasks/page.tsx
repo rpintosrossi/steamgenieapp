@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { TASK_FREQUENCIES } from '@steam-genie/shared-constants';
 import { CreateTaskModal } from '../../../components/CreateTaskModal';
+import { TasksSubnav } from '../../../components/TasksSubnav';
 import { api } from '../../../lib/api-client';
 import { fetchBuildingsList } from '../../../lib/buildings-cache';
 import { TASK_FREQUENCY_LABELS } from '../../../lib/labels';
@@ -116,6 +117,9 @@ export default function TasksPage() {
           <p className="page-subtitle">Definí tareas periódicas y eventuales de checkout.</p>
         </div>
         <div className="page-header-actions">
+          <Link href="/tasks/motivos" className="btn btn-secondary btn-sm">
+            Motivos de no realización
+          </Link>
           <button
             type="button"
             className="btn btn-primary btn-sm"
@@ -129,6 +133,8 @@ export default function TasksPage() {
           </button>
         </div>
       </div>
+
+      <TasksSubnav />
 
       {error ? <div className="alert alert-error">{error}</div> : null}
       {success ? <div className="alert alert-success">{success}</div> : null}

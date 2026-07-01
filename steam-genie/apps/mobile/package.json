@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "build:apk": "pnpm dlx eas-cli build --platform android --profile preview",
     "build:android": "pnpm dlx eas-cli build --platform android --profile production",
+    "build:ios": "pnpm dlx eas-cli build --platform ios --profile production",
+    "submit:ios": "pnpm dlx eas-cli submit --platform ios --profile production",
     "eas-build-post-install": "cd ../.. && pnpm --filter @steam-genie/shared-constants build && pnpm --filter @steam-genie/shared-types build && pnpm --filter @steam-genie/shared-validators build"
   },
   "dependencies": {

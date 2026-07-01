@@ -34,7 +34,7 @@ export function CreateUserModal({ roles, onClose, onCreated }: CreateUserModalPr
       await api.post('/users', {
         dni,
         fullName,
-        birthDate: birthDate ? `${birthDate}T00:00:00.000Z` : undefined,
+        birthDate: birthDate || undefined,
         isActive: true,
         initialRoles: buildInitialRoles(roleId, []),
       });

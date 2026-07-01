@@ -77,6 +77,15 @@ export interface AssignableCleanersResponse {
   }>;
 }
 
+export interface RejectionReasonItem {
+  id: string;
+  type: 'TASK_NOT_DONE' | 'SERVICE_REJECTION';
+  text: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface TaskItem {
   id: string;
   buildingId: string;

@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
 import type { AuthUser, TokenPair } from '@steam-genie/shared-types';
-import { API_BASE_URL } from '../config/api';
+import { getApiBaseUrl } from '../config/api';
+import { fetchWithRetry, NetworkError } from '../config/network';
 
 const ACCESS_TOKEN_KEY = 'sg_access_token';
 const REFRESH_TOKEN_KEY = 'sg_refresh_token';
@@ -73,7 +74,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (!refreshToken) return null;
 
       try {
-        const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        const res = await fetchWithRetry(`${getApiBaseUrl()}/auth/refresh`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ refreshToken }),
@@ -89,6 +90,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({ accessToken: data.accessToken, refreshToken: data.refreshToken });
         return data.accessToken;
       } catch (error) {
+        if (error instanceof NetworkError) {
+          return null;
+        }
         if (
           error instanceof TypeError ||
           (error instanceof Error && error.message.toLowerCase().includes('network'))
@@ -119,19 +123,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   login: async (dni: string, password: string) => {
     let res: Response;
     try {
-      res = await fetch(`${API_BASE_URL}/auth/login`, {
+      res = await fetchWithRetry(`${getApiBaseUrl()}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dni, password }),
-      });
+      }, { retries: 3, timeoutMs: 45_000, warmup: true });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Network request failed';
-      throw new Error(
-        message.toLowerCase().includes('network') || message.toLowerCase().includes('failed to fetch')
-          ? `No se pudo conectar con el servidor (${API_BASE_URL}). Verificá internet o reinstalá la APK actualizada.`
-          : message,
-      );
+      throw error instanceof Error
+        ? error
+        : new Error('No se pudo conectar con el servidor. Verificá internet e intentá de nuevo.');
     }
 
     if (!res.ok) {

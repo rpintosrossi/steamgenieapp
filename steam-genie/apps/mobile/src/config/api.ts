@@ -14,4 +14,14 @@ export function resolveApiBaseUrl(): string {
   return `https://${trimmed}`;
 }
 
-export const API_BASE_URL = resolveApiBaseUrl();
+let cachedApiBaseUrl: string | null = null;
+
+export function getApiBaseUrl(): string {
+  if (!cachedApiBaseUrl) {
+    cachedApiBaseUrl = resolveApiBaseUrl();
+  }
+  return cachedApiBaseUrl;
+}
+
+/** @deprecated Use getApiBaseUrl() — kept for existing imports */
+export const API_BASE_URL = getApiBaseUrl();

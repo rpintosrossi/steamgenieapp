@@ -6,6 +6,10 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import {
+  calendarDatePasswordDdMmYyyy,
+  parseCalendarDateInput,
+} from '@steam-genie/shared-constants';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
@@ -149,11 +153,8 @@ export class UsersService {
     let birthDateObj: Date | undefined;
 
     if (dto.birthDate) {
-      birthDateObj = new Date(dto.birthDate);
-      const d = String(birthDateObj.getUTCDate()).padStart(2, '0');
-      const m = String(birthDateObj.getUTCMonth() + 1).padStart(2, '0');
-      const y = birthDateObj.getUTCFullYear();
-      rawPassword = `${d}${m}${y}`;
+      birthDateObj = parseCalendarDateInput(dto.birthDate);
+      rawPassword = calendarDatePasswordDdMmYyyy(birthDateObj);
     } else {
       rawPassword = '01012000';
     }
@@ -218,7 +219,9 @@ export class UsersService {
         ...(dto.dni !== undefined ? { dni: dto.dni } : {}),
         ...(dto.fullName !== undefined ? { fullName: dto.fullName } : {}),
         ...(dto.birthDate !== undefined
-          ? { birthDate: dto.birthDate ? new Date(dto.birthDate) : null }
+          ? {
+              birthDate: dto.birthDate ? parseCalendarDateInput(dto.birthDate) : null,
+            }
           : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       },

@@ -26,7 +26,7 @@ const SUBMODULES = [
   {
     href: '/tasks',
     title: 'Tareas',
-    description: 'Maestro de tareas periódicas y eventuales de checkout.',
+    description: 'Maestro de tareas periódicas, eventuales y motivos de no realización.',
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />

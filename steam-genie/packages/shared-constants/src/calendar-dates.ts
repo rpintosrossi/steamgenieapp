@@ -54,6 +54,32 @@ export function formatStoredCalendarDate(
   return new Date(y, m - 1, d).toLocaleDateString(locale, options);
 }
 
+/** YYYY-MM-DD para `<input type="date">` a partir de fecha almacenada (@db.Date). */
+export function calendarDateKeyFromStored(
+  value: string | Date | null | undefined,
+): string {
+  if (!value) return '';
+  const { y, m, d } = parseStoredCalendarDate(value);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${y}-${pad(m)}-${pad(d)}`;
+}
+
+/** Parsea YYYY-MM-DD o ISO a medianoche UTC para Prisma `@db.Date`. */
+export function parseCalendarDateInput(value: string): Date {
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return utcDateFromCalendarKey(trimmed);
+  }
+  return utcDateFromCalendarKey(calendarDateKeyFromStored(trimmed));
+}
+
+/** Contraseña inicial DDMMYYYY desde fecha de calendario almacenada. */
+export function calendarDatePasswordDdMmYyyy(value: string | Date): string {
+  const { y, m, d } = parseStoredCalendarDate(value);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d)}${pad(m)}${y}`;
+}
+
 /** Fin del día calendario en la zona de negocio (23:59:59.999). */
 export function endOfStoredCalendarDateInBusinessTz(value: string | Date): Date {
   const { y, m, d } = parseStoredCalendarDate(value);
