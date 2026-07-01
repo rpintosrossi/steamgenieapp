@@ -2,9 +2,9 @@
 
 import Link from 'next/link';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
-import { TasksSubnav } from '../../../components/TasksSubnav';
-import { api } from '../../../lib/api-client';
-import type { RejectionReasonItem } from '../../../lib/types';
+import { TasksSubnav } from '../../../../components/TasksSubnav';
+import { api } from '../../../../lib/api-client';
+import type { RejectionReasonItem } from '../../../../lib/types';
 
 export default function TaskRejectionReasonsPage() {
   const [items, setItems] = useState<RejectionReasonItem[]>([]);

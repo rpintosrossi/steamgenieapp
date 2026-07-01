@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { isAuthenticated } from '../lib/auth';
+import { canAccessWeb, clearTokens, isAuthenticated, setLoginError, WEB_ACCESS_DENIED_MESSAGE } from '../lib/auth';
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -10,6 +10,12 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isAuthenticated()) {
+      router.replace('/login');
+      return;
+    }
+    if (!canAccessWeb()) {
+      clearTokens();
+      setLoginError(WEB_ACCESS_DENIED_MESSAGE);
       router.replace('/login');
       return;
     }

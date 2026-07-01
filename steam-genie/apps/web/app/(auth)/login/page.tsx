@@ -6,7 +6,14 @@ import { useRouter } from 'next/navigation';
 import { loginSchema } from '@steam-genie/shared-validators';
 import type { LoginResponse } from '@steam-genie/shared-types';
 import { api } from '../../../lib/api-client';
-import { isAuthenticated, saveTokens } from '../../../lib/auth';
+import {
+  WEB_ACCESS_DENIED_MESSAGE,
+  canRoleAccessWeb,
+  clearTokens,
+  consumeLoginError,
+  isAuthenticatedForWeb,
+  saveTokens,
+} from '../../../lib/auth';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -16,8 +23,15 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (isAuthenticated()) {
+    const loginError = consumeLoginError();
+    if (loginError) {
+      setError(loginError);
+      return;
+    }
+    if (isAuthenticatedForWeb()) {
       router.replace('/dashboard');
+    } else {
+      clearTokens();
     }
   }, [router]);
 
@@ -34,6 +48,10 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const res = await api.post<LoginResponse>('/auth/login', parsed.data, { skipAuth: true });
+      if (!canRoleAccessWeb(res.user.primaryRole)) {
+        setError(WEB_ACCESS_DENIED_MESSAGE);
+        return;
+      }
       saveTokens(res.accessToken, res.refreshToken);
       router.replace('/dashboard');
     } catch (err) {

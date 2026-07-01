@@ -40,7 +40,6 @@ const NAV_ITEMS: NavItem[] = [
       { href: '/buildings', label: 'Edificios' },
       { href: '/users', label: 'Usuarios' },
       { href: '/tasks', label: 'Tareas' },
-      { href: '/tasks/motivos', label: 'Motivos tareas' },
     ],
   },
   {
