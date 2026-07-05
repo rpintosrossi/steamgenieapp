@@ -101,6 +101,66 @@ enum SyncConflictResolutionStatus {
   RESOLVED
 }
 
+enum StockUnitType {
+  UNIT
+  LITER
+  KILOGRAM
+  GRAM
+  MILLILITER
+  PACK
+  BOX
+  BOTTLE
+  ROLL
+  OTHER
+}
+
+enum StockShipmentOrderStatus {
+  DRAFT
+  DISPATCHED
+  DELIVERED
+  CANCELLED
+}
+
+enum StockShipmentDestinationStatus {
+  PENDING
+  DELIVERED
+  CANCELLED
+}
+
+enum StockShipmentLineStatus {
+  PENDING
+  DELIVERED
+  CANCELLED
+}
+
+enum BuildingStockAlertType {
+  LOW_STOCK
+  OUT_OF_STOCK
+  OBSERVATION
+}
+
+enum BuildingStockAlertStatus {
+  OPEN
+  IN_TRANSIT
+  RESOLVED
+}
+
+enum StockMovementScope {
+  DEPOT
+  BUILDING
+}
+
+enum StockMovementType {
+  DEPOT_INITIAL
+  DEPOT_ADJUST
+  DEPOT_SET
+  DEPOT_RESERVE
+  DEPOT_RESERVE_RELEASE
+  DEPOT_SHIP_OUT
+  BUILDING_SET
+  BUILDING_RECEIVE
+}
+
 // ─── Users & Access ───────────────────────────────────────────────────────────
 
 model User {
@@ -133,6 +193,11 @@ model User {
   syncOperations    SyncOperation[]
   auditLogs         AuditLog[]
   domainEvents      DomainEvent[]
+  buildingStockAlerts      BuildingStockAlert[]       @relation("BuildingStockAlertReporter")
+  confirmedStockDeliveries   StockShipmentDestination[] @relation("StockDeliveryConfirmer")
+  createdStockShipmentOrders StockShipmentOrder[]     @relation("StockShipmentCreator")
+  dispatchedStockOrders      StockShipmentOrder[]     @relation("StockShipmentDispatcher")
+  stockMovements             StockMovement[]          @relation("StockMovementPerformer")
 
   @@index([deletedAt, fullName])
   @@map("users")
@@ -142,11 +207,24 @@ model Role {
   id          String   @id @default(uuid()) @db.Uuid
   name        String   @unique @db.VarChar(50) // admin | manager | cleaner | client | provider
   description String?  @db.VarChar(200)
+  isSystem    Boolean  @default(false)
   createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   userBuildingRoles UserBuildingRole[]
+  permissions       RolePermission[]
 
   @@map("roles")
+}
+
+model RolePermission {
+  id        String @id @default(uuid()) @db.Uuid
+  role      Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  roleId    String @db.Uuid
+  moduleKey String @db.VarChar(50)
+
+  @@unique([roleId, moduleKey])
+  @@map("role_permissions")
 }
 
 // Roles scoped per building (building_id = null means global role)
@@ -206,6 +284,10 @@ model Building {
   attendances       Attendance[]
   workOrders        WorkOrder[]
   reservations      Reservation[]
+  buildingStockItems        BuildingStockItem[]
+  buildingStockAlerts       BuildingStockAlert[]
+  stockShipmentDestinations StockShipmentDestination[]
+  stockMovements            StockMovement[]
 
   @@index([deletedAt])
   @@map("buildings")
@@ -334,6 +416,203 @@ model TaskCustomFieldOption {
   @@map("task_custom_field_options")
 }
 
+// ─── Stock ────────────────────────────────────────────────────────────────────
+
+model StockCategory {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String    @db.VarChar(100)
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  products StockProduct[]
+
+  @@index([deletedAt, sortOrder])
+  @@map("stock_categories")
+}
+
+model StockSupplier {
+  id           String    @id @default(uuid()) @db.Uuid
+  name         String    @db.VarChar(200)
+  contactEmail String?   @db.VarChar(200)
+  contactPhone String?   @db.VarChar(50)
+  isActive     Boolean   @default(true)
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  products StockProduct[]
+
+  @@index([deletedAt])
+  @@map("stock_suppliers")
+}
+
+model StockProduct {
+  id               String         @id @default(uuid()) @db.Uuid
+  name             String         @db.VarChar(300)
+  sku              String?        @db.VarChar(100)
+  description      String?        @db.VarChar(500)
+  category         StockCategory  @relation(fields: [categoryId], references: [id])
+  categoryId       String         @db.Uuid
+  supplier         StockSupplier? @relation(fields: [supplierId], references: [id])
+  supplierId       String?        @db.Uuid
+  quantity         Decimal        @default(0) @db.Decimal(12, 3)
+  reservedQuantity Decimal        @default(0) @db.Decimal(12, 3)
+  minQuantity      Decimal        @default(5) @db.Decimal(12, 3)
+  unitType         StockUnitType  @default(UNIT)
+  isActive         Boolean        @default(true)
+  deletedAt        DateTime?
+  stockUpdatedAt   DateTime       @default(now())
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  buildingStockItems BuildingStockItem[]
+  buildingStockAlerts BuildingStockAlert[]
+  shipmentLines      StockShipmentLine[]
+  stockMovements     StockMovement[]
+
+  @@index([categoryId, deletedAt])
+  @@index([supplierId])
+  @@map("stock_products")
+}
+
+// Stock asignado por edificio (subconjunto habilitado automáticamente o manualmente).
+model BuildingStockItem {
+  id         String       @id @default(uuid()) @db.Uuid
+  building   Building     @relation(fields: [buildingId], references: [id])
+  buildingId String       @db.Uuid
+  product    StockProduct @relation(fields: [productId], references: [id])
+  productId  String       @db.Uuid
+  quantity   Decimal      @default(0) @db.Decimal(12, 3)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@unique([buildingId, productId])
+  @@index([buildingId])
+  @@map("building_stock_items")
+}
+
+// Alertas reportadas por limpiadores fichados (no por umbral en edificio).
+model BuildingStockAlert {
+  id            String                   @id @default(uuid()) @db.Uuid
+  building      Building                 @relation(fields: [buildingId], references: [id])
+  buildingId    String                   @db.Uuid
+  product       StockProduct             @relation(fields: [productId], references: [id])
+  productId     String                   @db.Uuid
+  reportedBy    User                     @relation("BuildingStockAlertReporter", fields: [reportedById], references: [id])
+  reportedById  String                   @db.Uuid
+  attendance    Attendance               @relation(fields: [attendanceId], references: [id])
+  attendanceId  String                   @db.Uuid
+  alertType     BuildingStockAlertType
+  note          String?
+  photoStorageKey    String?             @db.VarChar(500)
+  photoStorageBucket String?             @db.VarChar(100) @default("local")
+  status        BuildingStockAlertStatus @default(OPEN)
+  shipmentDestination   StockShipmentDestination? @relation(fields: [shipmentDestinationId], references: [id])
+  shipmentDestinationId String?                   @db.Uuid
+  deliveryDate  DateTime?                @db.Date
+  resolvedAt    DateTime?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+
+  @@index([buildingId, status])
+  @@index([productId, buildingId, status])
+  @@map("building_stock_alerts")
+}
+
+model StockShipmentOrder {
+  id            String                   @id @default(uuid()) @db.Uuid
+  reference     String                   @unique @db.VarChar(50)
+  status        StockShipmentOrderStatus @default(DRAFT)
+  notes         String?
+  createdBy     User                     @relation("StockShipmentCreator", fields: [createdById], references: [id])
+  createdById   String                   @db.Uuid
+  dispatchedBy  User?                    @relation("StockShipmentDispatcher", fields: [dispatchedById], references: [id])
+  dispatchedById String?                 @db.Uuid
+  dispatchedAt  DateTime?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+
+  destinations StockShipmentDestination[]
+  movements    StockMovement[]
+
+  @@index([status, createdAt])
+  @@map("stock_shipment_orders")
+}
+
+model StockShipmentDestination {
+  id            String                         @id @default(uuid()) @db.Uuid
+  order         StockShipmentOrder             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId       String                         @db.Uuid
+  building      Building                       @relation(fields: [buildingId], references: [id])
+  buildingId    String                         @db.Uuid
+  deliveryDate  DateTime?                      @db.Date
+  status        StockShipmentDestinationStatus @default(PENDING)
+  deliveredAt   DateTime?
+  confirmedBy   User?                          @relation("StockDeliveryConfirmer", fields: [confirmedById], references: [id])
+  confirmedById String?                        @db.Uuid
+  createdAt     DateTime                       @default(now())
+  updatedAt     DateTime                       @updatedAt
+
+  lines  StockShipmentLine[]
+  alerts BuildingStockAlert[]
+  movements StockMovement[]
+
+  @@unique([orderId, buildingId])
+  @@index([buildingId, status])
+  @@map("stock_shipment_destinations")
+}
+
+model StockShipmentLine {
+  id            String                  @id @default(uuid()) @db.Uuid
+  destination   StockShipmentDestination @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+  destinationId String                  @db.Uuid
+  product       StockProduct            @relation(fields: [productId], references: [id])
+  productId     String                  @db.Uuid
+  quantity      Decimal                 @db.Decimal(12, 3)
+  status        StockShipmentLineStatus @default(PENDING)
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  movements StockMovement[]
+
+  @@index([destinationId])
+  @@map("stock_shipment_lines")
+}
+
+model StockMovement {
+  id                    String             @id @default(uuid()) @db.Uuid
+  scope                 StockMovementScope
+  movementType          StockMovementType
+  product               StockProduct       @relation(fields: [productId], references: [id])
+  productId             String             @db.Uuid
+  building              Building?          @relation(fields: [buildingId], references: [id])
+  buildingId            String?            @db.Uuid
+  quantityBefore        Decimal            @db.Decimal(12, 3)
+  quantityDelta         Decimal            @db.Decimal(12, 3)
+  quantityAfter         Decimal            @db.Decimal(12, 3)
+  reservedBefore        Decimal?           @db.Decimal(12, 3)
+  reservedDelta         Decimal?           @db.Decimal(12, 3)
+  reservedAfter         Decimal?           @db.Decimal(12, 3)
+  shipmentOrder         StockShipmentOrder? @relation(fields: [shipmentOrderId], references: [id])
+  shipmentOrderId       String?            @db.Uuid
+  shipmentDestination   StockShipmentDestination? @relation(fields: [shipmentDestinationId], references: [id])
+  shipmentDestinationId String?            @db.Uuid
+  shipmentLine          StockShipmentLine? @relation(fields: [shipmentLineId], references: [id])
+  shipmentLineId        String?            @db.Uuid
+  note                  String?
+  performedBy           User?              @relation("StockMovementPerformer", fields: [performedById], references: [id])
+  performedById         String?            @db.Uuid
+  occurredAt            DateTime           @default(now())
+
+  @@index([productId, occurredAt])
+  @@index([buildingId, productId, occurredAt])
+  @@index([shipmentOrderId])
+  @@map("stock_movements")
+}
+
 // ─── Rejection Reasons ────────────────────────────────────────────────────────
 
 model RejectionReason {
@@ -386,6 +665,7 @@ model Attendance {
 
   serviceExecutions                ServiceExecution[]
   serviceExecutionParticipants     ServiceExecutionParticipant[]
+  buildingStockAlerts              BuildingStockAlert[]
 
   @@index([userId, buildingId, checkInAt])
   @@index([deletedAt, checkInAt])

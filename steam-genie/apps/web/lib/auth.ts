@@ -1,5 +1,13 @@
 import { ROLES, type RoleName } from '@steam-genie/shared-constants';
+import type { AppModuleKey } from '@steam-genie/shared-constants';
 import type { JwtAccessPayload } from '@steam-genie/shared-types';
+import {
+  canAccessWebWithModules,
+  canRoleAccessWeb,
+  clearUserModules,
+  getUserModules,
+  saveUserModules,
+} from './modules';
 
 const ACCESS_TOKEN_KEY = 'sg_access_token';
 const REFRESH_TOKEN_KEY = 'sg_refresh_token';
@@ -13,6 +21,15 @@ export function saveTokens(accessToken: string, refreshToken: string): void {
   localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
 }
 
+export function saveSession(
+  accessToken: string,
+  refreshToken: string,
+  modules: AppModuleKey[],
+): void {
+  saveTokens(accessToken, refreshToken);
+  saveUserModules(modules);
+}
+
 export function getAccessToken(): string | null {
   return localStorage.getItem(ACCESS_TOKEN_KEY);
 }
@@ -24,6 +41,7 @@ export function getRefreshToken(): string | null {
 export function clearTokens(): void {
   localStorage.removeItem(ACCESS_TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
+  clearUserModules();
 }
 
 function decodeAccessTokenPayload(token: string): JwtAccessPayload | null {
@@ -43,14 +61,16 @@ export function getCurrentUserRole(): RoleName | null {
   return decodeAccessTokenPayload(token)?.primaryRole ?? null;
 }
 
-export function canRoleAccessWeb(role: RoleName): boolean {
-  return role !== ROLES.CLEANER;
-}
+export {
+  getUserModules,
+  saveUserModules,
+  canRoleAccessWeb,
+  canAccessWebWithModules,
+} from './modules';
 
 export function canAccessWeb(): boolean {
   const role = getCurrentUserRole();
-  if (!role) return false;
-  return canRoleAccessWeb(role);
+  return canAccessWebWithModules(role, getUserModules());
 }
 
 export function isAuthenticated(): boolean {
@@ -69,4 +89,8 @@ export function consumeLoginError(): string | null {
   const message = sessionStorage.getItem(LOGIN_ERROR_KEY);
   if (message) sessionStorage.removeItem(LOGIN_ERROR_KEY);
   return message;
+}
+
+export function hasModule(module: AppModuleKey): boolean {
+  return getUserModules().includes(module);
 }

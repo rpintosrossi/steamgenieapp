@@ -13,6 +13,7 @@ import { QueryAttendanceTimelineDto } from './dto/query-attendance-timeline.dto'
 import { CorrectAttendanceDto } from './dto/correct-attendance.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
 import { businessDayInstantRange } from '@steam-genie/shared-constants';
+import { PeriodicTaskInstanceStatus } from '@prisma/client';
 
 const TIMELINE_SELECT = {
   id: true,
@@ -236,11 +237,163 @@ export class AttendanceService {
       this.prisma.attendance.count({ where }),
     ]);
 
+    // Enrich each attendance item with task progress for its building on this date
+    const buildingIds = [...new Set(data.map((d) => d.building.id))];
+    const taskProgressMap = await this.buildTaskProgressMap(buildingIds, query.date);
+
+    const enrichedData = data.map((item) => ({
+      ...item,
+      taskProgress: taskProgressMap.get(item.building.id) ?? { total: 0, completed: 0 },
+    }));
+
     return {
-      data,
+      data: enrichedData,
       total,
       truncated: total > TIMELINE_MAX_ROWS,
     };
+  }
+
+  private async buildTaskProgressMap(
+    buildingIds: string[],
+    dateStr: string | undefined,
+  ): Promise<Map<string, { total: number; completed: number }>> {
+    if (buildingIds.length === 0) return new Map();
+
+    // Resolve the calendar key (YYYY-MM-DD) using the same logic as businessDayInstantRange
+    const { calendarDateKeyInBusinessTz } = await import('@steam-genie/shared-constants');
+    const key = dateStr ?? calendarDateKeyInBusinessTz(new Date());
+    // @db.Date fields are stored as midnight UTC
+    const refDate = new Date(`${key}T00:00:00.000Z`);
+
+    const instances = await this.prisma.periodicTaskInstance.findMany({
+      where: {
+        periodStart: { lte: refDate },
+        periodEnd: { gte: refDate },
+        task: {
+          buildingId: { in: buildingIds },
+        },
+      },
+      select: {
+        status: true,
+        task: { select: { buildingId: true } },
+        taskExecutions: {
+          orderBy: { executedAt: 'desc' },
+          take: 1,
+          select: { status: true },
+        },
+      },
+    });
+
+    const map = new Map<string, { total: number; completed: number }>();
+    for (const instance of instances) {
+      const bid = instance.task.buildingId;
+      const entry = map.get(bid) ?? { total: 0, completed: 0 };
+      entry.total++;
+      // Only count executions marked as DONE. A task marked NOT_DONE or SKIPPED
+      // still sets the instance to COMPLETED, but is not "realizada" for the user.
+      const lastExec = instance.taskExecutions[0];
+      if (
+        instance.status === PeriodicTaskInstanceStatus.COMPLETED &&
+        lastExec?.status === 'DONE'
+      ) {
+        entry.completed++;
+      }
+      map.set(bid, entry);
+    }
+    return map;
+  }
+
+  // ─── TIMELINE TASK DETAIL (admin/manager) ─────────────────────────────────
+  // Returns the same task set counted by buildTaskProgressMap, but with details
+  // for the timeline expand-row UI. Mirrors that query exactly to avoid mismatch.
+  async findTimelineTasks(buildingId: string, dateStr?: string) {
+    const { calendarDateKeyInBusinessTz } = await import('@steam-genie/shared-constants');
+    const key = dateStr ?? calendarDateKeyInBusinessTz(new Date());
+    const refDate = new Date(`${key}T00:00:00.000Z`);
+
+    const instances = await this.prisma.periodicTaskInstance.findMany({
+      where: {
+        periodStart: { lte: refDate },
+        periodEnd: { gte: refDate },
+        task: { buildingId },
+      },
+      orderBy: [{ status: 'asc' }, { periodStart: 'asc' }],
+      select: {
+        id: true,
+        status: true,
+        periodStart: true,
+        periodEnd: true,
+        completedAt: true,
+        task: {
+          select: {
+            id: true,
+            name: true,
+            frequency: true,
+            isActive: true,
+            zone: {
+              select: {
+                id: true,
+                name: true,
+                floor: { select: { id: true, name: true } },
+              },
+            },
+            subzone: { select: { id: true, name: true } },
+          },
+        },
+        taskExecutions: {
+          orderBy: { executedAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            status: true,
+            executedAt: true,
+            observation: true,
+            rejectionReason: { select: { id: true, text: true } },
+            executedBy: { select: { id: true, fullName: true, dni: true } },
+          },
+        },
+      },
+    });
+
+    return instances.map((instance) => {
+      const execution = instance.taskExecutions[0] ?? null;
+      const execStatus = execution?.status; // 'DONE' | 'NOT_DONE' | 'SKIPPED' | undefined
+      const isPeriodicallyCompleted = instance.status === PeriodicTaskInstanceStatus.COMPLETED;
+
+      // Derive display status from the *execution* status when present, so that
+      // a task marked NOT_DONE / SKIPPED shows correctly (not "Realizada").
+      let displayStatus: 'COMPLETED' | 'NOT_DONE' | 'SKIPPED' | 'OVERDUE' | 'SCHEDULED';
+      if (isPeriodicallyCompleted && execStatus === 'DONE') displayStatus = 'COMPLETED';
+      else if (isPeriodicallyCompleted && execStatus === 'NOT_DONE') displayStatus = 'NOT_DONE';
+      else if (isPeriodicallyCompleted && execStatus === 'SKIPPED') displayStatus = 'SKIPPED';
+      else if (instance.periodEnd < refDate) displayStatus = 'OVERDUE';
+      else displayStatus = 'SCHEDULED';
+
+      return {
+        id: instance.id,
+        taskId: instance.task.id,
+        name: instance.task.name,
+        frequency: instance.task.frequency,
+        isActive: instance.task.isActive,
+        zone: instance.task.zone,
+        subzone: instance.task.subzone,
+        instanceStatus: instance.status,
+        displayStatus,
+        completedAt: instance.completedAt?.toISOString() ?? null,
+        execution: execution
+          ? {
+              id: execution.id,
+              status: execution.status,
+              executedAt: execution.executedAt.toISOString(),
+              executedBy: execution.executedBy,
+              observation: execution.observation,
+              rejectionReason: execution.rejectionReason
+                ? { id: execution.rejectionReason.id, reason: execution.rejectionReason.text }
+                : null,
+            }
+          : null,
+      };
+    });
   }
 
   // ─── CORRECT (admin/manager) ──────────────────────────────────────────────

@@ -19,7 +19,10 @@ import { AuditModule } from './modules/audit/audit.module';
 import { TaskPhotosModule } from './modules/task-photos/task-photos.module';
 import { BulkImportModule } from './modules/bulk-import/bulk-import.module';
 import { RejectionReasonsModule } from './modules/rejection-reasons/rejection-reasons.module';
+import { StockModule } from './modules/stock/stock.module';
+import { StockLogisticsModule } from './modules/stock-logistics/stock-logistics.module';
 import { HealthModule } from './health/health.module';
+import { TimelineEventsModule } from './common/events/timeline-events.module';
 
 @Module({
   imports: [
@@ -31,6 +34,7 @@ import { HealthModule } from './health/health.module';
     PrismaModule,
     StorageModule,
     HealthModule,
+    TimelineEventsModule,
     AuthModule,
     UsersModule,
     BuildingsModule,
@@ -47,6 +51,8 @@ import { HealthModule } from './health/health.module';
     TaskPhotosModule,
     BulkImportModule,
     RejectionReasonsModule,
+    StockModule,
+    StockLogisticsModule,
   ],
 })
 export class AppModule {}

@@ -8,11 +8,11 @@ import type { LoginResponse } from '@steam-genie/shared-types';
 import { api } from '../../../lib/api-client';
 import {
   WEB_ACCESS_DENIED_MESSAGE,
-  canRoleAccessWeb,
+  canAccessWebWithModules,
   clearTokens,
   consumeLoginError,
   isAuthenticatedForWeb,
-  saveTokens,
+  saveSession,
 } from '../../../lib/auth';
 
 export default function LoginPage() {
@@ -48,11 +48,11 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const res = await api.post<LoginResponse>('/auth/login', parsed.data, { skipAuth: true });
-      if (!canRoleAccessWeb(res.user.primaryRole)) {
+      if (!canAccessWebWithModules(res.user.primaryRole, res.modules)) {
         setError(WEB_ACCESS_DENIED_MESSAGE);
         return;
       }
-      saveTokens(res.accessToken, res.refreshToken);
+      saveSession(res.accessToken, res.refreshToken, res.modules);
       router.replace('/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo iniciar sesión');

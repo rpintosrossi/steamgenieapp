@@ -1,4 +1,5 @@
 import type { RoleName } from '@steam-genie/shared-constants';
+import type { AppModuleKey } from '@steam-genie/shared-constants';
 
 export interface AuthUser {
   id: string;
@@ -7,6 +8,11 @@ export interface AuthUser {
   /** Denormalized for display/fast auth only. Source of truth is UserBuildingRole. */
   primaryRole: RoleName;
   isActive: boolean;
+}
+
+export interface SessionResponse {
+  user: AuthUser;
+  modules: AppModuleKey[];
 }
 
 export interface JwtAccessPayload {
@@ -30,4 +36,5 @@ export interface TokenPair {
 
 export interface LoginResponse extends TokenPair {
   user: AuthUser;
+  modules: AppModuleKey[];
 }

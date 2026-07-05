@@ -418,6 +418,24 @@ textarea {
   box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.15);
 }
 
+.input,
+.form-field input,
+.form-field select,
+.form-field textarea {
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.15);
+}
+
 .form-actions {
   display: flex;
   gap: 10px;
@@ -484,6 +502,86 @@ textarea {
 .btn-sm {
   padding: 6px 12px;
   font-size: 13px;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--color-primary);
+  border: 1px solid transparent;
+  padding: 6px 12px;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: rgba(47, 111, 237, 0.08);
+  border-color: rgba(47, 111, 237, 0.2);
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-primary);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn-link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.select {
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  min-width: 0;
+}
+
+.select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.15);
+}
+
+.form-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+.modal-actions--inline {
+  margin-top: 12px;
+  padding-top: 12px;
+  justify-content: flex-start;
 }
 
 /* ── Tables ── */
@@ -1508,6 +1606,123 @@ textarea {
   gap: 12px 20px;
 }
 
+.attendance-timeline-tasks {
+  grid-column: 1 / -1;
+}
+
+.attendance-task-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.attendance-task-progress-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--color-border);
+  overflow: hidden;
+  max-width: 260px;
+}
+
+.attendance-task-progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--color-success);
+  transition: width 0.4s ease;
+}
+
+.attendance-task-progress-label {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.attendance-task-progress-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.attendance-task-list {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border);
+}
+
+.attendance-task-list-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.attendance-task-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.attendance-task-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  font-size: 0.875rem;
+}
+
+.attendance-task-status-badge {
+  flex-shrink: 0;
+}
+
+.attendance-task-row-name {
+  font-weight: 500;
+  flex: 1 1 160px;
+}
+
+.attendance-task-row-location,
+.attendance-task-row-by {
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.attendance-task-row-reason {
+  font-size: 0.8rem;
+  color: var(--color-error, #b91c1c);
+  font-weight: 500;
+  flex-basis: 100%;
+}
+
+.attendance-task-row-observation {
+  font-size: 0.8rem;
+  font-style: italic;
+  flex-basis: 100%;
+}
+
+.attendance-summary-tasks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.attendance-task-global-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.attendance-task-global-progress .attendance-task-progress-bar {
+  width: 100px;
+  max-width: 100px;
+}
+
 .attendance-timeline-label {
   display: block;
   font-size: 0.75rem;
@@ -1545,7 +1760,7 @@ textarea {
 
 .worker-search-suggestions {
   list-style: none;
-  margin: 6px 0 0;
+  margin: 0;
   padding: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -1554,8 +1769,10 @@ textarea {
   max-height: 220px;
   overflow-y: auto;
   position: absolute;
+  top: 100%;
   left: 0;
   right: 0;
+  margin-top: 6px;
   z-index: 10;
 }
 
@@ -1577,4 +1794,531 @@ textarea {
 
 .worker-search-suggestions button:hover {
   background: var(--color-bg);
+}
+
+/* ── Stock ── */
+
+.stock-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.stock-inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.stock-category-title {
+  margin: 0 0 16px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-primary-dark);
+}
+
+.stock-quick-adjust {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.text-sm {
+  font-size: 12px;
+}
+
+.text-muted {
+  color: var(--color-text-muted);
+}
+
+/* ── Stock logística (monitoreo + envíos) ── */
+
+.logistics-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.logistics-filters .form-field {
+  margin: 0;
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.logistics-table-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.logistics-table-card .table-wrap {
+  margin: 0;
+  padding: 0;
+}
+
+.stock-monitoring-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 110px;
+}
+
+.stock-qty-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color var(--transition), background var(--transition), box-shadow var(--transition);
+}
+
+.stock-qty-chip:hover {
+  border-color: var(--color-primary);
+  background: rgba(47, 111, 237, 0.06);
+  box-shadow: 0 1px 3px rgba(47, 111, 237, 0.12);
+}
+
+.stock-qty-chip--empty {
+  color: var(--color-text-muted);
+  border-style: dashed;
+  background: transparent;
+}
+
+.stock-qty-chip--empty:hover {
+  color: var(--color-primary);
+}
+
+.stock-qty-value {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--color-text);
+  line-height: 1;
+}
+
+.stock-qty-unit {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: lowercase;
+}
+
+.stock-alert-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  max-width: 160px;
+}
+
+.stock-alert-chip strong {
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.stock-alert-chip--open {
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-border, #fcd34d);
+  color: #92400e;
+}
+
+.stock-alert-chip--transit {
+  background: var(--color-info-bg);
+  border: 1px solid var(--color-info-border);
+  color: var(--color-info-text);
+}
+
+.shipment-table-row {
+  cursor: pointer;
+}
+
+.shipment-table-row:hover td {
+  background: rgba(47, 111, 237, 0.04);
+}
+
+.shipment-ref {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.shipment-ref-sub {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.shipment-open-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.logistics-dest-block {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, var(--radius-sm));
+  background: var(--color-bg);
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.logistics-dest-block:last-child {
+  margin-bottom: 0;
+}
+
+.logistics-dest-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.logistics-dest-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.logistics-dest-index {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+
+.logistics-line-grid {
+  display: grid;
+  grid-template-columns: 1fr 100px auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 10px;
+}
+
+.logistics-line-grid .form-field {
+  margin: 0;
+}
+
+.logistics-product-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.logistics-product-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.logistics-product-list li span:last-child {
+  font-weight: 700;
+  color: var(--color-primary-dark, var(--color-primary));
+  white-space: nowrap;
+}
+
+.logistics-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.logistics-hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+
+.logistics-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.empty-state {
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.logistics-stock-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+.logistics-stock-hint strong {
+  color: var(--color-text);
+}
+
+.logistics-stock-hint--error {
+  color: #b91c1c;
+}
+
+.input--error {
+  border-color: var(--color-error) !important;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.12);
+}
+
+.logistics-allocation-panel {
+  margin: 16px 0;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: #f8fafc;
+}
+
+.logistics-allocation-title {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.logistics-allocation-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.logistics-allocation-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.logistics-allocation-list li:last-child {
+  border-bottom: none;
+}
+
+.logistics-allocation-item--over {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+/* ── Monitoreo: alertas + detalle por edificio ── */
+
+.monitoring-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.monitoring-section-title {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.monitoring-alert-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.monitoring-alert-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font: inherit;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.monitoring-alert-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 2px 8px rgba(47, 111, 237, 0.1);
+}
+
+.monitoring-alert-card--open {
+  border-left: 3px solid var(--color-warning-border, #fcd34d);
+}
+
+.monitoring-alert-card--transit {
+  border-left: 3px solid var(--color-primary);
+}
+
+.monitoring-alert-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.monitoring-alert-card-building {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--color-text);
+}
+
+.monitoring-alert-card-product {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.monitoring-alert-card-meta {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+
+.monitoring-building-search {
+  position: relative;
+}
+
+.monitoring-building-selected {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: rgba(47, 111, 237, 0.08);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+}
+
+.monitoring-building-selected strong {
+  flex: 1;
+}
+
+.monitoring-alert-photo-btn {
+  display: block;
+  margin-top: 10px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  align-self: flex-start;
+}
+
+.monitoring-alert-photo {
+  display: block;
+  width: 120px;
+  height: 90px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}
+
+.monitoring-alert-photo-loading {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.modal-lg {
+  max-width: 640px;
+  width: min(640px, calc(100vw - 32px));
+}
+
+.stock-movements-modal {
+  max-height: min(85vh, 720px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.stock-movements-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  max-height: 420px;
+  margin: 12px 0 16px;
+  padding-right: 4px;
+}
+
+.stock-movement-item {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  background: var(--color-bg);
+}
+
+.stock-movement-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.stock-movement-item-meta {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-bottom: 6px;
+}
+
+.stock-movement-item-qty {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.stock-movement-delta {
+  font-weight: 500;
+  color: var(--color-primary);
+}
+
+.stock-movement-item-actor {
+  margin-top: 6px;
+  color: var(--color-text);
+}
+
+.stock-movement-item-note {
+  margin: 6px 0 0;
 }

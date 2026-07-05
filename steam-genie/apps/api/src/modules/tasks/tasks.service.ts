@@ -22,6 +22,8 @@ import { UpdateFieldOptionDto } from './dto/update-field-option.dto';
 import { DueTodayQueryDto } from './dto/due-today-query.dto';
 import { QueryRecurringWorkDto } from './dto/query-recurring-work.dto';
 import type { RecurringWorkDisplayStatus } from './dto/query-recurring-work.dto';
+import { TimelineEventsService } from '../../common/events/timeline-events.service';
+import { calendarDateKeyInBusinessTz } from '@steam-genie/shared-constants';
 
 /** Returns midnight UTC of the given date string, or today if omitted. */
 function startOfDay(dateStr?: string): Date {
@@ -73,6 +75,7 @@ export class TasksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly timelineEvents: TimelineEventsService,
   ) {}
 
   // ─── TASKS ─────────────────────────────────────────────────────────────────
@@ -424,6 +427,45 @@ export class TasksService {
 
       return saved;
     });
+
+    // Fire event for the timeline live stream (fire-and-forget, best-effort)
+    try {
+      // Load the rejection reason label (if any) — the transactional `record`
+      // only has the FK, but the SSE consumer needs the human-readable text.
+      const rejectionReasonRow =
+        record.rejectionReasonId
+          ? await this.prisma.rejectionReason.findUnique({
+              where: { id: record.rejectionReasonId },
+              select: { id: true, text: true },
+            })
+          : null;
+      const rejectionReason = rejectionReasonRow
+        ? { id: rejectionReasonRow.id, reason: rejectionReasonRow.text }
+        : null;
+
+      this.timelineEvents.emit({
+        type: 'PERIODIC_INSTANCE_MARKED',
+        buildingId: instance.task.buildingId,
+        date: calendarDateKeyInBusinessTz(new Date()),
+        instanceId,
+        taskId: instance.taskId,
+        instanceStatus: PeriodicTaskInstanceStatus.COMPLETED,
+        execution: {
+          id: record.id,
+          status: record.status,
+          executedAt: record.executedAt.toISOString(),
+          executedBy: {
+            id: user.id,
+            fullName: user.fullName,
+            dni: user.dni,
+          },
+          observation: record.observation,
+          rejectionReason,
+        },
+      });
+    } catch {
+      // ignore event bus errors
+    }
 
     return record;
   }

@@ -4,6 +4,6 @@
   "sourceRoot": "src",
   "entryFile": "preload",
   "compilerOptions": {
-    "deleteOutDir": true
+    "deleteOutDir": false
   }
 }

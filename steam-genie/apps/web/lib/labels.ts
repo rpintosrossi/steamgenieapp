@@ -24,6 +24,7 @@ export const ROLE_LABELS: Record<string, string> = {
   cleaner: 'Limpiador',
   client: 'Cliente',
   provider: 'Proveedor',
+  stock: 'Encargado de stock',
 };
 
 export const WORK_ORDER_TYPE_LABELS: Record<string, string> = {

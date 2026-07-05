@@ -159,6 +159,15 @@ export interface RoleItem {
   id: string;
   name: string;
   description?: string | null;
+  modules?: string[];
+  isSystem?: boolean;
+  userCount?: number;
+}
+
+export interface RoleDetailItem extends RoleItem {
+  modules: string[];
+  isSystem: boolean;
+  userCount: number;
 }
 
 export interface AttendanceTimelineItem {
@@ -167,6 +176,7 @@ export interface AttendanceTimelineItem {
   checkOutAt: string | null;
   user: { id: string; fullName: string; dni: string };
   building: { id: string; name: string };
+  taskProgress: { total: number; completed: number } | undefined;
 }
 
 export interface AttendanceTimelineResponse {
@@ -271,3 +281,177 @@ export interface BulkImportResult {
   rows: BulkImportRowResult[];
   summary: BulkImportSummary;
 }
+
+export interface StockCategoryItem {
+  id: string;
+  name: string;
+  sortOrder: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { products: number };
+}
+
+export interface StockSupplierItem {
+  id: string;
+  name: string;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { products: number };
+}
+
+export interface StockProductItem {
+  id: string;
+  name: string;
+  sku?: string | null;
+  description?: string | null;
+  categoryId: string;
+  supplierId?: string | null;
+  quantity: number;
+  reservedQuantity?: number;
+  /** Stock disponible en depósito (quantity − reservado). */
+  available?: number;
+  availableQuantity?: number;
+  minQuantity: number;
+  unitType: string;
+  isActive: boolean;
+  status: 'OK' | 'LOW' | 'OUT';
+  stockUpdatedAt: string;
+  createdAt: string;
+  updatedAt: string;
+  category: StockCategoryItem;
+  supplier?: StockSupplierItem | null;
+}
+
+export interface StockProductGroup {
+  category: { id: string; name: string; sortOrder: number };
+  products: StockProductItem[];
+}
+
+export interface StockStats {
+  totalProducts: number;
+  lowStock: number;
+  outOfStock: number;
+}
+
+export interface BuildingStockAlertSummary {
+  id: string;
+  buildingId: string;
+  productId: string;
+  alertType: 'LOW_STOCK' | 'OUT_OF_STOCK' | 'OBSERVATION';
+  status: 'OPEN' | 'IN_TRANSIT' | 'RESOLVED';
+  deliveryDate?: string | null;
+  note?: string | null;
+  photoStorageKey?: string | null;
+  photoUrl?: string | null;
+  createdAt: string;
+}
+
+export interface BuildingStockAlertRow extends BuildingStockAlertSummary {
+  building: { id: string; name: string };
+  product: { id: string; name: string; unitType: string; sku: string | null };
+  reportedBy: { id: string; fullName: string };
+  shipmentDestination?: {
+    id: string;
+    deliveryDate: string | null;
+    order: { id: string; reference: string; status: string };
+  } | null;
+}
+
+export interface StockMonitoringCell {
+  buildingId: string;
+  productId: string;
+  quantity: number;
+  alert: BuildingStockAlertSummary | null;
+}
+
+export interface StockMonitoringMatrix {
+  depotStats: StockStats;
+  buildingAlertStats: { open: number; inTransit: number };
+  buildings: Array<{ id: string; name: string }>;
+  products: Array<{
+    id: string;
+    name: string;
+    sku: string | null;
+    unitType: string;
+    category: { id: string; name: string; sortOrder: number };
+  }>;
+  cells: StockMonitoringCell[];
+}
+
+export interface ShipmentLineItem {
+  id: string;
+  productId: string;
+  quantity: number;
+  status: string;
+  product: { id: string; name: string; unitType: string; sku: string | null };
+}
+
+export interface ShipmentDestinationItem {
+  id: string;
+  buildingId: string;
+  deliveryDate: string | null;
+  status: 'PENDING' | 'DELIVERED' | 'CANCELLED';
+  deliveredAt: string | null;
+  confirmedById: string | null;
+  building: { id: string; name: string };
+  lines: ShipmentLineItem[];
+}
+
+export interface ShipmentOrderItem {
+  id: string;
+  reference: string;
+  status: 'DRAFT' | 'DISPATCHED' | 'DELIVERED' | 'CANCELLED';
+  notes: string | null;
+  createdById: string;
+  dispatchedById: string | null;
+  dispatchedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  destinations: ShipmentDestinationItem[];
+}
+
+export interface BuildingStockItemRow {
+  id: string;
+  buildingId: string;
+  productId: string;
+  quantity: number;
+  product: { id: string; name: string; unitType: string; sku: string | null };
+}
+
+export interface StockMovementRow {
+  id: string;
+  scope: 'DEPOT' | 'BUILDING';
+  movementType:
+    | 'DEPOT_INITIAL'
+    | 'DEPOT_ADJUST'
+    | 'DEPOT_SET'
+    | 'DEPOT_RESERVE'
+    | 'DEPOT_RESERVE_RELEASE'
+    | 'DEPOT_SHIP_OUT'
+    | 'BUILDING_SET'
+    | 'BUILDING_RECEIVE';
+  productId: string;
+  buildingId: string | null;
+  building: { id: string; name: string } | null;
+  quantityBefore: number;
+  quantityDelta: number;
+  quantityAfter: number;
+  reservedBefore: number | null;
+  reservedDelta: number | null;
+  reservedAfter: number | null;
+  note: string | null;
+  occurredAt: string;
+  performedBy: { id: string; fullName: string } | null;
+  shipmentOrder: { id: string; reference: string } | null;
+  shipmentDestination: {
+    id: string;
+    deliveredAt: string | null;
+    confirmedBy: { id: string; fullName: string } | null;
+  } | null;
+}
+
+

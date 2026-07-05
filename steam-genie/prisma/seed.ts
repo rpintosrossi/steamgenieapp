@@ -3,7 +3,8 @@
  *
  * Crea:
  * 1. Roles del sistema (admin, manager, cleaner, client, provider)
- * 2. Usuario admin inicial con DNI y contraseña configurables por env
+ * 2. Permisos de módulos por rol
+ * 3. Usuario admin inicial con DNI y contraseña configurables por env
  *
  * Variables requeridas en .env:
  *   SEED_ADMIN_DNI
@@ -13,6 +14,11 @@
 
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import {
+  ALL_APP_MODULES,
+  APP_MODULES,
+  type AppModuleKey,
+} from '@steam-genie/shared-constants';
 
 const prisma = new PrismaClient();
 
@@ -22,7 +28,36 @@ const ROLES = [
   { name: 'cleaner', description: 'Limpiador. Solo puede iniciar WOs donde tiene assignment ACCEPTED.' },
   { name: 'client', description: 'Cliente. Acceso a reportes y estado de sus espacios. (Fase 2)' },
   { name: 'provider', description: 'Proveedor externo de servicios. (Fase 2)' },
+  { name: 'stock', description: 'Encargado de stock. Gestión de inventario y proveedores.' },
 ] as const;
+
+const ROLE_MODULES: Record<string, AppModuleKey[]> = {
+  admin: [...ALL_APP_MODULES],
+  manager: [
+    APP_MODULES.DASHBOARD,
+    APP_MODULES.BUILDINGS,
+    APP_MODULES.TASKS,
+    APP_MODULES.RESERVAS,
+    APP_MODULES.SERVICIOS_EVENTUALES,
+    APP_MODULES.TRABAJOS_RECURRENTES,
+    APP_MODULES.PRESENCIA,
+    APP_MODULES.STOCK,
+    APP_MODULES.STOCK_MONITORING,
+    APP_MODULES.STOCK_SHIPMENTS,
+  ],
+  cleaner: [],
+  client: [],
+  provider: [],
+  stock: [APP_MODULES.DASHBOARD, APP_MODULES.STOCK],
+};
+
+async function syncRolePermissions(roleId: string, modules: AppModuleKey[]) {
+  await prisma.rolePermission.deleteMany({ where: { roleId } });
+  if (modules.length === 0) return;
+  await prisma.rolePermission.createMany({
+    data: modules.map((moduleKey) => ({ roleId, moduleKey })),
+  });
+}
 
 async function main() {
   console.log('🌱 Starting seed...');
@@ -33,11 +68,18 @@ async function main() {
   for (const roleData of ROLES) {
     const role = await prisma.role.upsert({
       where: { name: roleData.name },
-      update: { description: roleData.description },
-      create: roleData,
+      update: {
+        description: roleData.description,
+        isSystem: true,
+      },
+      create: {
+        ...roleData,
+        isSystem: true,
+      },
     });
     roleMap.set(role.name, role.id);
-    console.log(`  ✓ Role: ${role.name}`);
+    await syncRolePermissions(role.id, ROLE_MODULES[role.name] ?? []);
+    console.log(`  ✓ Role: ${role.name} (${(ROLE_MODULES[role.name] ?? []).length} módulos)`);
   }
 
   // ── Admin user ─────────────────────────────────────────────────────────────
@@ -72,13 +114,9 @@ async function main() {
 
   console.log(`  ✓ Admin user: ${adminUser.fullName} (DNI: ${adminUser.dni})`);
 
-  // Global admin role (buildingId = null = global)
   const adminRoleId = roleMap.get('admin');
   if (!adminRoleId) throw new Error('Admin role not found after seed.');
 
-  // Global admin role (buildingId = null = global).
-  // PostgreSQL treats NULLs as distinct in unique indexes, so we use
-  // findFirst + conditional create to keep this idempotent.
   const existingAdminRole = await prisma.userBuildingRole.findFirst({
     where: { userId: adminUser.id, buildingId: null, roleId: adminRoleId },
   });
@@ -113,6 +151,70 @@ async function main() {
         data: { type: 'TASK_NOT_DONE', text, isActive: true },
       });
       console.log(`  ✓ Motivo tarea: ${text}`);
+    }
+  }
+
+  // ── Stock demo ──────────────────────────────────────────────────────────────
+  const STOCK_CATEGORIES = [
+    { name: 'Limpieza', sortOrder: 0 },
+    { name: 'Higiene', sortOrder: 1 },
+    { name: 'Descartables', sortOrder: 2 },
+  ];
+
+  const categoryIds = new Map<string, string>();
+  for (const cat of STOCK_CATEGORIES) {
+    const existing = await prisma.stockCategory.findFirst({
+      where: { name: cat.name, deletedAt: null },
+    });
+    const category =
+      existing ??
+      (await prisma.stockCategory.create({
+        data: { name: cat.name, sortOrder: cat.sortOrder, isActive: true },
+      }));
+    categoryIds.set(cat.name, category.id);
+  }
+
+  const supplier =
+    (await prisma.stockSupplier.findFirst({
+      where: { name: 'Distribuidora Central', deletedAt: null },
+    })) ??
+    (await prisma.stockSupplier.create({
+      data: {
+        name: 'Distribuidora Central',
+        contactEmail: 'ventas@distribuidora.com',
+        contactPhone: '+54 11 4000-0000',
+        isActive: true,
+      },
+    }));
+
+  const DEMO_PRODUCTS = [
+    { name: 'Detergente multiuso', category: 'Limpieza', quantity: 24, minQuantity: 10, unitType: 'LITER' as const },
+    { name: 'Escoba industrial', category: 'Limpieza', quantity: 8, minQuantity: 5, unitType: 'UNIT' as const },
+    { name: 'Jabón líquido', category: 'Higiene', quantity: 3, minQuantity: 5, unitType: 'LITER' as const },
+    { name: 'Papel higiénico', category: 'Descartables', quantity: 0, minQuantity: 20, unitType: 'PACK' as const },
+    { name: 'Bolsas de residuos', category: 'Descartables', quantity: 150, minQuantity: 50, unitType: 'PACK' as const },
+  ];
+
+  for (const item of DEMO_PRODUCTS) {
+    const categoryId = categoryIds.get(item.category);
+    if (!categoryId) continue;
+
+    const existing = await prisma.stockProduct.findFirst({
+      where: { name: item.name, deletedAt: null },
+    });
+    if (!existing) {
+      await prisma.stockProduct.create({
+        data: {
+          name: item.name,
+          categoryId,
+          supplierId: supplier.id,
+          quantity: item.quantity,
+          minQuantity: item.minQuantity,
+          unitType: item.unitType,
+          isActive: true,
+        },
+      });
+      console.log(`  ✓ Producto stock: ${item.name}`);
     }
   }
 

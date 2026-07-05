@@ -65,6 +65,10 @@ export class StorageService implements OnModuleInit {
     return this.objectStorage !== null;
   }
 
+  get hasPublicBaseUrl(): boolean {
+    return Boolean(this.objectStorage?.publicBaseUrl);
+  }
+
   get storageBucketName(): string {
     return this.objectStorage?.bucket ?? 'local';
   }

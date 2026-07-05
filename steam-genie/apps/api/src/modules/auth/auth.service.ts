@@ -2,13 +2,21 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
-import type { LoginResponse, TokenPair, JwtAccessPayload, JwtRefreshPayload } from '@steam-genie/shared-types';
+import { RolesService } from '../users/roles.service';
+import type {
+  LoginResponse,
+  TokenPair,
+  JwtAccessPayload,
+  JwtRefreshPayload,
+  SessionResponse,
+} from '@steam-genie/shared-types';
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
+    private readonly rolesService: RolesService,
   ) {}
 
   async login(dni: string, password: string): Promise<LoginResponse> {
@@ -24,6 +32,7 @@ export class AuthService {
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
     const tokens = await this.generateTokens(user.id, user.dni, user.primaryRole);
+    const modules = await this.rolesService.getUserModules(user.id);
 
     return {
       ...tokens,
@@ -31,9 +40,10 @@ export class AuthService {
         id: user.id,
         dni: user.dni,
         fullName: user.fullName,
-        primaryRole: user.primaryRole as any,
+        primaryRole: user.primaryRole as LoginResponse['user']['primaryRole'],
         isActive: user.isActive,
       },
+      modules,
     };
   }
 
@@ -47,6 +57,29 @@ export class AuthService {
     return this.generateTokens(user.id, user.dni, user.primaryRole);
   }
 
+  async getSession(userId: string): Promise<SessionResponse> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user || !user.isActive || user.deletedAt) {
+      throw new UnauthorizedException('Invalid session');
+    }
+
+    const modules = await this.rolesService.getUserModules(user.id);
+
+    return {
+      user: {
+        id: user.id,
+        dni: user.dni,
+        fullName: user.fullName,
+        primaryRole: user.primaryRole as SessionResponse['user']['primaryRole'],
+        isActive: user.isActive,
+      },
+      modules,
+    };
+  }
+
   private async generateTokens(
     userId: string,
     dni: string,
@@ -55,7 +88,7 @@ export class AuthService {
     const accessPayload: JwtAccessPayload = {
       sub: userId,
       dni,
-      primaryRole: primaryRole as any,
+      primaryRole: primaryRole as JwtAccessPayload['primaryRole'],
     };
 
     const refreshPayload: JwtRefreshPayload = { sub: userId };

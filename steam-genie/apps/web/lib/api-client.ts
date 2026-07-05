@@ -1,11 +1,39 @@
-function resolveApiBaseUrl(): string {
+function parseConfiguredApiUrl(): string {
   const raw = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
   const trimmed = raw.trim().replace(/\/$/, '');
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
   return `https://${trimmed}`;
 }
 
-const API_BASE_URL = resolveApiBaseUrl();
+function extractPortFromUrl(url: string): string {
+  try {
+    const port = new URL(url).port;
+    return port || '4000';
+  } catch {
+    return '4000';
+  }
+}
+
+/** URL de la API según el host desde el que se abre el panel (soporta acceso por IP en la red local). */
+export function getApiBaseUrl(): string {
+  const configured = parseConfiguredApiUrl();
+
+  if (typeof window === 'undefined') return configured;
+
+  const { hostname, protocol } = window.location;
+  if (hostname === 'localhost' || hostname === '127.0.0.1') return configured;
+
+  const apiPort = process.env.NEXT_PUBLIC_API_PORT ?? extractPortFromUrl(configured);
+  return `${protocol}//${hostname}:${apiPort}`;
+}
+
+/** @deprecated Usar getApiBaseUrl() — se mantiene por compatibilidad con imports existentes. */
+export const API_BASE_URL_EXPORTED = getApiBaseUrl();
+
+export function getAccessTokenForStream(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('sg_access_token');
+}
 
 type FetchOptions = RequestInit & { skipAuth?: boolean; _retried?: boolean };
 
@@ -46,7 +74,7 @@ async function refreshAccessToken(): Promise<string | null> {
   const refreshToken = getRefreshToken();
   if (!refreshToken) return null;
 
-  const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+  const res = await fetch(`${getApiBaseUrl()}/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refreshToken }),
@@ -78,7 +106,7 @@ export async function apiClient<T>(path: string, options: FetchOptions = {}): Pr
     (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE_URL}${path}`, {
+  const res = await fetch(`${getApiBaseUrl()}${path}`, {
     ...fetchOptions,
     headers,
   });
@@ -125,8 +153,6 @@ export const api = {
   upload: async <T>(path: string, file: File, opts?: FetchOptions): Promise<T> => {
     const { skipAuth, _retried, ...fetchOptions } = opts ?? {};
 
-    // Snapshot en memoria: Chrome lanza ERR_UPLOAD_FILE_CHANGED si se reutiliza
-    // el mismo File del <input type="file"> en un segundo upload.
     const bytes = await file.arrayBuffer();
     const snapshot = new File([bytes], file.name, {
       type: file.type || 'application/octet-stream',
@@ -147,7 +173,7 @@ export const api = {
         (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
       }
 
-      const res = await fetch(`${API_BASE_URL}${path}`, {
+      const res = await fetch(`${getApiBaseUrl()}${path}`, {
         ...fetchOptions,
         method: 'POST',
         headers,
@@ -184,7 +210,7 @@ export const api = {
       (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
     }
 
-    const res = await fetch(`${API_BASE_URL}${path}`, {
+    const res = await fetch(`${getApiBaseUrl()}${path}`, {
       ...fetchOptions,
       method: 'GET',
       headers,
