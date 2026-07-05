@@ -7,6 +7,7 @@ import { api } from '../lib/api-client';
 import {
   canAccessWeb,
   clearTokens,
+  getCurrentUserRole,
   getUserModules,
   isAuthenticated,
   saveUserModules,
@@ -42,7 +43,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       }
 
       const modules = getUserModules();
-      if (!canAccessPath(modules, pathname)) {
+      const role = getCurrentUserRole();
+      if (!canAccessPath(modules, pathname, role)) {
         router.replace('/dashboard');
         return;
       }

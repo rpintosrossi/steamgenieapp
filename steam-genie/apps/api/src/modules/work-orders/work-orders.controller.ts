@@ -20,6 +20,7 @@ import { QueryWorkOrdersDto } from './dto/query-work-orders.dto';
 import { AssignWorkOrderDto } from './dto/assign-work-order.dto';
 import { RejectWorkOrderDto } from './dto/reject-work-order.dto';
 import { CreateCheckoutCleaningDto } from './dto/create-checkout-cleaning.dto';
+import { CreateAdditionalRequestDto } from './dto/create-additional-request.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
 
 @Controller('work-orders')
@@ -28,7 +29,7 @@ export class WorkOrdersController {
   constructor(private readonly workOrdersService: WorkOrdersService) {}
 
   @Get()
-  @RequiredRoles('admin', 'manager', 'cleaner')
+  @RequiredRoles('admin', 'manager', 'cleaner', 'client', 'provider')
   findAll(@Query() query: QueryWorkOrdersDto, @CurrentUser() user: AuthUser) {
     return this.workOrdersService.findAll(query, user);
   }
@@ -42,8 +43,17 @@ export class WorkOrdersController {
     return this.workOrdersService.createCheckoutCleaning(dto, user.id);
   }
 
+  @Post('additional-request')
+  @RequiredRoles('client')
+  createAdditionalRequest(
+    @Body() dto: CreateAdditionalRequestDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.workOrdersService.createAdditionalRequest(dto, user.id);
+  }
+
   @Get(':id')
-  @RequiredRoles('admin', 'manager', 'cleaner')
+  @RequiredRoles('admin', 'manager', 'cleaner', 'client', 'provider')
   findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
     return this.workOrdersService.findOne(id, user);
   }

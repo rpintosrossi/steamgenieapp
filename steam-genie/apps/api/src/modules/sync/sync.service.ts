@@ -10,6 +10,7 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { AttendanceService } from '../attendance/attendance.service';
 import { WorkOrdersService } from '../work-orders/work-orders.service';
 import { ServiceExecutionsService } from '../service-executions/service-executions.service';
+import type { MarkTaskDto } from '../service-executions/dto/mark-task.dto';
 import { TasksService } from '../tasks/tasks.service';
 import { PrefetchQueryDto } from './dto/prefetch-query.dto';
 import { SyncBatchDto, SyncOperationItemDto, SyncOperationType } from './dto/sync-batch.dto';
@@ -456,6 +457,7 @@ export class SyncService {
             status: status as 'DONE' | 'NOT_DONE' | 'SKIPPED',
             rejectionReasonId: p.rejectionReasonId as string | undefined,
             observation: p.observation as string | undefined,
+            fieldValues: p.fieldValues as MarkTaskDto['fieldValues'],
             clientOperationId: op.clientOperationId,
           },
           user,
@@ -486,6 +488,7 @@ export class SyncService {
             status: status as 'DONE' | 'NOT_DONE' | 'SKIPPED',
             rejectionReasonId: p.rejectionReasonId as string | undefined,
             observation: p.observation as string | undefined,
+            fieldValues: p.fieldValues as MarkTaskDto['fieldValues'],
             clientOperationId: op.clientOperationId,
           },
           user,

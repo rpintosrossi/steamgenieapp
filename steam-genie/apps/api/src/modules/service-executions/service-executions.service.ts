@@ -13,6 +13,10 @@ import { MarkTaskDto } from './dto/mark-task.dto';
 import { UploadPhotoDto } from './dto/upload-photo.dto';
 import type { TaskExecutionItem, TaskPhotoSummary } from './dto/task-execution-item';
 import type { AuthUser } from '@steam-genie/shared-types';
+import {
+  validateTaskFieldValues,
+  upsertTaskFieldValues,
+} from '../../common/task-field-values';
 
 const ALLOWED_MIME_TYPES = [
   'image/jpeg',
@@ -56,6 +60,21 @@ export class ServiceExecutionsService {
         requiresPhotoSnapshot: true,
         allowsObservationSnapshot: true,
         requiresRejectionReasonSnapshot: true,
+        customFieldSnapshots: {
+          orderBy: { sortOrder: 'asc' },
+          select: {
+            id: true,
+            labelSnapshot: true,
+            fieldType: true,
+            isRequired: true,
+            showInReport: true,
+            sortOrder: true,
+            optionSnapshots: {
+              orderBy: { sortOrder: 'asc' },
+              select: { id: true, labelSnapshot: true, sortOrder: true },
+            },
+          },
+        },
         task: { select: { zoneId: true, subzoneId: true } },
         taskExecutions: {
           where: { serviceExecutionId },
@@ -66,6 +85,12 @@ export class ServiceExecutionsService {
             executedBy: { select: { fullName: true } },
             executedAt: true,
             observation: true,
+            fieldValues: {
+              select: {
+                snapshotFieldId: true,
+                selectedOptionIds: true,
+              },
+            },
             photos: {
               where: { deletedAt: null },
               orderBy: { createdAt: 'asc' },
@@ -95,6 +120,19 @@ export class ServiceExecutionsService {
         requiresRejectionReasonSnapshot: wot.requiresRejectionReasonSnapshot,
         zoneId: wot.task.zoneId ?? workOrder?.zoneId ?? null,
         subzoneId: wot.task.subzoneId ?? workOrder?.subzoneId ?? null,
+        customFields: wot.customFieldSnapshots.map((field) => ({
+          id: field.id,
+          label: field.labelSnapshot,
+          fieldType: field.fieldType,
+          isRequired: field.isRequired,
+          showInReport: field.showInReport,
+          sortOrder: field.sortOrder,
+          options: field.optionSnapshots.map((option) => ({
+            id: option.id,
+            label: option.labelSnapshot,
+            sortOrder: option.sortOrder,
+          })),
+        })),
         execution: exec
           ? {
               id: exec.id,
@@ -105,6 +143,12 @@ export class ServiceExecutionsService {
               observation: exec.observation,
               photoCount: exec.photos.length,
               photos: exec.photos.map((p) => this.formatPhoto(p)),
+              fieldValues: exec.fieldValues
+                .filter((value) => value.snapshotFieldId)
+                .map((value) => ({
+                  fieldId: value.snapshotFieldId!,
+                  selectedOptionIds: value.selectedOptionIds,
+                })),
             }
           : null,
       };
@@ -143,6 +187,15 @@ export class ServiceExecutionsService {
         nameSnapshot: true,
         requiresRejectionReasonSnapshot: true,
         allowsObservationSnapshot: true,
+        customFieldSnapshots: {
+          orderBy: { sortOrder: 'asc' },
+          select: {
+            id: true,
+            labelSnapshot: true,
+            isRequired: true,
+            optionSnapshots: { select: { id: true, labelSnapshot: true } },
+          },
+        },
       },
     });
     if (!wot) {
@@ -182,6 +235,17 @@ export class ServiceExecutionsService {
       );
     }
 
+    const fieldDefinitions = wot.customFieldSnapshots.map((field) => ({
+      id: field.id,
+      label: field.labelSnapshot,
+      isRequired: field.isRequired,
+      options: field.optionSnapshots.map((option) => ({
+        id: option.id,
+        label: option.labelSnapshot,
+      })),
+    }));
+    validateTaskFieldValues(fieldDefinitions, dto.fieldValues, dto.status);
+
     const executionData = {
       status: dto.status,
       rejectionReasonId:
@@ -193,21 +257,29 @@ export class ServiceExecutionsService {
     };
 
     if (existing) {
-      return this.prisma.taskExecutionRecord.update({
-        where: { id: existing.id },
-        data: {
-          ...executionData,
-          version: { increment: 1 },
-        },
+      return this.prisma.$transaction(async (tx) => {
+        const record = await tx.taskExecutionRecord.update({
+          where: { id: existing.id },
+          data: {
+            ...executionData,
+            version: { increment: 1 },
+          },
+        });
+        await upsertTaskFieldValues(tx, record.id, dto.fieldValues, 'snapshot');
+        return record;
       });
     }
 
-    return this.prisma.taskExecutionRecord.create({
-      data: {
-        serviceExecutionId,
-        workOrderTaskId,
-        ...executionData,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const record = await tx.taskExecutionRecord.create({
+        data: {
+          serviceExecutionId,
+          workOrderTaskId,
+          ...executionData,
+        },
+      });
+      await upsertTaskFieldValues(tx, record.id, dto.fieldValues, 'snapshot');
+      return record;
     });
   }
 

@@ -27,6 +27,8 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateCustomFieldDto } from './dto/create-custom-field.dto';
 import { DueTodayQueryDto } from './dto/due-today-query.dto';
 import { QueryRecurringWorkDto } from './dto/query-recurring-work.dto';
+import { QueryRecurringWorkGroupsDto } from './dto/query-recurring-work-groups.dto';
+import { QueryRecurringWorkGroupTasksDto } from './dto/query-recurring-work-group-tasks.dto';
 import { MarkTaskDto } from '../service-executions/dto/mark-task.dto';
 import { UploadPhotoDto } from '../service-executions/dto/upload-photo.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
@@ -51,8 +53,26 @@ export class TasksController {
     return this.tasksService.getDueToday(query);
   }
 
+  @Get('recurring-work/groups')
+  @RequiredRoles('admin', 'manager', 'client')
+  listRecurringWorkGroups(
+    @Query() query: QueryRecurringWorkGroupsDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.tasksService.listRecurringWorkGroups(query, user);
+  }
+
+  @Get('recurring-work/group-tasks')
+  @RequiredRoles('admin', 'manager', 'client')
+  listRecurringWorkGroupTasks(
+    @Query() query: QueryRecurringWorkGroupTasksDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.tasksService.listRecurringWorkGroupTasks(query, user);
+  }
+
   @Get('recurring-work/list')
-  @RequiredRoles('admin', 'manager')
+  @RequiredRoles('admin', 'manager', 'client')
   listRecurringWork(
     @Query() query: QueryRecurringWorkDto,
     @CurrentUser() user: AuthUser,
@@ -100,9 +120,9 @@ export class TasksController {
   }
 
   @Get()
-  @RequiredRoles('admin', 'manager')
-  findAll(@Query() query: QueryTasksDto) {
-    return this.tasksService.findAll(query);
+  @RequiredRoles('admin', 'manager', 'client')
+  findAll(@Query() query: QueryTasksDto, @CurrentUser() user: AuthUser) {
+    return this.tasksService.findAll(query, user);
   }
 
   @Post()
@@ -112,9 +132,9 @@ export class TasksController {
   }
 
   @Get(':id')
-  @RequiredRoles('admin', 'manager')
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.tasksService.findOne(id);
+  @RequiredRoles('admin', 'manager', 'client')
+  findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
+    return this.tasksService.findOne(id, user);
   }
 
   @Patch(':id')

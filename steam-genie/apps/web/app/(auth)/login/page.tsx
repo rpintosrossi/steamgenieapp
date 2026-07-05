@@ -80,7 +80,7 @@ export default function LoginPage() {
         <div className="login-card">
           <div className="card">
             <h1>Iniciar sesión</h1>
-            <p className="muted">Ingresá con tu DNI y contraseña de administrador.</p>
+            <p className="muted">Ingresá con tu DNI y contraseña.</p>
 
             {error ? <div className="alert alert-error">{error}</div> : null}
 

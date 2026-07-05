@@ -18,6 +18,11 @@ export const RESERVATION_STATUS_LABELS: Record<string, string> = {
   COMPLETED: 'Finalizada',
 };
 
+export const RESERVATION_ZONE_READINESS_LABELS = {
+  readyToOccupy: 'Lista para habitar',
+  notReady: 'Zona no lista',
+} as const;
+
 export const ROLE_LABELS: Record<string, string> = {
   admin: 'Administrador',
   manager: 'Encargado',

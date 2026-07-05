@@ -1,4 +1,4 @@
-import { IsOptional, IsUUID, IsEnum, IsDateString, IsInt, Min, Max } from 'class-validator';
+import { IsOptional, IsUUID, IsEnum, IsDateString, IsInt, Min, Max, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 import { WorkOrderStatus, WorkOrderType } from '@prisma/client';
 
@@ -35,4 +35,9 @@ export class QueryWorkOrdersDto {
   @IsOptional()
   @IsUUID()
   assignedTo?: string;
+
+  /** Orden por fecha programada y hora (asc | desc). */
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortDir?: 'asc' | 'desc';
 }

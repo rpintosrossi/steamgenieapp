@@ -127,6 +127,7 @@ interface BuildingStore {
   updateActiveAttendance: (attendance: AttendanceCached | null) => void;
   syncActiveAttendance: () => Promise<AttendanceCached | null>;
   patchWorkOrder: (id: string, patch: Partial<WorkOrderCached>) => void;
+  removeWorkOrderFromPrefetch: (id: string) => void;
 }
 
 export const useBuildingStore = create<BuildingStore>((set, get) => ({
@@ -231,6 +232,17 @@ export const useBuildingStore = create<BuildingStore>((set, get) => ({
         workOrders: prefetchData.workOrders.map((wo) =>
           wo.id === id ? { ...wo, ...patch } : wo,
         ),
+      },
+    });
+  },
+
+  removeWorkOrderFromPrefetch: (id) => {
+    const { prefetchData } = get();
+    if (!prefetchData) return;
+    set({
+      prefetchData: {
+        ...prefetchData,
+        workOrders: prefetchData.workOrders.filter((wo) => wo.id !== id),
       },
     });
   },

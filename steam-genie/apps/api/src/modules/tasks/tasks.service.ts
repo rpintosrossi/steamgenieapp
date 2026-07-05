@@ -22,8 +22,18 @@ import { UpdateFieldOptionDto } from './dto/update-field-option.dto';
 import { DueTodayQueryDto } from './dto/due-today-query.dto';
 import { QueryRecurringWorkDto } from './dto/query-recurring-work.dto';
 import type { RecurringWorkDisplayStatus } from './dto/query-recurring-work.dto';
+import { QueryRecurringWorkGroupsDto } from './dto/query-recurring-work-groups.dto';
+import { QueryRecurringWorkGroupTasksDto } from './dto/query-recurring-work-group-tasks.dto';
+import {
+  groupRecurringWorkRows,
+  matchesRecurringWorkLocation,
+} from './recurring-work-groups.util';
 import { TimelineEventsService } from '../../common/events/timeline-events.service';
 import { calendarDateKeyInBusinessTz } from '@steam-genie/shared-constants';
+import {
+  validateTaskFieldValues,
+  upsertTaskFieldValues,
+} from '../../common/task-field-values';
 
 /** Returns midnight UTC of the given date string, or today if omitted. */
 function startOfDay(dateStr?: string): Date {
@@ -60,6 +70,22 @@ const TASK_LIST_SELECT = {
   subzone: { select: { id: true, name: true } },
 };
 
+const TASK_CUSTOM_FIELDS_SELECT = {
+  orderBy: { sortOrder: 'asc' as const },
+  select: {
+    id: true,
+    label: true,
+    fieldType: true,
+    isRequired: true,
+    showInReport: true,
+    sortOrder: true,
+    options: {
+      orderBy: { sortOrder: 'asc' as const },
+      select: { id: true, label: true, sortOrder: true },
+    },
+  },
+};
+
 const ALLOWED_MIME_TYPES = [
   'image/jpeg',
   'image/png',
@@ -80,7 +106,7 @@ export class TasksService {
 
   // ─── TASKS ─────────────────────────────────────────────────────────────────
 
-  async findAll(query: QueryTasksDto) {
+  async findAll(query: QueryTasksDto, user?: AuthUser) {
     const {
       page = 1, limit = 20,
       buildingId, zoneId, subzoneId, frequency, search, isActive,
@@ -91,7 +117,33 @@ export class TasksService {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = { deletedAt: null };
 
-    if (buildingId) where.buildingId = buildingId;
+    if (user?.primaryRole === 'client') {
+      const assignments = await this.prisma.userBuildingRole.findMany({
+        where: { userId: user.id, buildingId: { not: null } },
+        select: { buildingId: true },
+      });
+      const scopedBuildingIds = [
+        ...new Set(
+          assignments
+            .map((item) => item.buildingId)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ];
+      if (scopedBuildingIds.length === 0) {
+        return { data: [], total: 0, page, limit, pages: 0 };
+      }
+      if (buildingId) {
+        if (!scopedBuildingIds.includes(buildingId)) {
+          return { data: [], total: 0, page, limit, pages: 0 };
+        }
+        where.buildingId = buildingId;
+      } else {
+        where.buildingId = { in: scopedBuildingIds };
+      }
+    } else if (buildingId) {
+      where.buildingId = buildingId;
+    }
+
     if (zoneId) where.zoneId = zoneId;
     if (subzoneId) where.subzoneId = subzoneId;
     if (frequency) where.frequency = frequency;
@@ -113,7 +165,7 @@ export class TasksService {
     return { data, total, page, limit, pages: Math.ceil(total / limit) };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: AuthUser) {
     const task = await this.prisma.task.findFirst({
       where: { id, deletedAt: null },
       include: {
@@ -121,9 +173,28 @@ export class TasksService {
           orderBy: { sortOrder: 'asc' },
           include: { options: { orderBy: { sortOrder: 'asc' } } },
         },
+        building: { select: { id: true, name: true } },
+        zone: {
+          select: {
+            id: true,
+            name: true,
+            floor: { select: { id: true, name: true } },
+          },
+        },
+        subzone: { select: { id: true, name: true } },
       },
     });
     if (!task) throw new NotFoundException('Task not found');
+
+    if (user?.primaryRole === 'client') {
+      const hasAccess = await this.prisma.userBuildingRole.findFirst({
+        where: { userId: user.id, buildingId: task.buildingId },
+      });
+      if (!hasAccess) {
+        throw new ForbiddenException('No tenés acceso a tareas de este edificio.');
+      }
+    }
+
     return task;
   }
 
@@ -286,6 +357,88 @@ export class TasksService {
 
   async listRecurringWork(query: QueryRecurringWorkDto, user: AuthUser) {
     const { page = 1, limit = 20, buildingId, status, search, periodDate } = query;
+    const rows = await this.buildRecurringWorkRows(
+      { buildingId, search, periodDate, status },
+      user,
+      { includeExecution: true, includePhotos: true, includeFieldValues: true },
+    );
+
+    const total = rows.length;
+    const pages = Math.max(1, Math.ceil(total / limit));
+    const data = rows.slice((page - 1) * limit, page * limit);
+
+    return { data, total, page, limit, pages };
+  }
+
+  async listRecurringWorkGroups(query: QueryRecurringWorkGroupsDto, user: AuthUser) {
+    const { page = 1, limit = 20, buildingId, groupStatus, search, periodDate } = query;
+    const rows = await this.buildRecurringWorkRows(
+      { buildingId, search, periodDate },
+      user,
+      { includeExecution: false },
+    );
+
+    let groups = groupRecurringWorkRows(rows);
+    if (groupStatus) {
+      groups = groups.filter((group) => group.aggregateStatus === groupStatus);
+    }
+
+    const total = groups.length;
+    const pages = Math.max(1, Math.ceil(total / limit));
+    const data = groups.slice((page - 1) * limit, page * limit);
+
+    return { data, total, page, limit, pages };
+  }
+
+  async listRecurringWorkGroupTasks(
+    query: QueryRecurringWorkGroupTasksDto,
+    user: AuthUser,
+  ) {
+    const {
+      page = 1,
+      limit = 20,
+      buildingId,
+      floorId,
+      zoneId,
+      subzoneId,
+      search,
+      periodDate,
+    } = query;
+
+    const rows = await this.buildRecurringWorkRows(
+      { buildingId, search, periodDate },
+      user,
+      { includeExecution: true, includePhotos: true, includeFieldValues: false },
+    );
+
+    const locationRows = rows
+      .filter((row) =>
+        matchesRecurringWorkLocation(row, { buildingId, floorId, zoneId, subzoneId }),
+      )
+      .sort((a, b) => a.taskName.localeCompare(b.taskName, 'es'));
+
+    const total = locationRows.length;
+    const pages = Math.max(1, Math.ceil(total / limit));
+    const data = locationRows.slice((page - 1) * limit, page * limit);
+
+    return { data, total, page, limit, pages };
+  }
+
+  private async buildRecurringWorkRows(
+    filters: {
+      buildingId?: string;
+      search?: string;
+      periodDate?: string;
+      status?: RecurringWorkDisplayStatus;
+    },
+    user: AuthUser,
+    enrichOptions: {
+      includeExecution?: boolean;
+      includePhotos?: boolean;
+      includeFieldValues?: boolean;
+    } = {},
+  ) {
+    const { buildingId, search, periodDate, status } = filters;
     const refDate = startOfDay(periodDate);
     const today = startOfDay();
 
@@ -300,7 +453,7 @@ export class TasksService {
     const allowedBuildingIds = await this.getAllowedBuildingIds(user, buildingId);
     if (allowedBuildingIds !== null) {
       if (allowedBuildingIds.length === 0) {
-        return { data: [], total: 0, page, limit, pages: 0 };
+        return [];
       }
       taskWhere.buildingId = { in: allowedBuildingIds };
     }
@@ -324,19 +477,14 @@ export class TasksService {
       refDate,
       { createMissing: false },
     );
-    const enriched = await this.enrichPeriodicInstancesBatch(instances);
+    const enriched = await this.enrichPeriodicInstancesBatch(instances, enrichOptions);
     const rows = tasks.map((task, index) => {
       const instance = enriched[index];
       const displayStatus = this.computeRecurringDisplayStatus(instance, today);
       return this.formatRecurringWorkRow(task, instance, displayStatus);
     });
 
-    const filtered = status ? rows.filter((row) => row.displayStatus === status) : rows;
-    const total = filtered.length;
-    const pages = Math.max(1, Math.ceil(total / limit));
-    const data = filtered.slice((page - 1) * limit, page * limit);
-
-    return { data, total, page, limit, pages };
+    return status ? rows.filter((row) => row.displayStatus === status) : rows;
   }
 
   // ─── MARK PERIODIC INSTANCE ────────────────────────────────────────────────
@@ -344,7 +492,15 @@ export class TasksService {
   async markPeriodicInstance(instanceId: string, dto: MarkTaskDto, user: AuthUser) {
     const instance = await this.prisma.periodicTaskInstance.findUnique({
       where: { id: instanceId },
-      include: { task: { select: { ...TASK_SELECT, deletedAt: true } } },
+      include: {
+        task: {
+          select: {
+            ...TASK_SELECT,
+            deletedAt: true,
+            customFields: TASK_CUSTOM_FIELDS_SELECT,
+          },
+        },
+      },
     });
     if (!instance || instance.task.deletedAt) {
       throw new NotFoundException('Periodic task instance not found');
@@ -391,6 +547,17 @@ export class TasksService {
       );
     }
 
+    const fieldDefinitions = instance.task.customFields.map((field) => ({
+      id: field.id,
+      label: field.label,
+      isRequired: field.isRequired,
+      options: field.options.map((option) => ({
+        id: option.id,
+        label: option.label,
+      })),
+    }));
+    validateTaskFieldValues(fieldDefinitions, dto.fieldValues, dto.status);
+
     const executionData = {
       status: dto.status,
       rejectionReasonId:
@@ -416,6 +583,8 @@ export class TasksService {
               ...executionData,
             },
           });
+
+      await upsertTaskFieldValues(tx, saved.id, dto.fieldValues, 'master');
 
       await tx.periodicTaskInstance.update({
         where: { id: instanceId },
@@ -750,7 +919,7 @@ export class TasksService {
             periodLabel: spec.periodLabel,
           })),
         },
-        include: { task: { select: TASK_SELECT } },
+        include: { task: { select: { ...TASK_SELECT, customFields: TASK_CUSTOM_FIELDS_SELECT } } },
       });
 
       const persistedMap = new Map(
@@ -837,8 +1006,25 @@ export class TasksService {
       createdAt: Date;
       updatedAt: Date;
     },
-  >(instances: T[]) {
+  >(
+    instances: T[],
+    options?: {
+      includeExecution?: boolean;
+      includePhotos?: boolean;
+      includeFieldValues?: boolean;
+    },
+  ) {
     if (instances.length === 0) return [];
+
+    const {
+      includeExecution = true,
+      includePhotos = true,
+      includeFieldValues = true,
+    } = options ?? {};
+
+    if (!includeExecution) {
+      return instances.map((instance) => ({ ...instance, execution: null }));
+    }
 
     const realIds = instances
       .map((instance) => instance.id)
@@ -851,19 +1037,34 @@ export class TasksService {
       observation: true,
       executedAt: true,
       executedBy: { select: { id: true, fullName: true, dni: true } },
-      photos: {
-        where: { deletedAt: null },
-        orderBy: { createdAt: 'asc' as const },
-        select: {
-          id: true,
-          storageKey: true,
-          originalFilename: true,
-          mimeType: true,
-          fileSizeBytes: true,
-          capturedAt: true,
-          uploadedAt: true,
-        },
-      },
+      ...(includeFieldValues
+        ? {
+            fieldValues: {
+              select: {
+                masterFieldId: true,
+                selectedOptionIds: true,
+              },
+            },
+          }
+        : {}),
+      ...(includePhotos
+        ? {
+            photos: {
+              where: { deletedAt: null },
+              orderBy: { createdAt: 'asc' as const },
+              select: {
+                id: true,
+                storageKey: true,
+                originalFilename: true,
+                mimeType: true,
+                fileSizeBytes: true,
+                capturedAt: true,
+                uploadedAt: true,
+                uploadedBy: { select: { id: true, fullName: true } },
+              },
+            },
+          }
+        : {}),
     };
 
     const executions =
@@ -889,7 +1090,17 @@ export class TasksService {
               observation: execution.observation,
               executedAt: execution.executedAt,
               executedBy: execution.executedBy,
-              photos: execution.photos.map((photo) => this.formatPhoto(photo)),
+              photos: includePhotos
+                ? (execution.photos ?? []).map((photo) => this.formatPhoto(photo))
+                : [],
+              fieldValues: includeFieldValues
+                ? (execution.fieldValues ?? [])
+                    .filter((value) => value.masterFieldId)
+                    .map((value) => ({
+                      fieldId: value.masterFieldId!,
+                      selectedOptionIds: value.selectedOptionIds,
+                    }))
+                : [],
             }
           : null,
       };
@@ -929,6 +1140,7 @@ export class TasksService {
       id: string;
       name: string;
       frequency: TaskFrequency;
+      requiresPhoto: boolean;
       building: { id: string; name: string } | null;
       zone: {
         id: string;
@@ -978,6 +1190,7 @@ export class TasksService {
       taskId: task.id,
       taskName: task.name,
       frequency: task.frequency,
+      requiresPhoto: task.requiresPhoto,
       building: task.building,
       floor,
       zone,
@@ -1006,6 +1219,24 @@ export class TasksService {
     });
     if (globalStaff) {
       return buildingId ? [buildingId] : null;
+    }
+
+    if (user.primaryRole === 'client') {
+      const clientAssignments = await this.prisma.userBuildingRole.findMany({
+        where: { userId: user.id, buildingId: { not: null } },
+        select: { buildingId: true },
+      });
+      const clientIds = [
+        ...new Set(
+          clientAssignments
+            .map((item) => item.buildingId)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ];
+      if (buildingId) {
+        return clientIds.includes(buildingId) ? [buildingId] : [];
+      }
+      return clientIds;
     }
 
     const assignments = await this.prisma.userBuildingRole.findMany({
@@ -1067,6 +1298,7 @@ export class TasksService {
       fileSizeBytes?: number | null;
       capturedAt?: Date | null;
       uploadedAt: Date;
+      uploadedBy?: { id: string; fullName: string } | null;
     },
   ) {
     return {
@@ -1076,8 +1308,9 @@ export class TasksService {
       originalFilename: p.originalFilename ?? null,
       mimeType: p.mimeType ?? null,
       fileSizeBytes: p.fileSizeBytes ?? null,
-      capturedAt: p.capturedAt ?? null,
-      uploadedAt: p.uploadedAt,
+      capturedAt: p.capturedAt?.toISOString() ?? null,
+      uploadedAt: p.uploadedAt.toISOString(),
+      uploadedBy: p.uploadedBy ?? null,
     };
   }
 }

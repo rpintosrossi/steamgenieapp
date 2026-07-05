@@ -67,8 +67,29 @@ export interface BuildingHierarchy {
   >;
 }
 
+export interface AssignableCleanerSameDayService {
+  workOrderId: string;
+  title: string;
+  zoneName: string | null;
+  scheduledTime: string | null;
+}
+
+export interface AssignableCleanerPriorRejection {
+  reason: string | null;
+  rejectedAt: string | null;
+}
+
+export interface AssignableCleanerItem {
+  id: string;
+  fullName: string;
+  dni: string;
+  recommended: boolean;
+  sameDayServices: AssignableCleanerSameDayService[];
+  priorRejection: AssignableCleanerPriorRejection | null;
+}
+
 export interface AssignableCleanersResponse {
-  cleaners: Array<{ id: string; fullName: string; dni: string }>;
+  cleaners: AssignableCleanerItem[];
   otherUsersOnBuilding: Array<{
     id: string;
     fullName: string;
@@ -104,11 +125,27 @@ export interface TaskItem {
   subzone?: { id: string; name: string } | null;
 }
 
+export interface RecurringWorkGroupSummary {
+  key: string;
+  buildingId: string;
+  floorId: string | null;
+  zoneId: string | null;
+  subzoneId: string | null;
+  building: RecurringWorkListItem['building'];
+  floor: RecurringWorkListItem['floor'];
+  zone: RecurringWorkListItem['zone'];
+  subzone: RecurringWorkListItem['subzone'];
+  periodLabelDisplay: string;
+  aggregateStatus: 'COMPLETED' | 'SCHEDULED' | 'OVERDUE' | 'PARTIAL';
+  taskCount: number;
+}
+
 export interface RecurringWorkListItem {
   id: string;
   taskId: string;
   taskName: string;
   frequency: string;
+  requiresPhoto: boolean;
   building: { id: string; name: string } | null;
   floor: { id: string; name: string } | null;
   zone: { id: string; name: string } | null;
@@ -130,6 +167,9 @@ export interface RecurringWorkListItem {
       id: string;
       url: string;
       originalFilename: string | null;
+      capturedAt: string | null;
+      uploadedAt: string;
+      uploadedBy: { id: string; fullName: string } | null;
     }>;
   } | null;
 }
@@ -139,6 +179,38 @@ export interface UserBuildingRoleItem {
   buildingId: string | null;
   building: { id: string; name: string } | null;
   role: { id: string; name: string };
+}
+
+export interface BuildingUserAssignment {
+  id: string;
+  userId: string;
+  user: {
+    id: string;
+    dni: string;
+    fullName: string;
+    primaryRole: string;
+    isActive: boolean;
+  };
+  role: { id: string; name: string };
+  createdAt: string;
+}
+
+export interface BuildingGlobalAccessUser {
+  id: string;
+  userId: string;
+  user: {
+    id: string;
+    dni: string;
+    fullName: string;
+    primaryRole: string;
+    isActive: boolean;
+  };
+  role: { id: string; name: string };
+}
+
+export interface BuildingUserRolesResponse {
+  assignments: BuildingUserAssignment[];
+  globalAccess: BuildingGlobalAccessUser[];
 }
 
 export interface UserItem {
@@ -185,6 +257,11 @@ export interface AttendanceTimelineResponse {
   truncated: boolean;
 }
 
+export interface ReservationZoneReadiness {
+  readyToOccupy: boolean;
+  notReady: boolean;
+}
+
 export interface ReservationItem {
   id: string;
   buildingId: string;
@@ -196,6 +273,7 @@ export interface ReservationItem {
   checkinAt: string;
   checkoutAt: string;
   status: string;
+  zoneReadiness?: ReservationZoneReadiness | null;
   source: string;
 }
 
@@ -228,12 +306,65 @@ export interface WorkOrderListItem {
   zoneId: string | null;
   subzoneId: string | null;
   scheduledDate: string | null;
+  scheduledTime: string | null;
   deadlineAt: string | null;
   createdAt: string;
   building?: { id: string; name: string };
   zone?: { id: string; name: string } | null;
   assignments: WorkOrderAssignmentItem[];
   _count: { workOrderTasks: number; assignments: number };
+}
+
+export interface EventualCalendarReservation {
+  id: string;
+  buildingId: string;
+  floorId: string;
+  zoneId: string;
+  subzoneId?: string | null;
+  externalId?: string | null;
+  guestName?: string | null;
+  checkinAt: string;
+  checkoutAt: string;
+  durationMs: number;
+  building?: { id: string; name: string };
+  floor?: { id: string; name: string };
+  zone?: { id: string; name: string };
+  subzone?: { id: string; name: string } | null;
+}
+
+export interface EventualCalendarService {
+  id: string;
+  title: string;
+  status: string;
+  buildingId: string;
+  floorId: string | null;
+  zoneId: string | null;
+  subzoneId: string | null;
+  reservationId: string | null;
+  scheduledDate: string | null;
+  scheduledTime: string | null;
+  deadlineAt: string | null;
+  unassigned: boolean;
+  building?: { id: string; name: string };
+  floor?: { id: string; name: string } | null;
+  zone?: { id: string; name: string } | null;
+  subzone?: { id: string; name: string } | null;
+  activeAssignments: WorkOrderAssignmentItem[];
+}
+
+export interface EventualCalendarResponse {
+  reservations: EventualCalendarReservation[];
+  services: EventualCalendarService[];
+  from: string;
+  to: string;
+  totals: {
+    reservations: number;
+    services: number;
+  };
+  truncated: {
+    reservations: boolean;
+    services: boolean;
+  };
 }
 
 export type BulkImportRowStatus = 'success' | 'error' | 'skipped';

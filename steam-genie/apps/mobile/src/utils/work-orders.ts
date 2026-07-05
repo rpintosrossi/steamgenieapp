@@ -31,7 +31,14 @@ export function getWorkOrderTaskCount(item: WorkOrderCached): number {
 }
 
 export function getUserAssignment(item: WorkOrderCached, userId: string) {
-  return item.assignments?.find((a) => a.userId === userId);
+  const userAssignments = item.assignments?.filter((a) => a.userId === userId) ?? [];
+  if (userAssignments.length === 0) return undefined;
+
+  return (
+    userAssignments.find((a) => a.status === 'PENDING' || a.status === 'ACCEPTED') ??
+    userAssignments.find((a) => a.status === 'REJECTED') ??
+    userAssignments[0]
+  );
 }
 
 /** Solo servicios con asignación PENDING o ACCEPTED para el usuario. */

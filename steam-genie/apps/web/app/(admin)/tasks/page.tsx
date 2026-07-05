@@ -2,11 +2,13 @@
 
 import Link from 'next/link';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
-import { TASK_FREQUENCIES } from '@steam-genie/shared-constants';
+import { TASK_FREQUENCIES, APP_MODULES } from '@steam-genie/shared-constants';
 import { CreateTaskModal } from '../../../components/CreateTaskModal';
+import { EditTaskModal } from '../../../components/EditTaskModal';
 import { TasksSubnav } from '../../../components/TasksSubnav';
 import { api } from '../../../lib/api-client';
 import { fetchBuildingsList } from '../../../lib/buildings-cache';
+import { hasModule } from '../../../lib/auth';
 import { TASK_FREQUENCY_LABELS } from '../../../lib/labels';
 import type { Paginated, TaskItem } from '../../../lib/types';
 import { LocationDisplay } from '../../../components/LocationDisplay';
@@ -14,6 +16,7 @@ import { LocationDisplay } from '../../../components/LocationDisplay';
 const PAGE_SIZE = 20;
 
 export default function TasksPage() {
+  const readOnly = hasModule(APP_MODULES.TASKS) && !hasModule(APP_MODULES.BUILDINGS);
   const [items, setItems] = useState<TaskItem[]>([]);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
@@ -22,6 +25,7 @@ export default function TasksPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const [buildings, setBuildings] = useState<Array<{ id: string; name: string }>>([]);
@@ -99,6 +103,12 @@ export default function TasksPage() {
 
   const hasFilters = Boolean(buildingFilter || frequencyFilter || activeFilter || search);
 
+  function handleSaved() {
+    setEditingTaskId(null);
+    setSuccess('Tarea actualizada.');
+    void load();
+  }
+
   function handleCreated() {
     setCreateOpen(false);
     setSuccess('Tarea creada.');
@@ -110,31 +120,43 @@ export default function TasksPage() {
     <>
       <div className="page-header">
         <div>
-          <Link href="/configuracion" className="back-link">
-            ← Configuración
-          </Link>
+          {!readOnly ? (
+            <Link href="/configuracion" className="back-link">
+              ← Configuración
+            </Link>
+          ) : (
+            <Link href="/dashboard" className="back-link">
+              ← Inicio
+            </Link>
+          )}
           <h1 className="page-title">Tareas</h1>
-          <p className="page-subtitle">Definí tareas periódicas y eventuales de checkout.</p>
+          <p className="page-subtitle">
+            {readOnly
+              ? 'Consulta de tareas en tus edificios habilitados. Solo lectura.'
+              : 'Definí tareas periódicas y eventuales de checkout.'}
+          </p>
         </div>
-        <div className="page-header-actions">
-          <Link href="/tasks/motivos" className="btn btn-secondary btn-sm">
-            Motivos de no realización
-          </Link>
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            onClick={() => {
-              setCreateOpen(true);
-              setError(null);
-              setSuccess(null);
-            }}
-          >
-            Crear tarea
-          </button>
-        </div>
+        {!readOnly ? (
+          <div className="page-header-actions">
+            <Link href="/tasks/motivos" className="btn btn-secondary btn-sm">
+              Motivos de no realización
+            </Link>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => {
+                setCreateOpen(true);
+                setError(null);
+                setSuccess(null);
+              }}
+            >
+              Crear tarea
+            </button>
+          </div>
+        ) : null}
       </div>
 
-      <TasksSubnav />
+      {!readOnly ? <TasksSubnav /> : null}
 
       {error ? <div className="alert alert-error">{error}</div> : null}
       {success ? <div className="alert alert-success">{success}</div> : null}
@@ -229,7 +251,7 @@ export default function TasksPage() {
                     <th>Ubicación</th>
                     <th>Foto</th>
                     <th>Estado</th>
-                    <th>Acciones</th>
+                    {!readOnly ? <th>Acciones</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -251,20 +273,35 @@ export default function TasksPage() {
                           {task.isActive ? 'Activa' : 'No activa'}
                         </span>
                       </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          disabled={togglingId === task.id}
-                          onClick={() => void toggleActive(task)}
-                        >
-                          {togglingId === task.id
-                            ? 'Guardando…'
-                            : task.isActive
-                              ? 'Desactivar'
-                              : 'Activar'}
-                        </button>
-                      </td>
+                      {!readOnly ? (
+                        <td>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => {
+                                setEditingTaskId(task.id);
+                                setError(null);
+                                setSuccess(null);
+                              }}
+                            >
+                              Configurar
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              disabled={togglingId === task.id}
+                              onClick={() => void toggleActive(task)}
+                            >
+                              {togglingId === task.id
+                                ? 'Guardando…'
+                                : task.isActive
+                                  ? 'Desactivar'
+                                  : 'Activar'}
+                            </button>
+                          </div>
+                        </td>
+                      ) : null}
                     </tr>
                   ))}
                 </tbody>
@@ -296,11 +333,20 @@ export default function TasksPage() {
         )}
       </div>
 
-      {createOpen ? (
+      {!readOnly && createOpen ? (
         <CreateTaskModal
           buildings={buildings}
           onClose={() => setCreateOpen(false)}
           onCreated={handleCreated}
+        />
+      ) : null}
+
+      {!readOnly && editingTaskId ? (
+        <EditTaskModal
+          taskId={editingTaskId}
+          buildings={buildings}
+          onClose={() => setEditingTaskId(null)}
+          onSaved={handleSaved}
         />
       ) : null}
     </>

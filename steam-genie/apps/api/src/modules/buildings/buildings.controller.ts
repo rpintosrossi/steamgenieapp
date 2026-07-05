@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Patch,
   Delete,
   Body,
@@ -17,19 +18,25 @@ import { RequiredRoles } from '../../common/decorators/required-roles.decorator'
 import { BuildingScoped } from '../../common/decorators/building-scoped.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { BuildingsService } from './buildings.service';
+import { UsersService } from '../users/users.service';
 import { QueryBuildingsDto } from './dto/query-buildings.dto';
+import { QueryAssignableCleanersDto } from './dto/query-assignable-cleaners.dto';
 import { CreateBuildingDto } from './dto/create-building.dto';
 import { UpdateBuildingDto } from './dto/update-building.dto';
 import { CreateFloorDto } from './dto/create-floor.dto';
+import { SyncBuildingUsersDto } from '../users/dto/sync-building-users.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
 
 @Controller('buildings')
 @UseGuards(JwtAuthGuard, RolesGuard, BuildingAccessGuard)
 export class BuildingsController {
-  constructor(private readonly buildingsService: BuildingsService) {}
+  constructor(
+    private readonly buildingsService: BuildingsService,
+    private readonly usersService: UsersService,
+  ) {}
 
   @Get()
-  @RequiredRoles('admin', 'manager', 'cleaner')
+  @RequiredRoles('admin', 'manager', 'cleaner', 'client', 'provider')
   findAll(@Query() query: QueryBuildingsDto, @CurrentUser() user: AuthUser) {
     return this.buildingsService.findAll(query, user);
   }
@@ -41,7 +48,8 @@ export class BuildingsController {
   }
 
   @Get(':id/hierarchy')
-  @RequiredRoles('admin', 'manager', 'cleaner')
+  @RequiredRoles('admin', 'manager', 'cleaner', 'client', 'provider')
+  @BuildingScoped()
   findHierarchy(@Param('id', ParseUUIDPipe) id: string) {
     return this.buildingsService.findHierarchy(id);
   }
@@ -49,8 +57,29 @@ export class BuildingsController {
   @Get(':id/assignable-cleaners')
   @RequiredRoles('admin', 'manager')
   @BuildingScoped()
-  findAssignableCleaners(@Param('id', ParseUUIDPipe) id: string) {
-    return this.buildingsService.findAssignableCleaners(id);
+  findAssignableCleaners(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: QueryAssignableCleanersDto,
+  ) {
+    return this.buildingsService.findAssignableCleaners(id, query);
+  }
+
+  @Get(':id/user-roles')
+  @RequiredRoles('admin', 'manager')
+  @BuildingScoped()
+  getBuildingUserRoles(@Param('id', ParseUUIDPipe) id: string) {
+    return this.usersService.getBuildingUserRoles(id);
+  }
+
+  @Put(':id/user-roles/bulk')
+  @RequiredRoles('admin')
+  @BuildingScoped()
+  syncBuildingUsers(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SyncBuildingUsersDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.usersService.syncBuildingUsers(id, dto, user.id);
   }
 
   @Get(':id')

@@ -10,8 +10,13 @@ import {
   WORK_ORDER_STATUS_LABELS,
   WORK_ORDER_TYPE_LABELS,
 } from '../../../../lib/labels';
-import { formatStoredCalendarDate } from '@steam-genie/shared-constants';
+import {
+  calendarDateKeyFromStored,
+  formatStoredCalendarDate,
+} from '@steam-genie/shared-constants';
 import type {
+  AssignableCleanerItem,
+  AssignableCleanerSameDayService,
   AssignableCleanersResponse,
   Paginated,
   WorkOrderListItem,
@@ -19,9 +24,21 @@ import type {
 
 const ASSIGNABLE_STATUSES = new Set(['UNASSIGNED', 'ASSIGNED', 'ACCEPTED', 'REJECTED']);
 const PAGE_SIZE = 20;
+type ScheduleSortDir = 'asc' | 'desc';
 
 function formatDate(value: string | null): string {
   return formatStoredCalendarDate(value, 'es-AR');
+}
+
+function formatScheduledTime(value: string | null): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleTimeString('es-AR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
 }
 
 function formatAssignments(wo: WorkOrderListItem): string {
@@ -41,7 +58,97 @@ function getActiveAssignments(wo: WorkOrderListItem) {
   return wo.assignments.filter((a) => a.status === 'PENDING' || a.status === 'ACCEPTED');
 }
 
+function formatSameDaySchedule(services: AssignableCleanerSameDayService[]): string {
+  return services
+    .map((service) => {
+      const time = service.scheduledTime ?? 'Sin horario';
+      const place = service.zoneName ?? service.title;
+      return `${time} · ${place}`;
+    })
+    .join(' · ');
+}
+
+function formatPriorRejectionLabel(priorRejection: AssignableCleanerItem['priorRejection']): string {
+  if (!priorRejection) return '';
+  if (priorRejection.reason) {
+    return `Rechazó este servicio antes — ${priorRejection.reason}`;
+  }
+  return 'Rechazó este servicio antes';
+}
+
+function buildPriorRejectionAssignWarning(
+  cleaners: AssignableCleanerItem[],
+  selectedIds: string[],
+): string | null {
+  const lines = cleaners
+    .filter((cleaner) => selectedIds.includes(cleaner.id) && cleaner.priorRejection)
+    .map((cleaner) => {
+      const reason = cleaner.priorRejection?.reason;
+      if (reason) {
+        return `• ${cleaner.fullName} ya tuvo asignado este servicio y lo rechazó (motivo: ${reason}).`;
+      }
+      return `• ${cleaner.fullName} ya tuvo asignado este servicio y lo rechazó.`;
+    });
+
+  if (lines.length === 0) return null;
+  return `${lines.join('\n')}\n\n¿Querés asignarlo igualmente?`;
+}
+
 const NON_DELETABLE_STATUSES = new Set(['IN_PROGRESS', 'COMPLETED']);
+
+function CleanerAssignOption({
+  cleaner,
+  isAssigned,
+  isSelected,
+  onToggle,
+}: {
+  cleaner: AssignableCleanerItem;
+  isAssigned: boolean;
+  isSelected: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <label
+      className={`checkbox-item${cleaner.recommended ? ' checkbox-item-recommended' : ''}${
+        cleaner.priorRejection ? ' checkbox-item-prior-rejection' : ''
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={isAssigned || isSelected}
+        disabled={isAssigned}
+        onChange={onToggle}
+      />
+      <span className="checkbox-item-body">
+        <span className="checkbox-item-title">
+          {cleaner.fullName}
+          <span className="muted"> ({cleaner.dni})</span>
+          {cleaner.recommended ? (
+            <span className="badge badge-primary" style={{ marginLeft: 8 }}>
+              Recomendado
+            </span>
+          ) : null}
+          {cleaner.priorRejection ? (
+            <span className="badge badge-warning" style={{ marginLeft: 8 }}>
+              Rechazó antes
+            </span>
+          ) : null}
+          {isAssigned ? <span className="muted"> — ya asignado</span> : null}
+        </span>
+        {cleaner.priorRejection ? (
+          <span className="checkbox-item-meta checkbox-item-meta-warning">
+            {formatPriorRejectionLabel(cleaner.priorRejection)}
+          </span>
+        ) : null}
+        {cleaner.recommended && cleaner.sameDayServices.length > 0 ? (
+          <span className="checkbox-item-meta muted">
+            {formatSameDaySchedule(cleaner.sameDayServices)}
+          </span>
+        ) : null}
+      </span>
+    </label>
+  );
+}
 
 export default function EventualServicesPage() {
   const [items, setItems] = useState<WorkOrderListItem[]>([]);
@@ -52,6 +159,7 @@ export default function EventualServicesPage() {
 
   const [buildingFilter, setBuildingFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [sortDir, setSortDir] = useState<ScheduleSortDir>('asc');
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [total, setTotal] = useState(0);
@@ -79,6 +187,7 @@ export default function EventualServicesPage() {
       });
       if (buildingFilter) params.set('buildingId', buildingFilter);
       if (statusFilter) params.set('status', statusFilter);
+      params.set('sortDir', sortDir);
 
       const res = await api.get<Paginated<WorkOrderListItem>>(`/work-orders?${params}`);
       setItems(res.data);
@@ -89,7 +198,7 @@ export default function EventualServicesPage() {
     } finally {
       setLoading(false);
     }
-  }, [buildingFilter, statusFilter, page]);
+  }, [buildingFilter, statusFilter, sortDir, page]);
 
   useEffect(() => {
     void fetchBuildingsList()
@@ -110,6 +219,11 @@ export default function EventualServicesPage() {
     );
   }, [assigningWo]);
 
+  const recommendedCleaners = useMemo(
+    () => cleaners.filter((cleaner) => cleaner.recommended),
+    [cleaners],
+  );
+
   async function openAssign(wo: WorkOrderListItem) {
     setAssigningWo(wo);
     setSelectedCleanerIds([]);
@@ -118,8 +232,12 @@ export default function EventualServicesPage() {
     setError(null);
     setSuccess(null);
     try {
+      const params = new URLSearchParams({ excludeWorkOrderId: wo.id });
+      const scheduledDateKey = calendarDateKeyFromStored(wo.scheduledDate);
+      if (scheduledDateKey) params.set('scheduledDate', scheduledDateKey);
+
       const res = await api.get<AssignableCleanersResponse>(
-        `/buildings/${wo.buildingId}/assignable-cleaners`,
+        `/buildings/${wo.buildingId}/assignable-cleaners?${params}`,
       );
       setCleaners(res.cleaners);
       setBuildingUsersWrongRole(res.otherUsersOnBuilding);
@@ -148,6 +266,11 @@ export default function EventualServicesPage() {
 
   async function handleAssign() {
     if (!assigningWo || selectedCleanerIds.length === 0) return;
+
+    const priorRejectionWarning = buildPriorRejectionAssignWarning(cleaners, selectedCleanerIds);
+    if (priorRejectionWarning && !window.confirm(priorRejectionWarning)) {
+      return;
+    }
 
     setSavingAssign(true);
     setError(null);
@@ -251,6 +374,19 @@ export default function EventualServicesPage() {
               ))}
             </select>
           </div>
+          <div className="form-field">
+            <label>Orden (fecha y hora)</label>
+            <select
+              value={sortDir}
+              onChange={(e) => {
+                setSortDir(e.target.value as ScheduleSortDir);
+                setPage(1);
+              }}
+            >
+              <option value="asc">Ascendente — más antiguos primero</option>
+              <option value="desc">Descendente — más recientes primero</option>
+            </select>
+          </div>
         </div>
 
         {loading ? (
@@ -273,6 +409,7 @@ export default function EventualServicesPage() {
                   <th>Edificio</th>
                   <th>Zona</th>
                   <th>Fecha</th>
+                  <th>Hora</th>
                   <th>Tareas</th>
                   <th>Estado</th>
                   <th>Asignados</th>
@@ -294,6 +431,7 @@ export default function EventualServicesPage() {
                       <td>{wo.building?.name ?? '—'}</td>
                       <td>{wo.zone?.name ?? '—'}</td>
                       <td>{formatDate(wo.scheduledDate)}</td>
+                      <td>{formatScheduledTime(wo.scheduledTime)}</td>
                       <td>{wo._count.workOrderTasks}</td>
                       <td>
                         <span className="badge">
@@ -411,29 +549,27 @@ export default function EventualServicesPage() {
                 ) : null}
               </div>
             ) : (
-              <div className="checkbox-grid">
-                {cleaners.map((cleaner) => {
-                  const isAssigned = alreadyAssignedIds.has(cleaner.id);
-                  const isSelected = selectedCleanerIds.includes(cleaner.id);
-                  return (
-                    <label key={cleaner.id} className="checkbox-item">
-                      <input
-                        type="checkbox"
-                        checked={isAssigned || isSelected}
-                        disabled={isAssigned}
-                        onChange={() => toggleCleaner(cleaner.id)}
-                      />
-                      <span>
-                        {cleaner.fullName}
-                        <span className="muted"> ({cleaner.dni})</span>
-                        {isAssigned ? (
-                          <span className="muted"> — ya asignado</span>
-                        ) : null}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
+              <>
+                {recommendedCleaners.length > 0 ? (
+                  <div className="alert alert-info" style={{ marginBottom: 12 }}>
+                    {recommendedCleaners.length === 1
+                      ? '1 limpiador ya tiene servicios este día en el edificio.'
+                      : `${recommendedCleaners.length} limpiadores ya tienen servicios este día en el edificio.`}
+                  </div>
+                ) : null}
+
+                <div className="checkbox-grid">
+                  {cleaners.map((cleaner) => (
+                    <CleanerAssignOption
+                      key={cleaner.id}
+                      cleaner={cleaner}
+                      isAssigned={alreadyAssignedIds.has(cleaner.id)}
+                      isSelected={selectedCleanerIds.includes(cleaner.id)}
+                      onToggle={() => toggleCleaner(cleaner.id)}
+                    />
+                  ))}
+                </div>
+              </>
             )}
 
             <div className="form-actions" style={{ marginTop: 16 }}>

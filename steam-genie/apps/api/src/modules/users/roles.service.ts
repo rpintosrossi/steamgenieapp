@@ -8,6 +8,7 @@ import {
   ALL_APP_MODULES,
   APP_MODULE_GROUPS,
   ROLES,
+  SYSTEM_ROLE_MODULES,
   type AppModuleKey,
 } from '@steam-genie/shared-constants';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
@@ -151,6 +152,7 @@ export class RolesService {
       select: {
         role: {
           select: {
+            name: true,
             permissions: { select: { moduleKey: true } },
           },
         },
@@ -159,8 +161,13 @@ export class RolesService {
 
     const keys = new Set<string>();
     for (const assignment of assignments) {
-      for (const permission of assignment.role.permissions) {
-        keys.add(permission.moduleKey);
+      const permissionKeys = assignment.role.permissions.map((p) => p.moduleKey);
+      const modules =
+        permissionKeys.length > 0
+          ? permissionKeys
+          : (SYSTEM_ROLE_MODULES[assignment.role.name] ?? []);
+      for (const moduleKey of modules) {
+        keys.add(moduleKey);
       }
     }
 

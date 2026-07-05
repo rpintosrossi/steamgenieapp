@@ -64,9 +64,30 @@ export class TaskPhotosService {
   // ─── SERVE LOCAL FILE ─────────────────────────────────────────────────────
 
   /**
+   * Streams a locally stored photo by storage key (used in photo URLs).
+   */
+  async serveByKey(storageKey: string, res: Response) {
+    const photo = await this.prisma.taskPhoto.findFirst({
+      where: { storageKey, deletedAt: null },
+      select: { mimeType: true },
+    });
+    if (!photo) throw new NotFoundException('Photo not found');
+
+    if (this.storage.usesObjectStorage && this.storage.hasPublicBaseUrl) {
+      return res.redirect(this.storage.getPublicUrl(storageKey));
+    }
+
+    const stream = this.storage.getLocalStream(storageKey);
+    if (!stream) throw new NotFoundException('File not found in local storage');
+
+    res.setHeader('Content-Type', photo.mimeType ?? 'application/octet-stream');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    stream.pipe(res);
+  }
+
+  /**
    * Streams a locally stored photo file to the response.
-   * Used only when S3/R2 is not configured (local filesystem backend).
-   * Access requires authentication — the route is guarded by JwtAuthGuard.
+   * With object storage, redirects to the public URL.
    */
   async serveFile(photoId: string, res: Response) {
     const photo = await this.prisma.taskPhoto.findFirst({
@@ -74,6 +95,10 @@ export class TaskPhotosService {
       select: { storageKey: true, mimeType: true },
     });
     if (!photo) throw new NotFoundException('Photo not found');
+
+    if (this.storage.usesObjectStorage && this.storage.hasPublicBaseUrl) {
+      return res.redirect(this.storage.getPublicUrl(photo.storageKey));
+    }
 
     const stream = this.storage.getLocalStream(photo.storageKey);
     if (!stream) throw new NotFoundException('File not found in local storage');

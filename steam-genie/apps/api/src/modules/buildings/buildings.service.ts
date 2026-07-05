@@ -10,7 +10,19 @@ import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
 import { CreateSubzoneDto } from './dto/create-subzone.dto';
 import { UpdateSubzoneDto } from './dto/update-subzone.dto';
+import { parseCalendarDateInput } from '@steam-genie/shared-constants';
 import type { AuthUser } from '@steam-genie/shared-types';
+import type { QueryAssignableCleanersDto } from './dto/query-assignable-cleaners.dto';
+
+const ACTIVE_ASSIGNMENT_STATUSES = ['PENDING', 'ACCEPTED'] as const;
+const ACTIVE_WORK_ORDER_STATUSES = ['ASSIGNED', 'ACCEPTED', 'IN_PROGRESS'] as const;
+
+function formatStoredTime(value: Date | null): string | null {
+  if (!value) return null;
+  const h = value.getUTCHours();
+  const m = value.getUTCMinutes();
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
 
 @Injectable()
 export class BuildingsService {
@@ -131,7 +143,7 @@ export class BuildingsService {
   }
 
   /** Limpiadores asignables en un edificio (rol cleaner global o del edificio). */
-  async findAssignableCleaners(buildingId: string) {
+  async findAssignableCleaners(buildingId: string, query: QueryAssignableCleanersDto = {}) {
     await this.assertBuildingExists(buildingId);
 
     const cleaners = await this.prisma.user.findMany({
@@ -148,6 +160,115 @@ export class BuildingsService {
       select: { id: true, fullName: true, dni: true },
       orderBy: { fullName: 'asc' },
     });
+
+    type SameDayService = {
+      workOrderId: string;
+      title: string;
+      zoneName: string | null;
+      scheduledTime: string | null;
+    };
+
+    type PriorRejection = {
+      reason: string | null;
+      rejectedAt: string | null;
+    };
+
+    let enrichedCleaners = cleaners.map((cleaner) => ({
+      ...cleaner,
+      recommended: false,
+      sameDayServices: [] as SameDayService[],
+      priorRejection: null as PriorRejection | null,
+    }));
+
+    if (query.scheduledDate && cleaners.length > 0) {
+      const scheduledDate = parseCalendarDateInput(query.scheduledDate);
+      const cleanerIds = cleaners.map((cleaner) => cleaner.id);
+
+      const assignments = await this.prisma.workOrderAssignment.findMany({
+        where: {
+          userId: { in: cleanerIds },
+          status: { in: [...ACTIVE_ASSIGNMENT_STATUSES] },
+          workOrder: {
+            buildingId,
+            deletedAt: null,
+            scheduledDate,
+            ...(query.excludeWorkOrderId ? { id: { not: query.excludeWorkOrderId } } : {}),
+            status: { in: [...ACTIVE_WORK_ORDER_STATUSES] },
+          },
+        },
+        select: {
+          userId: true,
+          workOrder: {
+            select: {
+              id: true,
+              title: true,
+              scheduledTime: true,
+              zone: { select: { name: true } },
+            },
+          },
+        },
+        orderBy: { workOrder: { scheduledTime: 'asc' } },
+      });
+
+      const servicesByUser = new Map<string, SameDayService[]>();
+      for (const assignment of assignments) {
+        const list = servicesByUser.get(assignment.userId) ?? [];
+        list.push({
+          workOrderId: assignment.workOrder.id,
+          title: assignment.workOrder.title,
+          zoneName: assignment.workOrder.zone?.name ?? null,
+          scheduledTime: formatStoredTime(assignment.workOrder.scheduledTime),
+        });
+        servicesByUser.set(assignment.userId, list);
+      }
+
+      enrichedCleaners = cleaners.map((cleaner) => {
+        const sameDayServices = servicesByUser.get(cleaner.id) ?? [];
+        return {
+          ...cleaner,
+          recommended: sameDayServices.length > 0,
+          sameDayServices,
+          priorRejection: null,
+        };
+      });
+
+      enrichedCleaners.sort((a, b) => {
+        if (a.recommended !== b.recommended) return a.recommended ? -1 : 1;
+        return a.fullName.localeCompare(b.fullName, 'es');
+      });
+    }
+
+    if (query.excludeWorkOrderId && cleaners.length > 0) {
+      const cleanerIds = cleaners.map((cleaner) => cleaner.id);
+      const priorRejections = await this.prisma.workOrderAssignment.findMany({
+        where: {
+          workOrderId: query.excludeWorkOrderId,
+          status: 'REJECTED',
+          userId: { in: cleanerIds },
+        },
+        select: {
+          userId: true,
+          respondedAt: true,
+          rejectionNote: true,
+          rejectionReason: { select: { text: true } },
+        },
+        orderBy: { respondedAt: 'desc' },
+      });
+
+      const rejectionByUser = new Map<string, PriorRejection>();
+      for (const row of priorRejections) {
+        if (rejectionByUser.has(row.userId)) continue;
+        rejectionByUser.set(row.userId, {
+          reason: row.rejectionReason?.text ?? row.rejectionNote ?? null,
+          rejectedAt: row.respondedAt?.toISOString() ?? null,
+        });
+      }
+
+      enrichedCleaners = enrichedCleaners.map((cleaner) => ({
+        ...cleaner,
+        priorRejection: rejectionByUser.get(cleaner.id) ?? null,
+      }));
+    }
 
     let otherUsersOnBuilding: Array<{ id: string; fullName: string; dni: string; primaryRole: string }> = [];
     if (cleaners.length === 0) {
@@ -184,7 +305,7 @@ export class BuildingsService {
         }));
     }
 
-    return { cleaners, otherUsersOnBuilding };
+    return { cleaners: enrichedCleaners, otherUsersOnBuilding };
   }
 
   async create(dto: CreateBuildingDto) {

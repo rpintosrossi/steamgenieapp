@@ -3,6 +3,7 @@ import {
   View,
   Text,
   FlatList,
+  TextInput,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
@@ -115,6 +116,24 @@ function countPendingAcceptByBuilding(
   return counts;
 }
 
+function normalizeSearchText(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .trim();
+}
+
+function filterBuildingsByQuery(buildings: Building[], query: string): Building[] {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return buildings;
+
+  return buildings.filter((building) => {
+    const haystack = normalizeSearchText(`${building.name} ${building.address ?? ''}`);
+    return haystack.includes(normalizedQuery);
+  });
+}
+
 export default function BuildingSelectScreen() {
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [attendanceSummary, setAttendanceSummary] = useState<AttendanceTodaySummary | null>(null);
@@ -122,6 +141,7 @@ export default function BuildingSelectScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectingId, setSelectingId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const { user, logout } = useAuthStore();
   const { selectBuilding, isLoadingPrefetch } = useBuildingStore();
@@ -136,6 +156,13 @@ export default function BuildingSelectScreen() {
     () => mergeBuildingsWithAttendance(buildings, attendanceSummary),
     [buildings, attendanceSummary],
   );
+
+  const filteredBuildings = useMemo(
+    () => filterBuildingsByQuery(displayedBuildings, searchQuery),
+    [displayedBuildings, searchQuery],
+  );
+
+  const hasSearchQuery = searchQuery.trim().length > 0;
 
   const loadAttendanceSummary = useCallback(async () => {
     try {
@@ -281,11 +308,40 @@ export default function BuildingSelectScreen() {
         }
       />
 
+      <View style={styles.searchBar}>
+        <Ionicons name="search" size={18} color={COLORS.textMuted} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Buscar edificio..."
+          placeholderTextColor={COLORS.disabled}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          autoCapitalize="none"
+          autoCorrect={false}
+          clearButtonMode="while-editing"
+          returnKeyType="search"
+        />
+        {hasSearchQuery ? (
+          <TouchableOpacity
+            onPress={() => setSearchQuery('')}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="Limpiar búsqueda"
+          >
+            <Ionicons name="close-circle" size={18} color={COLORS.disabled} />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
       <FlatList
-        data={displayedBuildings}
+        style={styles.listContainer}
+        data={filteredBuildings}
         keyExtractor={(item) => item.id}
         renderItem={renderBuilding}
-        contentContainerStyle={styles.list}
+        ItemSeparatorComponent={() => <View style={styles.separator} />}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={
+          filteredBuildings.length === 0 ? styles.listEmpty : styles.list
+        }
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={() => {
             setRefreshing(true);
@@ -294,7 +350,11 @@ export default function BuildingSelectScreen() {
         }
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>No hay edificios disponibles</Text>
+            <Text style={styles.emptyText}>
+              {hasSearchQuery
+                ? `No se encontraron edificios para "${searchQuery.trim()}"`
+                : 'No hay edificios disponibles'}
+            </Text>
           </View>
         }
       />
@@ -315,7 +375,30 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   logoutText: { color: COLORS.textMuted, fontSize: 13, fontWeight: '600' },
-  list: { padding: 16, gap: 12 },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: COLORS.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: COLORS.text,
+    padding: 0,
+  },
+  listContainer: { flex: 1 },
+  list: { padding: 16, paddingBottom: 24 },
+  listEmpty: { flexGrow: 1, padding: 16, justifyContent: 'center' },
+  separator: { height: 12 },
   card: {
     backgroundColor: COLORS.surface,
     borderRadius: 12,

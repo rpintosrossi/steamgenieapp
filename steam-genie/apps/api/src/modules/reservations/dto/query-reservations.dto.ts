@@ -1,6 +1,5 @@
-import { IsOptional, IsUUID, IsEnum, IsDateString } from 'class-validator';
-import { Type } from 'class-transformer';
-import { IsInt, Min, Max } from 'class-validator';
+import { IsOptional, IsUUID, IsEnum, IsDateString, IsBoolean, IsInt, Min, Max } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
 import { ReservationStatus } from '@prisma/client';
 
 export class QueryReservationsDto {
@@ -40,4 +39,10 @@ export class QueryReservationsDto {
   @IsOptional()
   @IsDateString()
   to?: string;
+
+  /** Oculta reservas cuyo checkout ya pasó (estado derivado COMPLETED). */
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  excludeCompleted?: boolean;
 }

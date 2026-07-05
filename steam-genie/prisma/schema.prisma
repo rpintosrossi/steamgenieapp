@@ -399,6 +399,7 @@ model TaskCustomField {
 
   options                      TaskCustomFieldOption[]
   workOrderTaskFieldSnapshots  WorkOrderTaskCustomField[]
+  taskExecutionFieldValues     TaskExecutionFieldValue[]
 
   @@map("task_custom_fields")
 }
@@ -701,6 +702,9 @@ model Reservation {
 
   @@index([buildingId, checkoutAt])
   @@index([checkoutAt])
+  @@index([buildingId, checkinAt])
+  @@index([buildingId, floorId, zoneId])
+  @@index([zoneId, checkoutAt])
   @@map("reservations")
 }
 
@@ -742,6 +746,7 @@ model WorkOrder {
   @@index([buildingId, status, scheduledDate])
   @@index([type, buildingId, status, scheduledDate])
   @@index([reservationId])
+  @@index([zoneId, type, status, completedAt])
   @@map("work_orders")
 }
 
@@ -903,13 +908,15 @@ model TaskExecutionRecord {
 }
 
 model TaskExecutionFieldValue {
-  id                 String                   @id @default(uuid()) @db.Uuid
-  taskExecution      TaskExecutionRecord      @relation(fields: [taskExecutionId], references: [id])
-  taskExecutionId    String                   @db.Uuid
-  snapshotField      WorkOrderTaskCustomField @relation(fields: [snapshotFieldId], references: [id])
-  snapshotFieldId    String                   @db.Uuid // Points to snapshot, not master field
-  selectedOptionIds  String[]                 @db.Uuid // IDs of WorkOrderTaskCustomFieldOption
-  createdAt          DateTime                 @default(now())
+  id                 String                    @id @default(uuid()) @db.Uuid
+  taskExecution      TaskExecutionRecord       @relation(fields: [taskExecutionId], references: [id])
+  taskExecutionId    String                    @db.Uuid
+  snapshotField      WorkOrderTaskCustomField? @relation(fields: [snapshotFieldId], references: [id])
+  snapshotFieldId    String?                   @db.Uuid // WO tasks — snapshot field
+  masterField        TaskCustomField?          @relation(fields: [masterFieldId], references: [id])
+  masterFieldId      String?                   @db.Uuid // Periodic tasks — master field
+  selectedOptionIds  String[]                  @db.Uuid
+  createdAt          DateTime                  @default(now())
 
   @@map("task_execution_field_values")
 }

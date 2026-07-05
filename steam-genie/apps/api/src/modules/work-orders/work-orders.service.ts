@@ -14,8 +14,16 @@ import { QueryWorkOrdersDto } from './dto/query-work-orders.dto';
 import { AssignWorkOrderDto } from './dto/assign-work-order.dto';
 import { RejectWorkOrderDto } from './dto/reject-work-order.dto';
 import { CreateCheckoutCleaningDto } from './dto/create-checkout-cleaning.dto';
+import { CreateAdditionalRequestDto } from './dto/create-additional-request.dto';
 import { WORK_ORDER_LIST_SELECT } from './work-order-list.select';
 import type { AuthUser } from '@steam-genie/shared-types';
+
+const EXTERNAL_VIEWER_ROLES = new Set(['client', 'provider']);
+const EXTERNAL_VIEWER_STATUSES: WorkOrderStatus[] = [
+  WorkOrderStatus.ACCEPTED,
+  WorkOrderStatus.IN_PROGRESS,
+  WorkOrderStatus.COMPLETED,
+];
 
 const WO_DETAIL_INCLUDE = {
   building: { select: { id: true, name: true } },
@@ -72,12 +80,25 @@ export class WorkOrdersService {
   // ─── LIST ─────────────────────────────────────────────────────────────────
 
   async findAll(query: QueryWorkOrdersDto, user?: AuthUser) {
-    const { page = 1, limit = 20, buildingId, status, type, date, assignedTo } = query;
+    const { page = 1, limit = 20, buildingId, status, type, date, assignedTo, sortDir } = query;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = { deletedAt: null };
-    if (buildingId) where.buildingId = buildingId;
-    if (status) where.status = status;
-    if (type) where.type = type;
+    const isExternalViewer = user ? EXTERNAL_VIEWER_ROLES.has(user.primaryRole) : false;
+
+    if (isExternalViewer) {
+      where.type = WorkOrderType.CHECKOUT_CLEANING;
+      where.status = status
+        ? { in: EXTERNAL_VIEWER_STATUSES.filter((s) => s === status) }
+        : { in: EXTERNAL_VIEWER_STATUSES };
+      if (status && !EXTERNAL_VIEWER_STATUSES.includes(status as WorkOrderStatus)) {
+        return { data: [], total: 0, page, limit, pages: 0 };
+      }
+    } else {
+      if (buildingId) where.buildingId = buildingId;
+      if (status) where.status = status;
+      if (type) where.type = type;
+    }
+
     if (date) {
       const d = new Date(date);
       const next = new Date(date);
@@ -87,19 +108,34 @@ export class WorkOrdersService {
 
     let effectiveAssignedTo = assignedTo;
     if (user) {
-      const globalStaff = await this.hasGlobalStaffAccess(user.id);
-      if (!globalStaff) {
-        const staffBuildingIds = await this.getStaffBuildingIds(user.id);
-        if (staffBuildingIds.length > 0) {
-          if (buildingId) {
-            if (!staffBuildingIds.includes(buildingId)) {
-              return { data: [], total: 0, page, limit, pages: 0 };
+      if (isExternalViewer) {
+        const scopedBuildingIds = await this.getUserScopedBuildingIds(user.id);
+        if (scopedBuildingIds.length === 0) {
+          return { data: [], total: 0, page, limit, pages: 0 };
+        }
+        if (buildingId) {
+          if (!scopedBuildingIds.includes(buildingId)) {
+            return { data: [], total: 0, page, limit, pages: 0 };
+          }
+          where.buildingId = buildingId;
+        } else {
+          where.buildingId = { in: scopedBuildingIds };
+        }
+      } else {
+        const globalStaff = await this.hasGlobalStaffAccess(user.id);
+        if (!globalStaff) {
+          const staffBuildingIds = await this.getStaffBuildingIds(user.id);
+          if (staffBuildingIds.length > 0) {
+            if (buildingId) {
+              if (!staffBuildingIds.includes(buildingId)) {
+                return { data: [], total: 0, page, limit, pages: 0 };
+              }
+            } else {
+              where.buildingId = { in: staffBuildingIds };
             }
           } else {
-            where.buildingId = { in: staffBuildingIds };
+            effectiveAssignedTo = effectiveAssignedTo ?? user.id;
           }
-        } else {
-          effectiveAssignedTo = effectiveAssignedTo ?? user.id;
         }
       }
     }
@@ -113,12 +149,18 @@ export class WorkOrdersService {
       };
     }
 
+    const scheduleOrder = sortDir === 'desc' ? 'desc' : 'asc';
+
     const [data, total] = await Promise.all([
       this.prisma.workOrder.findMany({
         where,
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: [{ scheduledDate: 'desc' }, { createdAt: 'desc' }],
+        orderBy: [
+          { scheduledDate: scheduleOrder },
+          { scheduledTime: scheduleOrder },
+          { createdAt: scheduleOrder },
+        ],
         select: WORK_ORDER_LIST_SELECT,
       }),
       this.prisma.workOrder.count({ where }),
@@ -189,6 +231,100 @@ export class WorkOrdersService {
     };
   }
 
+  // ─── CREATE ADDITIONAL REQUEST (cliente) ──────────────────────────────────
+
+  async createAdditionalRequest(dto: CreateAdditionalRequestDto, createdById: string) {
+    const scheduledAt = new Date(dto.scheduledAt);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      throw new BadRequestException('scheduledAt is invalid');
+    }
+
+    const deadlineAt = dto.deadlineAt ? new Date(dto.deadlineAt) : null;
+    if (deadlineAt && Number.isNaN(deadlineAt.getTime())) {
+      throw new BadRequestException('deadlineAt is invalid');
+    }
+    if (deadlineAt && deadlineAt <= scheduledAt) {
+      throw new BadRequestException('deadlineAt must be after scheduledAt');
+    }
+
+    const hasAccess = await this.prisma.userBuildingRole.findFirst({
+      where: { userId: createdById, buildingId: dto.buildingId },
+    });
+    if (!hasAccess) {
+      throw new ForbiddenException('No tenés acceso a este edificio.');
+    }
+
+    await this.validateHierarchy(dto.buildingId, dto.floorId, dto.zoneId);
+
+    const subzones = await this.prisma.subzone.findMany({
+      where: { zoneId: dto.zoneId, buildingId: dto.buildingId, deletedAt: null },
+      select: { id: true, name: true },
+    });
+
+    if (subzones.length > 0) {
+      if (!dto.subzoneId) {
+        throw new BadRequestException(
+          'Esta zona tiene subzonas. Debés elegir una subzona específica.',
+        );
+      }
+      const subzone = subzones.find((s) => s.id === dto.subzoneId);
+      if (!subzone) {
+        throw new BadRequestException('La subzona no pertenece a la zona seleccionada.');
+      }
+    } else if (dto.subzoneId) {
+      throw new BadRequestException('Esta zona no tiene subzonas.');
+    }
+
+    const [zone, subzone, eventualTasks] = await Promise.all([
+      this.prisma.zone.findFirst({
+        where: { id: dto.zoneId },
+        select: { name: true },
+      }),
+      dto.subzoneId
+        ? this.prisma.subzone.findFirst({
+            where: { id: dto.subzoneId },
+            select: { name: true },
+          })
+        : Promise.resolve(null),
+      this.findEventualTasksForLocation(dto.buildingId, dto.zoneId, dto.subzoneId),
+    ]);
+
+    const locationLabel = subzone?.name ?? zone?.name ?? dto.zoneId;
+    const title = dto.title?.trim() || `Petición de servicio – ${locationLabel}`;
+    const scheduledDate = calendarDateFromInstant(scheduledAt);
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const workOrder = await tx.workOrder.create({
+        data: {
+          type: WorkOrderType.ADDITIONAL_REQUEST,
+          reservationId: null,
+          buildingId: dto.buildingId,
+          floorId: dto.floorId,
+          zoneId: dto.zoneId,
+          subzoneId: dto.subzoneId ?? null,
+          title,
+          description: dto.description.trim(),
+          scheduledDate,
+          scheduledTime: scheduledAt,
+          deadlineAt,
+          status: WorkOrderStatus.UNASSIGNED,
+          createdById,
+        },
+      });
+
+      await snapshotEventualTasks(tx, workOrder.id, eventualTasks);
+
+      return { workOrder, taskCount: eventualTasks.length };
+    });
+
+    return {
+      ...result,
+      warning: eventualTasks.length === 0
+        ? 'No hay tareas EVENTUAL configuradas para esta ubicación'
+        : undefined,
+    };
+  }
+
   // ─── GET ONE ──────────────────────────────────────────────────────────────
 
   async findOne(id: string, user?: AuthUser) {
@@ -199,21 +335,34 @@ export class WorkOrdersService {
     if (!wo) throw new NotFoundException('Work order not found');
 
     if (user) {
-      const globalStaff = await this.hasGlobalStaffAccess(user.id);
-      if (!globalStaff) {
-        const staffBuildingIds = await this.getStaffBuildingIds(user.id);
-        if (staffBuildingIds.length > 0) {
-          if (!staffBuildingIds.includes(wo.buildingId)) {
-            throw new ForbiddenException('No tenés acceso a servicios de este edificio.');
-          }
-        } else {
-          const hasAssignment = wo.assignments.some(
-            (assignment) =>
-              assignment.userId === user.id &&
-              (assignment.status === 'PENDING' || assignment.status === 'ACCEPTED'),
-          );
-          if (!hasAssignment) {
-            throw new ForbiddenException('No tenés asignado este servicio.');
+      if (EXTERNAL_VIEWER_ROLES.has(user.primaryRole)) {
+        if (wo.type !== WorkOrderType.CHECKOUT_CLEANING) {
+          throw new ForbiddenException('No tenés acceso a este servicio.');
+        }
+        if (!EXTERNAL_VIEWER_STATUSES.includes(wo.status)) {
+          throw new ForbiddenException('Este servicio no está disponible para consulta.');
+        }
+        const scopedBuildingIds = await this.getUserScopedBuildingIds(user.id);
+        if (!scopedBuildingIds.includes(wo.buildingId)) {
+          throw new ForbiddenException('No tenés acceso a servicios de este edificio.');
+        }
+      } else {
+        const globalStaff = await this.hasGlobalStaffAccess(user.id);
+        if (!globalStaff) {
+          const staffBuildingIds = await this.getStaffBuildingIds(user.id);
+          if (staffBuildingIds.length > 0) {
+            if (!staffBuildingIds.includes(wo.buildingId)) {
+              throw new ForbiddenException('No tenés acceso a servicios de este edificio.');
+            }
+          } else {
+            const hasAssignment = wo.assignments.some(
+              (assignment) =>
+                assignment.userId === user.id &&
+                (assignment.status === 'PENDING' || assignment.status === 'ACCEPTED'),
+            );
+            if (!hasAssignment) {
+              throw new ForbiddenException('No tenés asignado este servicio.');
+            }
           }
         }
       }
@@ -245,12 +394,41 @@ export class WorkOrdersService {
         where: {
           workOrderId: id,
           userId: { in: dto.userIds },
-          status: { in: ['PENDING', 'ACCEPTED'] },
         },
-        select: { userId: true },
+        select: { id: true, userId: true, status: true },
       });
-      const existingUserIds = new Set(existing.map((item) => item.userId));
-      const toCreate = dto.userIds.filter((userId) => !existingUserIds.has(userId));
+
+      const assignmentsByUser = new Map<string, typeof existing>();
+      for (const row of existing) {
+        const list = assignmentsByUser.get(row.userId) ?? [];
+        list.push(row);
+        assignmentsByUser.set(row.userId, list);
+      }
+
+      const toCreate: string[] = [];
+
+      for (const userId of dto.userIds) {
+        const userAssignments = assignmentsByUser.get(userId) ?? [];
+        const active = userAssignments.find(
+          (row) => row.status === 'PENDING' || row.status === 'ACCEPTED',
+        );
+        if (active) continue;
+
+        const rejected = userAssignments.find((row) => row.status === 'REJECTED');
+        if (rejected) {
+          await tx.workOrderAssignment.update({
+            where: { id: rejected.id },
+            data: {
+              status: 'PENDING',
+              rejectionReasonId: null,
+              rejectionNote: null,
+              respondedAt: null,
+            },
+          });
+        } else {
+          toCreate.push(userId);
+        }
+      }
 
       if (toCreate.length > 0) {
         await tx.workOrderAssignment.createMany({
@@ -677,6 +855,52 @@ export class WorkOrdersService {
       where: { id: zoneId, buildingId, floorId, deletedAt: null },
     });
     if (!zone) throw new NotFoundException('Zone not found or does not belong to this floor');
+  }
+
+  /** Edificios habilitados para cliente/proveedor (rol acotado por edificio). */
+  private async getUserScopedBuildingIds(userId: string): Promise<string[]> {
+    const assignments = await this.prisma.userBuildingRole.findMany({
+      where: { userId, buildingId: { not: null } },
+      select: { buildingId: true },
+    });
+
+    return [
+      ...new Set(
+        assignments
+          .map((item) => item.buildingId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+  }
+
+  private async findEventualTasksForLocation(
+    buildingId: string,
+    zoneId: string,
+    subzoneId?: string,
+  ) {
+    if (subzoneId) {
+      return this.prisma.task.findMany({
+        where: {
+          buildingId,
+          zoneId,
+          subzoneId,
+          frequency: 'EVENTUAL',
+          isActive: true,
+          deletedAt: null,
+        },
+        include: {
+          customFields: {
+            orderBy: { sortOrder: 'asc' as const },
+            include: {
+              options: { orderBy: { sortOrder: 'asc' as const } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+    }
+
+    return this.findEventualTasksForZone(buildingId, zoneId);
   }
 
   private async findEventualTasksForZone(buildingId: string, zoneId: string) {

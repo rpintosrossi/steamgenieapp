@@ -1,5 +1,7 @@
-import { IsEnum, IsOptional, IsUUID, IsString, MaxLength } from 'class-validator';
+import { IsEnum, IsOptional, IsUUID, IsString, MaxLength, IsArray, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import { TaskExecutionStatus } from '@prisma/client';
+import { TaskFieldValueDto } from './task-field-value.dto';
 
 export class MarkTaskDto {
   @IsEnum(TaskExecutionStatus)
@@ -15,6 +17,13 @@ export class MarkTaskDto {
   @IsString()
   @MaxLength(1000)
   observation?: string;
+
+  /** Dropdown custom field selections (fieldId + selected option IDs). */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TaskFieldValueDto)
+  fieldValues?: TaskFieldValueDto[];
 
   /** Idempotency key for offline sync (prevents duplicate marks). */
   @IsOptional()

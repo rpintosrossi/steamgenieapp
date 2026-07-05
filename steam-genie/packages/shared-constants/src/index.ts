@@ -4,6 +4,7 @@ export * from './frequencies';
 export * from './statuses';
 export * from './events';
 export * from './calendar-dates';
+export * from './reservations';
 export * from './stock';
 export * from './stock-logistics';
 export * from './stock-movements';

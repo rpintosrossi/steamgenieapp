@@ -24,6 +24,14 @@ export class TaskPhotosController {
    * Streams the photo file for local storage.
    * In production with S3/R2, clients use the public URL returned by the upload endpoint.
    */
+  @Get('serve/:key')
+  serveByStorageKey(
+    @Param('key') encodedKey: string,
+    @Res() res: Response,
+  ) {
+    return this.taskPhotosService.serveByKey(decodeURIComponent(encodedKey), res);
+  }
+
   @Get(':id/file')
   serveFile(
     @Param('id', ParseUUIDPipe) id: string,

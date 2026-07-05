@@ -9,7 +9,7 @@ import {
 } from '../../../../components/LocationPicker';
 import { api } from '../../../../lib/api-client';
 import { fetchBuildingsList } from '../../../../lib/buildings-cache';
-import { RESERVATION_STATUS_LABELS } from '../../../../lib/labels';
+import { RESERVATION_STATUS_LABELS, RESERVATION_ZONE_READINESS_LABELS } from '../../../../lib/labels';
 import type { CreateReservationResponse, Paginated, ReservationItem } from '../../../../lib/types';
 
 const PAGE_SIZE = 20;
@@ -25,6 +25,7 @@ export default function EventualReservationsPage() {
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [total, setTotal] = useState(0);
+  const [hideCompleted, setHideCompleted] = useState(true);
 
   const [location, setLocation] = useState({
     buildingId: '',
@@ -45,6 +46,7 @@ export default function EventualReservationsPage() {
         limit: String(PAGE_SIZE),
         page: String(page),
       });
+      if (hideCompleted) params.set('excludeCompleted', 'true');
       const res = await api.get<Paginated<ReservationItem>>(`/reservations?${params}`);
       setItems(res.data);
       setTotal(res.total);
@@ -54,7 +56,7 @@ export default function EventualReservationsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page]);
+  }, [page, hideCompleted]);
 
   useEffect(() => {
     void fetchBuildingsList()
@@ -169,7 +171,22 @@ export default function EventualReservationsPage() {
       </div>
 
       <div className="card">
-        <h2 className="card-title">Listado</h2>
+        <div className="inline-form" style={{ marginBottom: 16, justifyContent: 'space-between' }}>
+          <h2 className="card-title" style={{ margin: 0 }}>
+            Listado
+          </h2>
+          <label className="checkbox-inline">
+            <input
+              type="checkbox"
+              checked={hideCompleted}
+              onChange={(e) => {
+                setHideCompleted(e.target.checked);
+                setPage(1);
+              }}
+            />
+            Ocultar finalizadas
+          </label>
+        </div>
         {loading ? (
           <div className="loading-state">
             <div className="spinner" role="status" aria-label="Cargando" />
@@ -195,7 +212,27 @@ export default function EventualReservationsPage() {
                     <td>{item.guestName ?? '—'}</td>
                     <td>{new Date(item.checkinAt).toLocaleString('es-AR')}</td>
                     <td>{new Date(item.checkoutAt).toLocaleString('es-AR')}</td>
-                    <td>{RESERVATION_STATUS_LABELS[item.status] ?? item.status}</td>
+                    <td>
+                      <div className="reservation-status-cell">
+                        <span>{RESERVATION_STATUS_LABELS[item.status] ?? item.status}</span>
+                        {item.zoneReadiness?.readyToOccupy ? (
+                          <span
+                            className="badge badge-success"
+                            title="Se registró una limpieza antes del check-in"
+                          >
+                            ✔ {RESERVATION_ZONE_READINESS_LABELS.readyToOccupy}
+                          </span>
+                        ) : null}
+                        {item.zoneReadiness?.notReady ? (
+                          <span
+                            className="badge badge-warning"
+                            title="Sin limpieza desde el último checkout de la zona o con otra reserva activa"
+                          >
+                            ⚠ {RESERVATION_ZONE_READINESS_LABELS.notReady}
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
                     <td>{item.externalId ?? '—'}</td>
                   </tr>
                 ))}

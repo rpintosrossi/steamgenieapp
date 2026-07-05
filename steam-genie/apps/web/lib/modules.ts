@@ -14,10 +14,15 @@ const ROUTE_MODULE_MAP: Array<{ prefix: string; module: AppModuleKey | null }> =
   { prefix: '/buildings', module: APP_MODULES.BUILDINGS },
   { prefix: '/users', module: APP_MODULES.USERS },
   { prefix: '/roles', module: APP_MODULES.ROLES },
+  { prefix: '/tasks/motivos', module: APP_MODULES.BUILDINGS },
   { prefix: '/tasks', module: APP_MODULES.TASKS },
   { prefix: '/import', module: APP_MODULES.BUILDINGS },
+  { prefix: '/trabajos-eventuales/calendario', module: APP_MODULES.RESERVAS },
   { prefix: '/trabajos-eventuales/reservas', module: APP_MODULES.RESERVAS },
   { prefix: '/trabajos-eventuales/servicios', module: APP_MODULES.SERVICIOS_EVENTUALES },
+  { prefix: '/ordenes-checkin', module: APP_MODULES.ORDENES_CHECKIN },
+  { prefix: '/peticiones', module: APP_MODULES.PETICION_SERVICIO },
+  { prefix: '/reportes', module: APP_MODULES.REPORTES },
   { prefix: '/trabajos-eventuales', module: null },
   { prefix: '/reservations', module: APP_MODULES.RESERVAS },
   { prefix: '/services', module: APP_MODULES.SERVICIOS_EVENTUALES },
@@ -43,8 +48,33 @@ export function hasModuleAccess(modules: AppModuleKey[], module: AppModuleKey | 
   return modules.includes(module);
 }
 
-export function canAccessPath(modules: AppModuleKey[], pathname: string): boolean {
+const ROLE_DENIED_PATHS: Array<{ prefix: string; roles: RoleName[] }> = [
+  { prefix: '/reportes', roles: [ROLES.CLIENT, ROLES.PROVIDER] },
+];
+
+export function canAccessPath(
+  modules: AppModuleKey[],
+  pathname: string,
+  role?: RoleName | null,
+): boolean {
+  if (role) {
+    for (const entry of ROLE_DENIED_PATHS) {
+      if (pathname === entry.prefix || pathname.startsWith(`${entry.prefix}/`)) {
+        if (entry.roles.includes(role)) return false;
+      }
+    }
+  }
+
   if (modules.length === 0) return true;
+  if (
+    pathname === '/trabajos-eventuales/calendario' ||
+    pathname.startsWith('/trabajos-eventuales/calendario/')
+  ) {
+    return (
+      hasModuleAccess(modules, APP_MODULES.RESERVAS) ||
+      hasModuleAccess(modules, APP_MODULES.SERVICIOS_EVENTUALES)
+    );
+  }
   const required = resolveModuleForPath(pathname);
   return hasModuleAccess(modules, required);
 }

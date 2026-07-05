@@ -4,13 +4,15 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { APP_MODULES, type AppModuleKey } from '@steam-genie/shared-constants';
-import { clearTokens, getUserModules } from '../lib/auth';
+import { APP_MODULES, ROLES, type AppModuleKey, type RoleName } from '@steam-genie/shared-constants';
+import { clearTokens, getCurrentUserRole, getUserModules } from '../lib/auth';
 
 type NavChild = {
   href: string;
   label: string;
   module: AppModuleKey;
+  /** Si se define, basta con tener cualquiera de estos módulos. */
+  modules?: AppModuleKey[];
 };
 
 type NavItem = {
@@ -18,6 +20,8 @@ type NavItem = {
   label: string;
   icon: React.ReactNode;
   module?: AppModuleKey | null;
+  /** Si se define, el ítem solo aparece para estos roles (además del módulo). */
+  roles?: RoleName[];
   children?: NavChild[];
 };
 
@@ -29,6 +33,50 @@ const NAV_ITEMS: NavItem[] = [
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <path d="M3 9.5 12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1V9.5z" />
+      </svg>
+    ),
+  },
+  {
+    href: '/reportes',
+    label: 'Reportes',
+    module: APP_MODULES.REPORTES,
+    roles: [ROLES.ADMIN, ROLES.MANAGER],
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+      </svg>
+    ),
+    children: [
+      { href: '/reportes/por-fecha', label: 'Por fecha', module: APP_MODULES.REPORTES },
+      { href: '/reportes/por-trabajador', label: 'Por trabajador', module: APP_MODULES.REPORTES },
+      { href: '/reportes/por-edificio', label: 'Por edificio', module: APP_MODULES.REPORTES },
+    ],
+  },
+  {
+    href: '/ordenes-checkin',
+    label: 'Check-in / Check-out',
+    module: APP_MODULES.ORDENES_CHECKIN,
+    roles: [ROLES.CLIENT, ROLES.PROVIDER],
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <rect x="3" y="4" width="18" height="18" rx="2" />
+        <path d="M16 2v4M8 2v4M3 10h18" />
+      </svg>
+    ),
+  },
+  {
+    href: '/peticiones/nueva',
+    label: 'Nueva petición',
+    module: APP_MODULES.PETICION_SERVICIO,
+    roles: [ROLES.CLIENT, ROLES.PROVIDER],
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="8" x2="12" y2="16" />
+        <line x1="8" y1="12" x2="16" y2="12" />
       </svg>
     ),
   },
@@ -62,6 +110,7 @@ const NAV_ITEMS: NavItem[] = [
     children: [
       { href: '/trabajos-eventuales/reservas', label: 'Reservas', module: APP_MODULES.RESERVAS },
       { href: '/trabajos-eventuales/servicios', label: 'Servicios', module: APP_MODULES.SERVICIOS_EVENTUALES },
+      { href: '/trabajos-eventuales/calendario', label: 'Calendario', module: APP_MODULES.RESERVAS, modules: [APP_MODULES.RESERVAS, APP_MODULES.SERVICIOS_EVENTUALES] },
     ],
   },
   {
@@ -120,14 +169,26 @@ function isNavItemActive(pathname: string, item: NavItem, visibleChildren?: NavC
   return false;
 }
 
-function filterNavItems(modules: AppModuleKey[]): NavItem[] {
+function filterNavItems(modules: AppModuleKey[], role: RoleName | null): NavItem[] {
   return NAV_ITEMS.reduce<NavItem[]>((acc, item) => {
-    const visibleChildren = item.children?.filter((child) => modules.includes(child.module));
+    const visibleChildren = item.children?.filter((child) => {
+      if (child.modules?.length) {
+        return child.modules.some((m) => modules.includes(m));
+      }
+      return modules.includes(child.module);
+    });
 
     if (item.children) {
+      if (item.roles?.length) {
+        if (!role || !item.roles.includes(role)) return acc;
+      }
       if (!visibleChildren || visibleChildren.length === 0) return acc;
       acc.push({ ...item, children: visibleChildren });
       return acc;
+    }
+
+    if (item.roles?.length) {
+      if (!role || !item.roles.includes(role)) return acc;
     }
 
     if (item.module && !modules.includes(item.module)) return acc;
@@ -140,12 +201,14 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [modules, setModules] = useState<AppModuleKey[]>([]);
+  const [role, setRole] = useState<RoleName | null>(null);
 
   useEffect(() => {
     setModules(getUserModules());
+    setRole(getCurrentUserRole());
   }, [pathname]);
 
-  const navItems = filterNavItems(modules);
+  const navItems = filterNavItems(modules, role);
 
   function logout() {
     clearTokens();

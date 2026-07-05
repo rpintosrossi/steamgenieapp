@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -115,6 +115,16 @@ export default function ServicesScreen() {
     },
     [selectedBuilding, isOnline, prefetchData?.workOrders, user?.id],
   );
+
+  useEffect(() => {
+    if (!user?.id || !prefetchData) return;
+
+    const assignedIds = new Set(
+      filterWorkOrdersAssignedToUser(prefetchData.workOrders, user.id).map((wo) => wo.id),
+    );
+
+    setWorkOrders((prev) => prev.filter((wo) => assignedIds.has(wo.id)));
+  }, [prefetchData?.workOrders, user?.id]);
 
   useFocusEffect(
     useCallback(() => {

@@ -21,6 +21,8 @@ import { BulkImportModule } from './modules/bulk-import/bulk-import.module';
 import { RejectionReasonsModule } from './modules/rejection-reasons/rejection-reasons.module';
 import { StockModule } from './modules/stock/stock.module';
 import { StockLogisticsModule } from './modules/stock-logistics/stock-logistics.module';
+import { ReportsModule } from './modules/reports/reports.module';
+import { EventualCalendarModule } from './modules/eventual-calendar/eventual-calendar.module';
 import { HealthModule } from './health/health.module';
 import { TimelineEventsModule } from './common/events/timeline-events.module';
 
@@ -53,6 +55,8 @@ import { TimelineEventsModule } from './common/events/timeline-events.module';
     RejectionReasonsModule,
     StockModule,
     StockLogisticsModule,
+    ReportsModule,
+    EventualCalendarModule,
   ],
 })
 export class AppModule {}

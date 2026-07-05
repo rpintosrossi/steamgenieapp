@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { BuildingBulkImportModal } from '../../../../components/BuildingBulkImportModal';
 import { BuildingHierarchyManager } from '../../../../components/BuildingHierarchyManager';
+import { BuildingUsersManager } from '../../../../components/BuildingUsersManager';
 import { api } from '../../../../lib/api-client';
 import type { BuildingDetail } from '../../../../lib/types';
 
@@ -82,6 +83,16 @@ export default function BuildingDetailPage() {
       <BuildingHierarchyManager
         building={building}
         onRefresh={load}
+        onError={(msg) => setError(msg || null)}
+        onSuccess={(msg) => {
+          setSuccess(msg);
+          setError(null);
+        }}
+      />
+
+      <BuildingUsersManager
+        buildingId={building.id}
+        buildingName={building.name}
         onError={(msg) => setError(msg || null)}
         onSuccess={(msg) => {
           setSuccess(msg);

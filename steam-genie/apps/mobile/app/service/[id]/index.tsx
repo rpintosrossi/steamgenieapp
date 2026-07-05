@@ -8,11 +8,15 @@ import {
   ActivityIndicator,
   Alert,
   RefreshControl,
+  Modal,
+  FlatList,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { apiService } from '../../../src/services/api.service';
-import { useBuildingStore, WorkOrderCached } from '../../../src/stores/building.store';
+import { useBuildingStore, WorkOrderCached, RejectionReason } from '../../../src/stores/building.store';
+import { useAuthStore } from '../../../src/stores/auth.store';
 import { syncQueue, generateClientId } from '../../../src/sync/sync-queue';
 import { useNetworkStatus } from '../../../src/hooks/useNetworkStatus';
 import { useSyncStore } from '../../../src/stores/sync.store';
@@ -27,6 +31,7 @@ import {
   formatChecklistIncompleteMessage,
   formatPhotoRequiredMessage,
   getActiveServiceExecutionId,
+  getUserAssignment,
   isChecklistIncompleteError,
   isPhotoRequiredError,
   isWorkOrderExpired,
@@ -89,16 +94,25 @@ const STATUS_COLORS: Record<string, string> = {
 export default function ServiceDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const bottomPad = Math.max(insets.bottom, 12);
   const { isConnected } = useNetworkStatus();
   const isOnline = isConnected ?? true;
   const { setStatus } = useSyncStore();
-  const { prefetchData, refreshPrefetch, patchWorkOrder } = useBuildingStore();
+  const { prefetchData, refreshPrefetch, patchWorkOrder, removeWorkOrderFromPrefetch } =
+    useBuildingStore();
+  const user = useAuthStore((s) => s.user);
 
   const [workOrder, setWorkOrder] = useState<WorkOrderDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [showRejectReasonPicker, setShowRejectReasonPicker] = useState(false);
   const hasLoadedRef = useRef(false);
+
+  const serviceRejectionReasons = (prefetchData?.rejectionReasons ?? []).filter(
+    (reason) => reason.type === 'SERVICE_REJECTION',
+  );
 
   useEffect(() => {
     hasLoadedRef.current = false;
@@ -156,6 +170,7 @@ export default function ServiceDetailScreen() {
     try {
       if (isOnline) {
         await apiService.post(`/work-orders/${workOrder.id}/accept`, {});
+        await refreshPrefetch();
         await loadWorkOrder('silent');
       } else {
         Alert.alert('Sin conexión', 'No es posible aceptar servicios sin conexión.');
@@ -165,6 +180,71 @@ export default function ServiceDetailScreen() {
     } finally {
       setActionLoading(false);
     }
+  }
+
+  function requestReject() {
+    if (!workOrder) return;
+    if (!isOnline) {
+      Alert.alert('Sin conexión', 'No es posible rechazar servicios sin conexión.');
+      return;
+    }
+
+    if (serviceRejectionReasons.length > 0) {
+      setShowRejectReasonPicker(true);
+      return;
+    }
+
+    Alert.alert(
+      'Rechazar servicio',
+      '¿Confirmás que no podés realizar este servicio? El encargado podrá reasignarlo.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Rechazar',
+          style: 'destructive',
+          onPress: () => void submitReject(),
+        },
+      ],
+    );
+  }
+
+  async function submitReject(rejectionReasonId?: string) {
+    if (!workOrder) return;
+    setShowRejectReasonPicker(false);
+    setActionLoading(true);
+    try {
+      await apiService.post<WorkOrderDetail>(
+        `/work-orders/${workOrder.id}/reject`,
+        rejectionReasonId ? { rejectionReasonId } : {},
+      );
+      removeWorkOrderFromPrefetch(workOrder.id);
+      void refreshPrefetch();
+      Alert.alert(
+        'Servicio rechazado',
+        'El encargado podrá reasignar este servicio a otro limpiador.',
+        [{ text: 'OK', onPress: () => router.back() }],
+      );
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo rechazar el servicio');
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  function handleSelectRejectionReason(reason: RejectionReason) {
+    setShowRejectReasonPicker(false);
+    Alert.alert(
+      'Rechazar servicio',
+      `¿Confirmás el rechazo por "${reason.text}"?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Rechazar',
+          style: 'destructive',
+          onPress: () => void submitReject(reason.id),
+        },
+      ],
+    );
   }
 
   async function handleStart() {
@@ -336,6 +416,9 @@ export default function ServiceDetailScreen() {
     workOrder.type === 'CHECKOUT_CLEANING' &&
     workOrder.reservation &&
     ['ASSIGNED', 'ACCEPTED', 'IN_PROGRESS'].includes(workOrder.status);
+  const userAssignment = user?.id ? getUserAssignment(workOrder, user.id) : undefined;
+  const canRespondToAssignment =
+    userAssignment?.status === 'PENDING' && !expired;
 
   return (
     <View style={styles.container}>
@@ -445,22 +528,34 @@ export default function ServiceDetailScreen() {
 
         {/* Actions */}
         <View style={styles.actionsContainer}>
-          {workOrder.status === 'ASSIGNED' && !expired && (
-            <TouchableOpacity
-              style={[styles.btn, styles.btnPrimary, actionLoading && styles.btnDisabled]}
-              onPress={handleAccept}
-              disabled={actionLoading}
-            >
-              {actionLoading ? <ActivityIndicator color="#fff" /> : (
-                <>
-                  <Ionicons name="checkmark-outline" size={20} color="#fff" />
-                  <Text style={styles.btnText}>Aceptar servicio</Text>
-                </>
-              )}
-            </TouchableOpacity>
+          {canRespondToAssignment && (
+            <>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnPrimary, actionLoading && styles.btnDisabled]}
+                onPress={handleAccept}
+                disabled={actionLoading}
+              >
+                {actionLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-outline" size={20} color="#fff" />
+                    <Text style={styles.btnText}>Aceptar servicio</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btn, styles.btnReject, actionLoading && styles.btnDisabled]}
+                onPress={requestReject}
+                disabled={actionLoading}
+              >
+                <Ionicons name="close-outline" size={20} color={COLORS.error} />
+                <Text style={styles.btnRejectText}>Rechazar servicio</Text>
+              </TouchableOpacity>
+            </>
           )}
 
-          {workOrder.status === 'ACCEPTED' && !expired && (
+          {workOrder.status === 'ACCEPTED' && !expired && userAssignment?.status === 'ACCEPTED' && (
             <TouchableOpacity
               style={[
                 styles.btn,
@@ -509,6 +604,44 @@ export default function ServiceDetailScreen() {
           )}
         </View>
       </ScrollView>
+
+      <Modal
+        visible={showRejectReasonPicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowRejectReasonPicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, { paddingBottom: 20 + bottomPad }]}>
+            <Text style={styles.modalTitle}>Motivo de rechazo</Text>
+            <Text style={styles.modalSubtitle} numberOfLines={2}>
+              {workOrder.title}
+            </Text>
+            <FlatList
+              data={serviceRejectionReasons}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.reasonRow}
+                  onPress={() => handleSelectRejectionReason(item)}
+                >
+                  <Text style={styles.reasonText}>{item.text}</Text>
+                  <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <Text style={styles.modalEmpty}>No hay motivos disponibles</Text>
+              }
+            />
+            <TouchableOpacity
+              style={styles.modalCancelBtn}
+              onPress={() => setShowRejectReasonPicker(false)}
+            >
+              <Text style={styles.modalCancelText}>Cancelar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -556,6 +689,12 @@ const styles = StyleSheet.create({
   },
   btnPrimary: { backgroundColor: COLORS.primary },
   btnSuccess: { backgroundColor: COLORS.success },
+  btnReject: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  btnRejectText: { color: COLORS.error, fontSize: 16, fontWeight: '700' },
   btnDisabled: { opacity: 0.6 },
   btnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   link: { color: COLORS.primary, fontSize: 15, fontWeight: '600' },
@@ -587,4 +726,37 @@ const styles = StyleSheet.create({
     borderColor: '#fecaca',
   },
   expiredNoticeText: { flex: 1, fontSize: 13, color: COLORS.text, lineHeight: 18 },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: COLORS.surface,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 20,
+    maxHeight: '70%',
+    gap: 8,
+  },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text },
+  modalSubtitle: { fontSize: 13, color: COLORS.textMuted, marginBottom: 8 },
+  reasonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  reasonText: { flex: 1, fontSize: 15, color: COLORS.text, paddingRight: 8 },
+  modalEmpty: { textAlign: 'center', color: COLORS.textMuted, padding: 24 },
+  modalCancelBtn: {
+    marginTop: 12,
+    padding: 14,
+    alignItems: 'center',
+    borderRadius: 10,
+    backgroundColor: COLORS.bg,
+  },
+  modalCancelText: { fontSize: 15, fontWeight: '600', color: COLORS.textMuted },
 });

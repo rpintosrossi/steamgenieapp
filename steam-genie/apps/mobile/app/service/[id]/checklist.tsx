@@ -37,6 +37,11 @@ import {
 import { isNetworkError } from '../../../src/utils/network';
 import { sleep } from '../../../src/utils/async';
 import type { WorkOrderCached } from '../../../src/stores/building.store';
+import {
+  CustomFieldPickerModal,
+  type TaskCustomField,
+  type TaskFieldValueInput,
+} from '../../../src/components/CustomFieldPickerModal';
 
 const RECONCILE_DELAYS_MS = [0, 500, 1200, 2500] as const;
 
@@ -52,6 +57,7 @@ interface TaskExecutionDetail {
   status: string;
   observation: string | null;
   photos: TaskPhotoSummary[];
+  fieldValues?: TaskFieldValueInput[];
 }
 
 interface TaskExecutionItem {
@@ -63,6 +69,7 @@ interface TaskExecutionItem {
   requiresRejectionReasonSnapshot: boolean;
   zoneId: string | null;
   subzoneId: string | null;
+  customFields: TaskCustomField[];
   execution: TaskExecutionDetail | null;
 }
 
@@ -83,9 +90,37 @@ function canMarkTask(task: TaskExecutionItem): boolean {
   return status === 'NOT_STARTED' || status === 'IN_PROGRESS';
 }
 
+function isBulkSelectable(task: TaskExecutionItem): boolean {
+  return canMarkTask(task) && task.customFields.length === 0;
+}
+
 function isTaskResolved(task: TaskExecutionItem): boolean {
   const status = getTaskStatus(task);
-  return status !== 'NOT_STARTED' && status !== 'IN_PROGRESS';
+  if (status === 'NOT_STARTED' || status === 'IN_PROGRESS') return false;
+  if (isDoneWithPendingPhoto(task)) return false;
+  return true;
+}
+
+function isDoneWithPendingPhoto(task: TaskExecutionItem): boolean {
+  return (
+    getTaskStatus(task) === 'DONE' &&
+    task.requiresPhotoSnapshot &&
+    getTaskPhotos(task).length === 0
+  );
+}
+
+function getTaskStatusLabel(task: TaskExecutionItem): string {
+  const status = getTaskStatus(task);
+  if (isDoneWithPendingPhoto(task)) return 'Realizada con foto pendiente';
+  return STATUS_LABELS[status] ?? status;
+}
+
+function getTaskStatusIcon(task: TaskExecutionItem) {
+  if (isDoneWithPendingPhoto(task)) {
+    return { name: 'camera-outline' as const, color: COLORS.warning };
+  }
+  const status = getTaskStatus(task);
+  return STATUS_ICONS[status] ?? STATUS_ICONS.NOT_STARTED;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -134,10 +169,20 @@ export default function ChecklistScreen() {
   const [markingTaskId, setMarkingTaskId] = useState<string | null>(null);
   const [uploadingPhotoForWotId, setUploadingPhotoForWotId] = useState<string | null>(null);
   const [reasonPickerTask, setReasonPickerTask] = useState<TaskExecutionItem | null>(null);
+  const [fieldPickerTask, setFieldPickerTask] = useState<TaskExecutionItem | null>(null);
+  const [pendingMarkStatus, setPendingMarkStatus] = useState<'DONE' | null>(null);
   const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   const [selectedSubzoneId, setSelectedSubzoneId] = useState<string | null>(null);
+  const [isBulkMarking, setIsBulkMarking] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const prefetchForReasonsAttempted = useRef(false);
+
+  const clearSelection = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }, []);
 
   const floors = prefetchData?.floors ?? [];
   const zones = prefetchData?.zones ?? [];
@@ -165,7 +210,8 @@ export default function ChecklistScreen() {
   useEffect(() => {
     setSelectedZoneId(null);
     setSelectedSubzoneId(null);
-  }, [selectedFloorId]);
+    clearSelection();
+  }, [selectedFloorId, clearSelection]);
 
   useEffect(() => {
     if (!selectedZone) {
@@ -195,6 +241,7 @@ export default function ChecklistScreen() {
         .prefetchData?.workOrders.find((wo) => wo.id === workOrderId);
       const mapped = items.map((item) => ({
         ...item,
+        customFields: item.customFields ?? [],
         zoneId: item.zoneId ?? cachedWo?.zoneId ?? null,
         subzoneId: item.subzoneId ?? cachedWo?.subzoneId ?? null,
       }));
@@ -252,11 +299,15 @@ export default function ChecklistScreen() {
     task: TaskExecutionItem,
     newStatus: 'DONE' | 'NOT_DONE',
     rejectionReasonId?: string,
-  ) {
-    if (!seId) return;
+    fieldValues?: TaskFieldValueInput[],
+    options?: { silent?: boolean; skipReload?: boolean },
+  ): Promise<boolean> {
+    if (!seId) return false;
     if (!canExecute) {
-      Alert.alert('Fichaje requerido', ATTENDANCE_REQUIRED_MESSAGE);
-      return;
+      if (!options?.silent) {
+        Alert.alert('Fichaje requerido', ATTENDANCE_REQUIRED_MESSAGE);
+      }
+      return false;
     }
     setMarkingTaskId(task.workOrderTaskId);
     try {
@@ -266,6 +317,7 @@ export default function ChecklistScreen() {
         status: newStatus,
         clientOperationId,
         ...(rejectionReasonId ? { rejectionReasonId } : {}),
+        ...(fieldValues?.length ? { fieldValues } : {}),
       };
 
       if (isOnline) {
@@ -273,12 +325,14 @@ export default function ChecklistScreen() {
           `/service-executions/${seId}/work-order-tasks/${task.workOrderTaskId}`,
           body,
         );
-        try {
-          await loadTasks('silent');
-        } catch {
-          const reconciled = await reconcileTaskMark(task.workOrderTaskId, newStatus);
-          if (!reconciled) {
-            throw new Error('No se pudo confirmar la tarea. Revisá tu conexión e intentá de nuevo.');
+        if (!options?.skipReload) {
+          try {
+            await loadTasks('silent');
+          } catch {
+            const reconciled = await reconcileTaskMark(task.workOrderTaskId, newStatus);
+            if (!reconciled) {
+              throw new Error('No se pudo confirmar la tarea. Revisá tu conexión e intentá de nuevo.');
+            }
           }
         }
       } else {
@@ -293,6 +347,7 @@ export default function ChecklistScreen() {
             workOrderTaskId: task.workOrderTaskId,
             status: newStatus,
             rejectionReasonId,
+            fieldValues,
             deviceId: 'mobile',
           },
           occurredAt,
@@ -307,6 +362,7 @@ export default function ChecklistScreen() {
                     status: newStatus,
                     observation: null,
                     photos: t.execution?.photos ?? [],
+                    fieldValues: fieldValues ?? t.execution?.fieldValues,
                   },
                 }
               : t,
@@ -315,15 +371,91 @@ export default function ChecklistScreen() {
         setStatus('pending');
         await syncManager.refreshPendingCount();
       }
+      return true;
     } catch (e) {
       if (isOnline && isNetworkError(e)) {
         const reconciled = await reconcileTaskMark(task.workOrderTaskId, newStatus);
-        if (reconciled) return;
+        if (reconciled) return true;
       }
-      Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo marcar la tarea');
+      if (!options?.silent) {
+        Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo marcar la tarea');
+      }
+      return false;
     } finally {
       setMarkingTaskId(null);
     }
+  }
+
+  function toggleSelectTask(task: TaskExecutionItem) {
+    if (!isBulkSelectable(task)) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(task.workOrderTaskId)) next.delete(task.workOrderTaskId);
+      else next.add(task.workOrderTaskId);
+      return next;
+    });
+  }
+
+  function selectAllPending(tasks: TaskExecutionItem[]) {
+    setSelectedIds(new Set(tasks.filter(isBulkSelectable).map((t) => t.workOrderTaskId)));
+  }
+
+  function deselectAll() {
+    setSelectedIds(new Set());
+  }
+
+  async function markSelectedAsDone(tasks: TaskExecutionItem[]) {
+    const toMark = tasks.filter((t) => selectedIds.has(t.workOrderTaskId) && isBulkSelectable(t));
+    if (toMark.length === 0) return;
+
+    Alert.alert(
+      'Marcar tareas',
+      `¿Marcar ${toMark.length} tarea${toMark.length === 1 ? '' : 's'} como realizada${toMark.length === 1 ? '' : 's'}?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Confirmar',
+          onPress: async () => {
+            setIsBulkMarking(true);
+            let succeeded = 0;
+            try {
+              for (const task of toMark) {
+                const ok = await markTask(task, 'DONE', undefined, undefined, {
+                  silent: true,
+                  skipReload: true,
+                });
+                if (ok) succeeded += 1;
+              }
+              if (isOnline) {
+                try {
+                  await loadTasks('silent');
+                } catch {
+                  // El marcado pudo haberse aplicado en el servidor.
+                }
+              }
+              clearSelection();
+              if (succeeded < toMark.length) {
+                Alert.alert(
+                  'Marcado parcial',
+                  `Se marcaron ${succeeded} de ${toMark.length} tareas. Revisá las pendientes e intentá de nuevo.`,
+                );
+              }
+            } finally {
+              setIsBulkMarking(false);
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  function requestMarkDone(task: TaskExecutionItem) {
+    if (task.customFields.length > 0) {
+      setFieldPickerTask(task);
+      setPendingMarkStatus('DONE');
+      return;
+    }
+    void markTask(task, 'DONE');
   }
 
   function handleMarkNotDone(task: TaskExecutionItem) {
@@ -345,7 +477,20 @@ export default function ChecklistScreen() {
     if (!reasonPickerTask) return;
     const task = reasonPickerTask;
     setReasonPickerTask(null);
-    markTask(task, 'NOT_DONE', reason.id);
+    void markTask(task, 'NOT_DONE', reason.id);
+  }
+
+  function handleConfirmFieldValues(values: TaskFieldValueInput[]) {
+    if (!fieldPickerTask || pendingMarkStatus !== 'DONE') return;
+    const task = fieldPickerTask;
+    setFieldPickerTask(null);
+    setPendingMarkStatus(null);
+    void markTask(task, 'DONE', undefined, values);
+  }
+
+  function handleCancelFieldPicker() {
+    setFieldPickerTask(null);
+    setPendingMarkStatus(null);
   }
 
   async function uploadPhotoAsset(
@@ -478,9 +623,12 @@ export default function ChecklistScreen() {
         key={task.workOrderTaskId}
         task={task}
         canExecute={canExecute}
-        isMarking={markingTaskId === task.workOrderTaskId}
+        isMarking={markingTaskId === task.workOrderTaskId || isBulkMarking}
         isUploadingPhoto={uploadingPhotoForWotId === task.workOrderTaskId}
-        onMarkDone={() => markTask(task, 'DONE')}
+        selectionMode={selectionMode}
+        isSelected={selectedIds.has(task.workOrderTaskId)}
+        onToggleSelect={() => toggleSelectTask(task)}
+        onMarkDone={() => requestMarkDone(task)}
         onMarkNotDone={() => handleMarkNotDone(task)}
         onAddPhoto={() => addPhoto(task)}
       />
@@ -553,10 +701,27 @@ export default function ChecklistScreen() {
               activeSubzone={activeSubzone}
               selectedSubzoneId={selectedSubzoneId}
               isRefreshing={isRefreshing}
+              isBulkMarking={isBulkMarking}
+              selectionMode={selectionMode}
+              selectedIds={selectedIds}
+              canExecute={canExecute}
               bottomPad={bottomPad}
-              onBack={() => setSelectedZoneId(null)}
-              onSelectSubzone={setSelectedSubzoneId}
+              onBack={() => {
+                clearSelection();
+                setSelectedZoneId(null);
+              }}
+              onSelectSubzone={(subId) => {
+                clearSelection();
+                setSelectedSubzoneId(subId);
+              }}
               onRefresh={() => loadTasks('refresh')}
+              onToggleSelectionMode={() => {
+                if (selectionMode) clearSelection();
+                else setSelectionMode(true);
+              }}
+              onSelectAllPending={() => selectAllPending(activeSubzone?.items ?? [])}
+              onDeselectAll={deselectAll}
+              onBulkMarkDone={() => markSelectedAsDone(activeSubzone?.items ?? [])}
               renderTask={renderTaskCard}
             />
           ) : (
@@ -602,33 +767,60 @@ export default function ChecklistScreen() {
           )}
 
           {unlocated.length > 0 && !selectedZoneId ? (
-            <ScrollView contentContainerStyle={[styles.unlocatedSection, { paddingBottom: bottomPad }]}>
-              <Text style={styles.sectionTitle}>Sin ubicación</Text>
-              {unlocated.map((task) => renderTaskCard(task))}
-            </ScrollView>
+            <ChecklistBulkTaskSection
+              tasks={unlocated}
+              canExecute={canExecute}
+              isRefreshing={isRefreshing}
+              isBulkMarking={isBulkMarking}
+              selectionMode={selectionMode}
+              selectedIds={selectedIds}
+              bottomPad={bottomPad}
+              sectionTitle="Sin ubicación"
+              stickyBulkBar={false}
+              onRefresh={() => loadTasks('refresh')}
+              onToggleSelectionMode={() => {
+                if (selectionMode) clearSelection();
+                else setSelectionMode(true);
+              }}
+              onSelectAllPending={() => selectAllPending(unlocated)}
+              onDeselectAll={deselectAll}
+              onBulkMarkDone={() => markSelectedAsDone(unlocated)}
+              renderTask={renderTaskCard}
+            />
           ) : null}
 
           {allResolved ? renderFinishButton() : null}
         </View>
       ) : (
-        <ScrollView
-          contentContainerStyle={[styles.content, { paddingBottom: 40 + bottomPad }]}
-          refreshControl={
-            <RefreshControl refreshing={isRefreshing} onRefresh={() => loadTasks('refresh')} />
-          }
-        >
-          {!canExecute ? (
-            <View style={styles.attendanceNotice}>
-              <Ionicons name="information-circle-outline" size={18} color={COLORS.warning} />
-              <Text style={styles.attendanceNoticeText}>{ATTENDANCE_REQUIRED_MESSAGE}</Text>
-            </View>
-          ) : null}
-
-          {sortedTasks.map((task) => renderTaskCard(task))}
-
-          {allResolved ? renderFinishButton() : null}
-        </ScrollView>
+        <ChecklistBulkTaskSection
+          tasks={sortedTasks}
+          canExecute={canExecute}
+          isRefreshing={isRefreshing}
+          isBulkMarking={isBulkMarking}
+          selectionMode={selectionMode}
+          selectedIds={selectedIds}
+          bottomPad={bottomPad}
+          onRefresh={() => loadTasks('refresh')}
+          onToggleSelectionMode={() => {
+            if (selectionMode) clearSelection();
+            else setSelectionMode(true);
+          }}
+          onSelectAllPending={() => selectAllPending(sortedTasks)}
+          onDeselectAll={deselectAll}
+          onBulkMarkDone={() => markSelectedAsDone(sortedTasks)}
+          renderTask={renderTaskCard}
+          footer={allResolved ? renderFinishButton() : null}
+        />
       )}
+
+      <CustomFieldPickerModal
+        visible={fieldPickerTask != null}
+        taskName={fieldPickerTask?.nameSnapshot ?? ''}
+        fields={fieldPickerTask?.customFields ?? []}
+        initialValues={fieldPickerTask?.execution?.fieldValues}
+        onCancel={handleCancelFieldPicker}
+        onConfirm={handleConfirmFieldValues}
+      />
 
       <Modal
         visible={reasonPickerTask != null}
@@ -676,6 +868,9 @@ interface TaskCardProps {
   canExecute: boolean;
   isMarking: boolean;
   isUploadingPhoto: boolean;
+  selectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: () => void;
   onMarkDone: () => void;
   onMarkNotDone: () => void;
   onAddPhoto: () => void;
@@ -736,36 +931,232 @@ function ChecklistFloorStrip({
   );
 }
 
+function ChecklistBulkTaskSection({
+  tasks,
+  canExecute,
+  isRefreshing,
+  isBulkMarking,
+  selectionMode,
+  selectedIds,
+  bottomPad,
+  sectionTitle,
+  onRefresh,
+  onToggleSelectionMode,
+  onSelectAllPending,
+  onDeselectAll,
+  onBulkMarkDone,
+  renderTask,
+  footer,
+  stickyBulkBar = true,
+}: {
+  tasks: TaskExecutionItem[];
+  canExecute: boolean;
+  isRefreshing: boolean;
+  isBulkMarking: boolean;
+  selectionMode: boolean;
+  selectedIds: Set<string>;
+  bottomPad: number;
+  sectionTitle?: string;
+  onRefresh: () => void;
+  onToggleSelectionMode: () => void;
+  onSelectAllPending: () => void;
+  onDeselectAll: () => void;
+  onBulkMarkDone: () => void;
+  renderTask: (task: TaskExecutionItem) => ReactNode;
+  footer?: ReactNode;
+  stickyBulkBar?: boolean;
+}) {
+  const bulkSelectablePending = tasks.filter(isBulkSelectable);
+  const selectedCount = bulkSelectablePending.filter((t) => selectedIds.has(t.workOrderTaskId)).length;
+  const allBulkSelectableSelected =
+    bulkSelectablePending.length > 0 &&
+    bulkSelectablePending.every((t) => selectedIds.has(t.workOrderTaskId));
+  const showSelectionToggle = canExecute && bulkSelectablePending.length > 0;
+
+  return (
+    <View style={stickyBulkBar ? styles.bulkTaskSection : undefined}>
+      {!canExecute ? (
+        <View style={styles.attendanceNotice}>
+          <Ionicons name="information-circle-outline" size={18} color={COLORS.warning} />
+          <Text style={styles.attendanceNoticeText}>{ATTENDANCE_REQUIRED_MESSAGE}</Text>
+        </View>
+      ) : null}
+
+      {showSelectionToggle ? (
+        <View style={styles.flatSelectionHeader}>
+          <TouchableOpacity
+            style={styles.selectionToggleBtn}
+            onPress={onToggleSelectionMode}
+            disabled={isBulkMarking}
+          >
+            <Ionicons
+              name={selectionMode ? 'close' : 'checkbox-outline'}
+              size={16}
+              color={COLORS.primary}
+            />
+            <Text style={styles.selectionToggleText}>
+              {selectionMode ? 'Cancelar' : 'Seleccionar'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {selectionMode && bulkSelectablePending.length > 0 ? (
+        <View style={styles.selectionToolbar}>
+          <TouchableOpacity
+            style={styles.selectAllBtn}
+            onPress={() => {
+              if (allBulkSelectableSelected) onDeselectAll();
+              else onSelectAllPending();
+            }}
+          >
+            <Ionicons
+              name={allBulkSelectableSelected ? 'checkbox' : 'square-outline'}
+              size={18}
+              color={COLORS.primary}
+            />
+            <Text style={styles.selectAllText}>
+              {allBulkSelectableSelected ? 'Deseleccionar todas' : 'Seleccionar todas'}
+            </Text>
+          </TouchableOpacity>
+          <Text style={styles.selectionCount}>
+            {selectedCount} seleccionada{selectedCount === 1 ? '' : 's'}
+          </Text>
+        </View>
+      ) : null}
+
+      <ScrollView
+        style={stickyBulkBar ? styles.taskListScroll : undefined}
+        contentContainerStyle={[
+          sectionTitle ? styles.unlocatedSection : styles.content,
+          {
+            paddingBottom:
+              (sectionTitle ? 16 : 40) +
+              bottomPad +
+              (!stickyBulkBar && selectionMode && selectedCount > 0 ? 72 : 0),
+          },
+          stickyBulkBar && selectionMode && selectedCount > 0 && styles.taskListContentWithBar,
+        ]}
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
+      >
+        {sectionTitle ? <Text style={styles.sectionTitle}>{sectionTitle}</Text> : null}
+        {tasks.map((task) => renderTask(task))}
+        {!stickyBulkBar && selectionMode && selectedCount > 0 ? (
+          <TouchableOpacity
+            style={[styles.bulkMarkBtn, isBulkMarking && styles.bulkMarkBtnDisabled]}
+            onPress={onBulkMarkDone}
+            disabled={isBulkMarking}
+          >
+            {isBulkMarking ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="checkmark-done" size={18} color="#fff" />
+                <Text style={styles.bulkMarkBtnText}>
+                  Marcar {selectedCount} como realizada{selectedCount === 1 ? '' : 's'}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        ) : null}
+        {footer}
+      </ScrollView>
+
+      {stickyBulkBar && selectionMode && selectedCount > 0 ? (
+        <View style={styles.bulkActionBar}>
+          <TouchableOpacity
+            style={[styles.bulkMarkBtn, isBulkMarking && styles.bulkMarkBtnDisabled]}
+            onPress={onBulkMarkDone}
+            disabled={isBulkMarking}
+          >
+            {isBulkMarking ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="checkmark-done" size={18} color="#fff" />
+                <Text style={styles.bulkMarkBtnText}>
+                  Marcar {selectedCount} como realizada{selectedCount === 1 ? '' : 's'}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function ChecklistZoneDetail({
   zone,
   activeSubzone,
   selectedSubzoneId,
   isRefreshing,
+  isBulkMarking,
+  selectionMode,
+  selectedIds,
+  canExecute,
   bottomPad,
   onBack,
   onSelectSubzone,
   onRefresh,
+  onToggleSelectionMode,
+  onSelectAllPending,
+  onDeselectAll,
+  onBulkMarkDone,
   renderTask,
 }: {
   zone: LocationZoneGroup<TaskExecutionItem>;
   activeSubzone: LocationSubzoneGroup<TaskExecutionItem> | null;
   selectedSubzoneId: string | null;
   isRefreshing: boolean;
+  isBulkMarking: boolean;
+  selectionMode: boolean;
+  selectedIds: Set<string>;
+  canExecute: boolean;
   bottomPad: number;
   onBack: () => void;
   onSelectSubzone: (subId: string) => void;
   onRefresh: () => void;
+  onToggleSelectionMode: () => void;
+  onSelectAllPending: () => void;
+  onDeselectAll: () => void;
+  onBulkMarkDone: () => void;
   renderTask: (task: TaskExecutionItem) => ReactNode;
 }) {
   const { resolved, total } = countTaskProgress(zone.items);
+  const subzoneTasks = activeSubzone?.items ?? [];
+  const pendingInSubzone = subzoneTasks.filter(canMarkTask);
+  const bulkSelectablePending = subzoneTasks.filter(isBulkSelectable);
+  const selectedCount = bulkSelectablePending.filter((t) => selectedIds.has(t.workOrderTaskId)).length;
+  const allBulkSelectableSelected =
+    bulkSelectablePending.length > 0 &&
+    bulkSelectablePending.every((t) => selectedIds.has(t.workOrderTaskId));
 
   return (
     <View style={styles.zoneDetail}>
       <View style={styles.zoneDetailHeader}>
-        <TouchableOpacity style={styles.zoneBackBtn} onPress={onBack}>
-          <Ionicons name="chevron-back" size={20} color={COLORS.primary} />
-          <Text style={styles.zoneBackText}>Zonas</Text>
-        </TouchableOpacity>
+        <View style={styles.zoneDetailHeaderTop}>
+          <TouchableOpacity style={styles.zoneBackBtn} onPress={onBack}>
+            <Ionicons name="chevron-back" size={20} color={COLORS.primary} />
+            <Text style={styles.zoneBackText}>Zonas</Text>
+          </TouchableOpacity>
+          {canExecute && pendingInSubzone.length > 0 ? (
+            <TouchableOpacity
+              style={styles.selectionToggleBtn}
+              onPress={onToggleSelectionMode}
+              disabled={isBulkMarking}
+            >
+              <Ionicons
+                name={selectionMode ? 'close' : 'checkbox-outline'}
+                size={16}
+                color={COLORS.primary}
+              />
+              <Text style={styles.selectionToggleText}>
+                {selectionMode ? 'Cancelar' : 'Seleccionar'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
         <View style={styles.zoneDetailTitleRow}>
           <View style={styles.zoneNumberBadgeLg}>
             <Text style={styles.zoneNumberTextLg}>{zone.zoneIndex}</Text>
@@ -808,9 +1199,37 @@ function ChecklistZoneDetail({
         })}
       </ScrollView>
 
+      {selectionMode && bulkSelectablePending.length > 0 ? (
+        <View style={styles.selectionToolbar}>
+          <TouchableOpacity
+            style={styles.selectAllBtn}
+            onPress={() => {
+              if (allBulkSelectableSelected) onDeselectAll();
+              else onSelectAllPending();
+            }}
+          >
+            <Ionicons
+              name={allBulkSelectableSelected ? 'checkbox' : 'square-outline'}
+              size={18}
+              color={COLORS.primary}
+            />
+            <Text style={styles.selectAllText}>
+              {allBulkSelectableSelected ? 'Deseleccionar todas' : 'Seleccionar todas'}
+            </Text>
+          </TouchableOpacity>
+          <Text style={styles.selectionCount}>
+            {selectedCount} seleccionada{selectedCount === 1 ? '' : 's'}
+          </Text>
+        </View>
+      ) : null}
+
       <ScrollView
         style={styles.taskListScroll}
-        contentContainerStyle={[styles.taskListContent, { paddingBottom: 32 + bottomPad }]}
+        contentContainerStyle={[
+          styles.taskListContent,
+          { paddingBottom: 32 + bottomPad },
+          selectionMode && selectedCount > 0 && styles.taskListContentWithBar,
+        ]}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
       >
         {activeSubzone?.items.length ? (
@@ -819,6 +1238,27 @@ function ChecklistZoneDetail({
           <Text style={styles.emptySubzone}>Sin tareas en esta subzona</Text>
         )}
       </ScrollView>
+
+      {selectionMode && selectedCount > 0 ? (
+        <View style={styles.bulkActionBar}>
+          <TouchableOpacity
+            style={[styles.bulkMarkBtn, isBulkMarking && styles.bulkMarkBtnDisabled]}
+            onPress={onBulkMarkDone}
+            disabled={isBulkMarking}
+          >
+            {isBulkMarking ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="checkmark-done" size={18} color="#fff" />
+                <Text style={styles.bulkMarkBtnText}>
+                  Marcar {selectedCount} como realizada{selectedCount === 1 ? '' : 's'}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -828,6 +1268,9 @@ function TaskCard({
   canExecute,
   isMarking,
   isUploadingPhoto,
+  selectionMode = false,
+  isSelected = false,
+  onToggleSelect,
   onMarkDone,
   onMarkNotDone,
   onAddPhoto,
@@ -836,14 +1279,18 @@ function TaskCard({
   const wasMarking = useRef(false);
   const status = getTaskStatus(task);
   const photos = getTaskPhotos(task);
-  const iconConfig = STATUS_ICONS[status] ?? STATUS_ICONS.NOT_STARTED;
+  const iconConfig = getTaskStatusIcon(task);
+  const statusLabel = getTaskStatusLabel(task);
   const isDone = status === 'DONE';
   const isNotDone = status === 'NOT_DONE';
   const isResolved = isTaskResolved(task);
   const canChangeNotDoneReason = isNotDone && task.requiresRejectionReasonSnapshot;
   const disableNotDoneBtn = isEditing && isNotDone && !canChangeNotDoneReason;
-  const needsPhoto = task.requiresPhotoSnapshot && isDone && photos.length === 0;
-  const showMarkActions = canExecute && (canMarkTask(task) || isEditing);
+  const needsPhoto = isDoneWithPendingPhoto(task);
+  const showMarkActions = canExecute && (canMarkTask(task) || isEditing) && !selectionMode;
+  const requiresIndividualCompletion =
+    canMarkTask(task) && task.customFields.length > 0;
+  const canSelect = selectionMode && isBulkSelectable(task);
 
   useEffect(() => {
     setIsEditing(false);
@@ -856,14 +1303,36 @@ function TaskCard({
     wasMarking.current = isMarking;
   }, [isMarking]);
 
-  return (
-    <View style={[styles.taskCard, isDone && styles.taskCardDone, isNotDone && styles.taskCardNotDone]}>
+  const cardContent = (
+    <>
       <View style={styles.taskHeader}>
+        {canSelect ? (
+          <TouchableOpacity
+            style={styles.selectCheckbox}
+            onPress={onToggleSelect}
+            accessibilityLabel={isSelected ? 'Deseleccionar tarea' : 'Seleccionar tarea'}
+          >
+            <Ionicons
+              name={isSelected ? 'checkbox' : 'square-outline'}
+              size={22}
+              color={isSelected ? COLORS.primary : COLORS.disabled}
+            />
+          </TouchableOpacity>
+        ) : null}
         <Ionicons name={iconConfig.name} size={22} color={iconConfig.color} />
         <View style={styles.taskInfo}>
           <Text style={styles.taskName}>{task.nameSnapshot}</Text>
-          <Text style={[styles.taskStatus, { color: iconConfig.color }]}>
-            {STATUS_LABELS[status]}
+          {requiresIndividualCompletion && selectionMode ? (
+            <Text style={styles.individualHint}>Completar individualmente</Text>
+          ) : null}
+          <Text
+            style={[
+              styles.taskStatus,
+              { color: iconConfig.color },
+              needsPhoto && styles.taskStatusPhotoPending,
+            ]}
+          >
+            {statusLabel}
           </Text>
         </View>
         {task.requiresPhotoSnapshot && (
@@ -872,7 +1341,7 @@ function TaskCard({
         {task.requiresRejectionReasonSnapshot && (
           <Ionicons name="help-circle-outline" size={16} color={COLORS.warning} />
         )}
-        {isResolved && !isEditing && canExecute && (
+        {isResolved && !isEditing && canExecute && !selectionMode && (
           <TouchableOpacity
             style={styles.editIconBtn}
             onPress={() => setIsEditing(true)}
@@ -895,11 +1364,6 @@ function TaskCard({
         <View style={styles.photoUploading}>
           <ActivityIndicator size="small" color={COLORS.primary} />
           <Text style={styles.photoUploadingText}>Subiendo foto...</Text>
-        </View>
-      ) : needsPhoto ? (
-        <View style={styles.photoWarning}>
-          <Ionicons name="warning-outline" size={14} color={COLORS.warning} />
-          <Text style={styles.photoWarningText}>Esta tarea requiere foto</Text>
         </View>
       ) : null}
 
@@ -972,7 +1436,7 @@ function TaskCard({
               )}
             </View>
           )}
-          {isDone && canExecute && (
+          {isDone && canExecute && !selectionMode && (
             <TouchableOpacity style={[styles.taskBtn, styles.taskBtnPhoto]} onPress={onAddPhoto}>
               <Ionicons name="camera-outline" size={16} color={COLORS.primary} />
               <Text style={[styles.taskBtnText, { color: COLORS.primary }]}>Foto</Text>
@@ -980,6 +1444,32 @@ function TaskCard({
           )}
         </View>
       )}
+    </>
+  );
+
+  if (canSelect) {
+    return (
+      <TouchableOpacity
+        style={[styles.taskCard, isSelected && styles.taskCardSelected]}
+        onPress={onToggleSelect}
+        activeOpacity={0.85}
+      >
+        {cardContent}
+      </TouchableOpacity>
+    );
+  }
+
+  return (
+    <View
+      style={[
+        styles.taskCard,
+        needsPhoto && styles.taskCardPhotoPending,
+        isDone && !needsPhoto && styles.taskCardDone,
+        isNotDone && styles.taskCardNotDone,
+        requiresIndividualCompletion && selectionMode && styles.taskCardIndividual,
+      ]}
+    >
+      {cardContent}
     </View>
   );
 }
@@ -1094,6 +1584,33 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.border,
     gap: 8,
   },
+  zoneDetailHeaderTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  selectionToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  selectionToggleText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
+  flatSelectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: COLORS.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  bulkTaskSection: { flex: 1 },
   zoneBackBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   zoneBackText: { fontSize: 14, color: COLORS.primary, fontWeight: '600' },
   zoneDetailTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
@@ -1151,6 +1668,58 @@ const styles = StyleSheet.create({
   subzoneTabTextActive: { color: '#fff' },
   taskListScroll: { flex: 1 },
   taskListContent: { padding: 16, gap: 10, paddingBottom: 32 },
+  taskListContentWithBar: { paddingBottom: 88 },
+  selectionToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#eff6ff',
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  selectAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  selectAllText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
+  selectionCount: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    fontWeight: '600',
+  },
+  bulkActionBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    padding: 16,
+    backgroundColor: COLORS.surface,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 8,
+  },
+  bulkMarkBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: COLORS.success,
+    borderRadius: 10,
+    paddingVertical: 14,
+  },
+  bulkMarkBtnDisabled: { opacity: 0.7 },
+  bulkMarkBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   emptySubzone: {
     textAlign: 'center',
     color: COLORS.textMuted,
@@ -1162,6 +1731,8 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface,
     borderRadius: 12,
     padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
@@ -1170,11 +1741,16 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   taskCardDone: { borderLeftWidth: 3, borderLeftColor: COLORS.success },
+  taskCardPhotoPending: { borderLeftWidth: 3, borderLeftColor: COLORS.warning, backgroundColor: '#fffbeb' },
   taskCardNotDone: { borderLeftWidth: 3, borderLeftColor: COLORS.error },
+  taskCardSelected: { borderColor: COLORS.primary, backgroundColor: '#f0f7ff' },
+  taskCardIndividual: { borderStyle: 'dashed', backgroundColor: '#fffbeb' },
   taskHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   taskInfo: { flex: 1 },
   taskName: { fontSize: 14, fontWeight: '600', color: COLORS.text, lineHeight: 20 },
+  individualHint: { fontSize: 11, color: COLORS.warning, fontWeight: '600', marginTop: 2 },
   taskStatus: { fontSize: 12, fontWeight: '500', marginTop: 2 },
+  taskStatusPhotoPending: { fontWeight: '700' },
   photoRow: { marginTop: 4 },
   photoThumb: {
     width: 64,
@@ -1211,6 +1787,7 @@ const styles = StyleSheet.create({
   taskActions: { gap: 8 },
   taskActionRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', alignItems: 'center' },
   editIconBtn: { padding: 4, marginLeft: 4 },
+  selectCheckbox: { padding: 2, marginTop: 1 },
   editCancelBtn: { padding: 4, justifyContent: 'center' },
   taskBtn: {
     flexDirection: 'row',

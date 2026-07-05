@@ -29,6 +29,18 @@ const SUBMODULES = [
       </svg>
     ),
   },
+  {
+    href: '/trabajos-eventuales/calendario',
+    title: 'Calendario',
+    description:
+      'Vista mensual de reservas (duración de estadía), servicios de limpieza y trabajadores asignados.',
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <rect x="3" y="4" width="18" height="18" rx="2" />
+        <path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01" />
+      </svg>
+    ),
+  },
 ];
 
 export default function EventualWorkHubPage() {

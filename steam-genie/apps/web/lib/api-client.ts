@@ -35,6 +35,105 @@ export function getAccessTokenForStream(): string | null {
   return localStorage.getItem('sg_access_token');
 }
 
+/** URL autenticada para servir una foto de tarea por ID (almacenamiento local). */
+export function getTaskPhotoFileUrl(photoId: string): string {
+  return `${getApiBaseUrl()}/task-photos/${photoId}/file`;
+}
+
+/** URL pública de bucket (R2/S3). No requiere fetch autenticado. */
+export function isPublicObjectStorageUrl(photoUrl: string): boolean {
+  if (!photoUrl.startsWith('http')) return false;
+
+  try {
+    const parsed = new URL(photoUrl);
+    const apiBase = new URL(getApiBaseUrl());
+
+    if (parsed.pathname.includes('/task-photos/serve/')) return false;
+    if (/\/task-photos\/[^/]+\/file$/i.test(parsed.pathname)) return false;
+
+    return parsed.host !== apiBase.host;
+  } catch {
+    return false;
+  }
+}
+
+function resolveApiPhotoUrl(photoUrl: string): string {
+  if (!photoUrl) return '';
+
+  if (photoUrl.startsWith('http')) {
+    try {
+      const parsed = new URL(photoUrl);
+      if (
+        parsed.pathname.includes('/task-photos/serve/') ||
+        /\/task-photos\/[^/]+\/file$/i.test(parsed.pathname)
+      ) {
+        return `${getApiBaseUrl()}${parsed.pathname}${parsed.search}`;
+      }
+      return photoUrl;
+    } catch {
+      return photoUrl;
+    }
+  }
+
+  return `${getApiBaseUrl()}${photoUrl.startsWith('/') ? '' : '/'}${photoUrl}`;
+}
+
+export function resolveTaskPhotoUrl(photoUrl?: string, photoId?: string): string {
+  if (photoUrl) {
+    if (isPublicObjectStorageUrl(photoUrl)) return photoUrl;
+    return resolveApiPhotoUrl(photoUrl);
+  }
+  if (photoId) return getTaskPhotoFileUrl(photoId);
+  return '';
+}
+
+export function taskPhotoNeedsAuthFetch(photoUrl: string): boolean {
+  if (!photoUrl || isPublicObjectStorageUrl(photoUrl)) return false;
+
+  try {
+    const path = new URL(photoUrl, getApiBaseUrl()).pathname;
+    return path.includes('/task-photos/');
+  } catch {
+    return photoUrl.includes('/task-photos/');
+  }
+}
+
+export async function fetchAuthenticatedBlobUrl(
+  photoUrl: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const token = getAccessTokenForStream();
+  if (!token) return null;
+
+  const absoluteUrl = resolveApiPhotoUrl(photoUrl);
+
+  const fetchOnce = async (authToken: string, retried: boolean): Promise<string | null> => {
+    const res = await fetch(absoluteUrl, {
+      headers: { Authorization: `Bearer ${authToken}` },
+      signal,
+    });
+
+    if (res.status === 401 && !retried) {
+      const newToken = await refreshAccessToken();
+      if (newToken) return fetchOnce(newToken, true);
+      return null;
+    }
+
+    if (!res.ok) return null;
+
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  };
+
+  try {
+    return await fetchOnce(token, false);
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') return null;
+    if (signal?.aborted) return null;
+    return null;
+  }
+}
+
 type FetchOptions = RequestInit & { skipAuth?: boolean; _retried?: boolean };
 
 function getAccessToken(): string | null {

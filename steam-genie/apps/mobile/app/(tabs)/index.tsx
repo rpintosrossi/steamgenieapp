@@ -25,6 +25,7 @@ import {
   categorizeWorkOrdersForUser,
   enrichWorkOrdersWithAssignments,
   excludeExpiredWorkOrders,
+  filterWorkOrdersAssignedToUser,
   formatWorkOrderScheduledDate,
   getWorkOrderTaskCount,
   normalizeWorkOrdersList,
@@ -138,6 +139,16 @@ export default function FichajeScreen() {
       );
     }
   }, [selectedBuilding, isOnline, prefetchData?.workOrders]);
+
+  useEffect(() => {
+    if (!user?.id || !prefetchData) return;
+
+    const assignedIds = new Set(
+      filterWorkOrdersAssignedToUser(prefetchData.workOrders, user.id).map((wo) => wo.id),
+    );
+
+    setWorkOrders((prev) => prev.filter((wo) => assignedIds.has(wo.id)));
+  }, [prefetchData?.workOrders, user?.id]);
 
   useFocusEffect(
     useCallback(() => {

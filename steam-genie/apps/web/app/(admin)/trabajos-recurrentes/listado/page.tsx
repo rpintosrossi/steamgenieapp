@@ -2,23 +2,29 @@
 
 import Link from 'next/link';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { APP_MODULES } from '@steam-genie/shared-constants';
 import { api } from '../../../../lib/api-client';
 import { fetchBuildingsList } from '../../../../lib/buildings-cache';
+import { hasModule } from '../../../../lib/auth';
 import {
   RECURRING_WORK_STATUS_LABELS,
   TASK_EXECUTION_STATUS_LABELS,
   TASK_FREQUENCY_LABELS,
 } from '../../../../lib/labels';
-import type { Paginated, RecurringWorkListItem } from '../../../../lib/types';
+import {
+  RECURRING_WORK_GROUP_STATUS_BADGE,
+  RECURRING_WORK_GROUP_STATUS_LABELS,
+} from '../../../../lib/recurring-work-groups';
+import type {
+  Paginated,
+  RecurringWorkGroupSummary,
+  RecurringWorkListItem,
+} from '../../../../lib/types';
 import { LocationDisplay } from '../../../../components/LocationDisplay';
+import { TaskPhotoThumb } from '../../../../components/TaskPhotoThumb';
 
-const PAGE_SIZE = 20;
-
-const STATUS_BADGE_CLASS: Record<string, string> = {
-  COMPLETED: 'badge-success',
-  SCHEDULED: 'badge-info',
-  OVERDUE: 'badge-warning',
-};
+const GROUP_PAGE_SIZE = 20;
+const TASK_PAGE_SIZE = 20;
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return '—';
@@ -31,21 +37,229 @@ function formatDateTime(value: string | null | undefined): string {
   });
 }
 
+function formatPeriodDate(value: string): string {
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) return value;
+  return new Date(year, month - 1, day).toLocaleDateString('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
 function todayInputValue(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+const STATUS_BADGE_CLASS: Record<string, string> = {
+  COMPLETED: 'badge-success',
+  SCHEDULED: 'badge-info',
+  OVERDUE: 'badge-warning',
+};
+
+function RecurringTaskDetailList({ tasks }: { tasks: RecurringWorkListItem[] }) {
+  return (
+    <div className="recurring-task-list">
+      <p className="recurring-task-list-heading">
+        {tasks.length} tarea{tasks.length === 1 ? '' : 's'} en esta ubicación
+      </p>
+      {tasks.map((item) => {
+        const photos = item.execution?.photos ?? [];
+        const photoPending =
+          item.requiresPhoto &&
+          item.execution?.status === 'DONE' &&
+          photos.length === 0;
+
+        return (
+          <article key={item.id} className="recurring-task-card">
+            <div className="recurring-task-card-header">
+              <h3 className="recurring-task-card-title">{item.taskName}</h3>
+              <span className={`badge ${STATUS_BADGE_CLASS[item.displayStatus] ?? ''}`}>
+                {RECURRING_WORK_STATUS_LABELS[item.displayStatus] ?? item.displayStatus}
+              </span>
+            </div>
+
+            <dl className="recurring-task-card-meta">
+              <div className="recurring-task-meta-item">
+                <dt>Frecuencia</dt>
+                <dd>{TASK_FREQUENCY_LABELS[item.frequency] ?? item.frequency}</dd>
+              </div>
+              <div className="recurring-task-meta-item">
+                <dt>Período</dt>
+                <dd>{item.periodLabelDisplay}</dd>
+              </div>
+              <div className="recurring-task-meta-item">
+                <dt>Completado por</dt>
+                <dd>{item.execution?.executedBy.fullName ?? '—'}</dd>
+              </div>
+              <div className="recurring-task-meta-item">
+                <dt>Fecha y hora</dt>
+                <dd>{formatDateTime(item.execution?.executedAt ?? item.completedAt)}</dd>
+              </div>
+              <div className="recurring-task-meta-item">
+                <dt>Resultado</dt>
+                <dd>
+                  {item.execution
+                    ? (TASK_EXECUTION_STATUS_LABELS[item.execution.status] ?? item.execution.status)
+                    : '—'}
+                </dd>
+              </div>
+              <div className="recurring-task-meta-item recurring-task-meta-item--full">
+                <dt>Evidencia fotográfica</dt>
+                <dd>
+                  {photos.length > 0 ? (
+                    <div className="photo-thumbs">
+                      {photos.map((photo) => (
+                        <TaskPhotoThumb
+                          key={photo.id}
+                          photoId={photo.id}
+                          photoUrl={photo.url}
+                          title={photo.originalFilename ?? 'Ver foto'}
+                          context={{
+                            capturedAt: photo.capturedAt,
+                            uploadedAt: photo.uploadedAt,
+                            uploadedByName:
+                              photo.uploadedBy?.fullName ??
+                              item.execution?.executedBy.fullName ??
+                              null,
+                            taskName: item.taskName,
+                            buildingName: item.building?.name ?? null,
+                            floor: item.floor,
+                            zone: item.zone,
+                            subzone: item.subzone,
+                          }}
+                        />
+                      ))}
+                    </div>
+                  ) : photoPending ? (
+                    <span className="badge badge-warning">Realizada con foto pendiente</span>
+                  ) : item.execution ? (
+                    <span className="muted">Sin fotos</span>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                </dd>
+              </div>
+            </dl>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function RecurringGroupDetail({
+  group,
+  periodDate,
+  search,
+}: {
+  group: RecurringWorkGroupSummary;
+  periodDate: string;
+  search: string;
+}) {
+  const [tasks, setTasks] = useState<RecurringWorkListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [taskPage, setTaskPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+
+  useEffect(() => {
+    if (!group.floorId || !group.zoneId) {
+      setTasks([]);
+      setLoading(false);
+      setError('Ubicación incompleta para cargar tareas.');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    const params = new URLSearchParams({
+      buildingId: group.buildingId,
+      floorId: group.floorId,
+      zoneId: group.zoneId,
+      periodDate,
+      page: String(taskPage),
+      limit: String(TASK_PAGE_SIZE),
+    });
+    if (group.subzoneId) params.set('subzoneId', group.subzoneId);
+    if (search.trim()) params.set('search', search.trim());
+
+    void api
+      .get<Paginated<RecurringWorkListItem>>(`/tasks/recurring-work/group-tasks?${params}`)
+      .then((res) => {
+        setTasks(res.data);
+        setTotalPages(res.pages);
+        setTotal(res.total);
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : 'Error al cargar tareas');
+        setTasks([]);
+      })
+      .finally(() => setLoading(false));
+  }, [group.key, group.buildingId, group.floorId, group.zoneId, group.subzoneId, periodDate, search, taskPage]);
+
+  if (loading) {
+    return (
+      <div className="loading-state" style={{ padding: '12px 0' }}>
+        <div className="spinner" role="status" aria-label="Cargando tareas" />
+        <p className="muted">Cargando tareas…</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return <p className="muted">{error}</p>;
+  }
+
+  if (tasks.length === 0) {
+    return <p className="muted">No hay tareas en esta ubicación.</p>;
+  }
+
+  return (
+    <>
+      <RecurringTaskDetailList tasks={tasks} />
+      {totalPages > 1 ? (
+        <div className="pagination" style={{ marginTop: 12 }}>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={taskPage <= 1}
+            onClick={() => setTaskPage((p) => Math.max(1, p - 1))}
+          >
+            Anterior
+          </button>
+          <span className="pagination-info">
+            Página {taskPage} de {totalPages} · {total} tarea{total === 1 ? '' : 's'}
+          </span>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={taskPage >= totalPages}
+            onClick={() => setTaskPage((p) => Math.min(totalPages, p + 1))}
+          >
+            Siguiente
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export default function RecurringWorkListPage() {
-  const [items, setItems] = useState<RecurringWorkListItem[]>([]);
+  const readOnly = hasModule(APP_MODULES.TRABAJOS_RECURRENTES) && !hasModule(APP_MODULES.BUILDINGS);
+  const [groups, setGroups] = useState<RecurringWorkGroupSummary[]>([]);
+  const [groupTotal, setGroupTotal] = useState(0);
+  const [groupPages, setGroupPages] = useState(1);
   const [buildings, setBuildings] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
-  const [page, setPage] = useState(1);
-  const [pages, setPages] = useState(1);
-  const [total, setTotal] = useState(0);
+  const [groupPage, setGroupPage] = useState(1);
 
   const [buildingFilter, setBuildingFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -58,26 +272,27 @@ export default function RecurringWorkListPage() {
     setError(null);
     try {
       const params = new URLSearchParams({
-        page: String(page),
-        limit: String(PAGE_SIZE),
         periodDate,
+        page: String(groupPage),
+        limit: String(GROUP_PAGE_SIZE),
       });
       if (buildingFilter) params.set('buildingId', buildingFilter);
-      if (statusFilter) params.set('status', statusFilter);
+      if (statusFilter) params.set('groupStatus', statusFilter);
       if (search.trim()) params.set('search', search.trim());
 
-      const res = await api.get<Paginated<RecurringWorkListItem>>(
-        `/tasks/recurring-work/list?${params}`,
+      const res = await api.get<Paginated<RecurringWorkGroupSummary>>(
+        `/tasks/recurring-work/groups?${params}`,
       );
-      setItems(res.data);
-      setTotal(res.total);
-      setPages(Math.max(1, res.pages));
+      setGroups(res.data);
+      setGroupTotal(res.total);
+      setGroupPages(res.pages);
+      setExpandedKeys(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al cargar trabajos recurrentes');
     } finally {
       setLoading(false);
     }
-  }, [page, buildingFilter, statusFilter, periodDate, search]);
+  }, [buildingFilter, groupPage, periodDate, search, statusFilter]);
 
   useEffect(() => {
     void fetchBuildingsList()
@@ -91,17 +306,26 @@ export default function RecurringWorkListPage() {
 
   function applySearch(e: FormEvent) {
     e.preventDefault();
-    setPage(1);
     setSearch(searchInput.trim());
+    setGroupPage(1);
   }
 
   function clearFilters() {
-    setPage(1);
     setBuildingFilter('');
     setStatusFilter('');
     setPeriodDate(todayInputValue());
     setSearchInput('');
     setSearch('');
+    setGroupPage(1);
+  }
+
+  function toggleGroup(key: string) {
+    setExpandedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }
 
   const hasFilters = Boolean(buildingFilter || statusFilter || search || periodDate !== todayInputValue());
@@ -110,12 +334,17 @@ export default function RecurringWorkListPage() {
     <>
       <div className="page-header">
         <div>
-          <Link href="/trabajos-recurrentes" className="back-link">
-            ← Trabajos recurrentes
+          <Link
+            href={readOnly ? '/dashboard' : '/trabajos-recurrentes'}
+            className="back-link"
+          >
+            {readOnly ? '← Inicio' : '← Trabajos recurrentes'}
           </Link>
           <h1 className="page-title">Listado de Trabajos</h1>
           <p className="page-subtitle">
-            Tareas periódicas (no eventuales) con estado del período, responsable y evidencias.
+            {readOnly
+              ? 'Tareas agrupadas por ubicación. Abrí cada zona para ver el detalle de sus tareas.'
+              : 'Tareas periódicas agrupadas por zona o subzona. Abrí cada ubicación para ver el detalle.'}
           </p>
         </div>
       </div>
@@ -148,8 +377,8 @@ export default function RecurringWorkListPage() {
             <select
               value={buildingFilter}
               onChange={(e) => {
-                setPage(1);
                 setBuildingFilter(e.target.value);
+                setGroupPage(1);
               }}
             >
               <option value="">Todos</option>
@@ -161,20 +390,19 @@ export default function RecurringWorkListPage() {
             </select>
           </div>
           <div className="form-field">
-            <label>Estado</label>
+            <label>Estado general</label>
             <select
               value={statusFilter}
               onChange={(e) => {
-                setPage(1);
                 setStatusFilter(e.target.value);
+                setGroupPage(1);
               }}
             >
               <option value="">Todos</option>
-              {Object.entries(RECURRING_WORK_STATUS_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
+              <option value="COMPLETED">Completado</option>
+              <option value="PARTIAL">En curso</option>
+              <option value="SCHEDULED">Programado</option>
+              <option value="OVERDUE">Vencido</option>
             </select>
           </div>
           <div className="form-field">
@@ -183,8 +411,8 @@ export default function RecurringWorkListPage() {
               type="date"
               value={periodDate}
               onChange={(e) => {
-                setPage(1);
                 setPeriodDate(e.target.value);
+                setGroupPage(1);
               }}
             />
           </div>
@@ -195,7 +423,7 @@ export default function RecurringWorkListPage() {
             <div className="spinner" role="status" aria-label="Cargando" />
             <p className="muted">Cargando trabajos…</p>
           </div>
-        ) : items.length === 0 ? (
+        ) : groups.length === 0 ? (
           <p className="muted">No hay trabajos recurrentes con los filtros seleccionados.</p>
         ) : (
           <>
@@ -203,67 +431,29 @@ export default function RecurringWorkListPage() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Tarea</th>
-                    <th>Frecuencia</th>
-                    <th>Edificio</th>
+                    <th style={{ width: 40 }} />
                     <th>Ubicación</th>
+                    <th>Edificio</th>
                     <th>Período</th>
-                    <th>Estado</th>
-                    <th>Completado por</th>
-                    <th>Fecha y hora</th>
-                    <th>Resultado</th>
-                    <th>Fotos</th>
+                    <th>Estado general</th>
+                    <th>Tareas</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item) => (
-                    <tr key={item.id}>
-                      <td>{item.taskName}</td>
-                      <td>{TASK_FREQUENCY_LABELS[item.frequency] ?? item.frequency}</td>
-                      <td>{item.building?.name ?? '—'}</td>
-                      <td>
-                        <LocationDisplay
-                          floor={item.floor}
-                          zone={item.zone}
-                          subzone={item.subzone}
-                        />
-                      </td>
-                      <td>{item.periodLabelDisplay}</td>
-                      <td>
-                        <span className={`badge ${STATUS_BADGE_CLASS[item.displayStatus] ?? ''}`}>
-                          {RECURRING_WORK_STATUS_LABELS[item.displayStatus] ?? item.displayStatus}
-                        </span>
-                      </td>
-                      <td>{item.execution?.executedBy.fullName ?? '—'}</td>
-                      <td>{formatDateTime(item.execution?.executedAt ?? item.completedAt)}</td>
-                      <td>
-                        {item.execution
-                          ? (TASK_EXECUTION_STATUS_LABELS[item.execution.status] ??
-                            item.execution.status)
-                          : '—'}
-                      </td>
-                      <td>
-                        {item.execution?.photos.length ? (
-                          <div className="photo-thumbs">
-                            {item.execution.photos.map((photo) => (
-                              <a
-                                key={photo.id}
-                                href={photo.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title={photo.originalFilename ?? 'Ver foto'}
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={photo.url} alt="" className="photo-thumb" />
-                              </a>
-                            ))}
-                          </div>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {groups.map((group) => {
+                    const isExpanded = expandedKeys.has(group.key);
+                    return (
+                      <GroupRows
+                        key={group.key}
+                        group={group}
+                        isExpanded={isExpanded}
+                        onToggle={() => toggleGroup(group.key)}
+                        periodDateLabel={formatPeriodDate(periodDate)}
+                        periodDate={periodDate}
+                        search={search}
+                      />
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -272,19 +462,20 @@ export default function RecurringWorkListPage() {
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={groupPage <= 1}
+                onClick={() => setGroupPage((p) => Math.max(1, p - 1))}
               >
                 Anterior
               </button>
               <span className="pagination-info">
-                Página {page} de {pages} · {total} trabajo{total === 1 ? '' : 's'}
+                Página {groupPage} de {groupPages} · {groupTotal} ubicación
+                {groupTotal === 1 ? '' : 'es'}
               </span>
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
-                disabled={page >= pages}
-                onClick={() => setPage((p) => Math.min(pages, p + 1))}
+                disabled={groupPage >= groupPages}
+                onClick={() => setGroupPage((p) => Math.min(groupPages, p + 1))}
               >
                 Siguiente
               </button>
@@ -292,6 +483,70 @@ export default function RecurringWorkListPage() {
           </>
         )}
       </div>
+    </>
+  );
+}
+
+function GroupRows({
+  group,
+  isExpanded,
+  onToggle,
+  periodDateLabel,
+  periodDate,
+  search,
+}: {
+  group: RecurringWorkGroupSummary;
+  isExpanded: boolean;
+  onToggle: () => void;
+  periodDateLabel: string;
+  periodDate: string;
+  search: string;
+}) {
+  return (
+    <>
+      <tr
+        className={`recurring-group-row ${isExpanded ? 'is-expanded' : ''}`}
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        tabIndex={0}
+        role="button"
+        aria-expanded={isExpanded}
+      >
+        <td>
+          <span className="recurring-group-toggle" aria-hidden>
+            ›
+          </span>
+        </td>
+        <td>
+          <LocationDisplay floor={group.floor} zone={group.zone} subzone={group.subzone} />
+        </td>
+        <td>{group.building?.name ?? '—'}</td>
+        <td>{group.periodLabelDisplay || periodDateLabel}</td>
+        <td>
+          <span
+            className={`badge ${RECURRING_WORK_GROUP_STATUS_BADGE[group.aggregateStatus] ?? ''}`}
+          >
+            {RECURRING_WORK_GROUP_STATUS_LABELS[group.aggregateStatus]}
+          </span>
+        </td>
+        <td>
+          {group.taskCount} tarea{group.taskCount === 1 ? '' : 's'}
+        </td>
+      </tr>
+      {isExpanded ? (
+        <tr className="recurring-group-detail">
+          <td colSpan={6}>
+            <div className="recurring-group-detail-inner">
+              <RecurringGroupDetail group={group} periodDate={periodDate} search={search} />
+            </div>
+          </td>
+        </tr>
+      ) : null}
     </>
   );
 }

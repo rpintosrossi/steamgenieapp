@@ -5,7 +5,8 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { ReservationSource, WorkOrderType, WorkOrderStatus } from '@prisma/client';
-import { calendarDateFromInstant } from '@steam-genie/shared-constants';
+import { businessDayInstantRange, calendarDateFromInstant } from '@steam-genie/shared-constants';
+import { enrichReservationsWithReadiness } from '../../common/reservation-zone-readiness';
 import { snapshotEventualTasks } from '../../common/work-order-snapshot';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { CreateReservationDto } from './dto/create-reservation.dto';
@@ -19,20 +20,37 @@ export class ReservationsService {
   // ─── LIST ─────────────────────────────────────────────────────────────────
 
   async findAll(query: QueryReservationsDto) {
-    const { page = 1, limit = 20, buildingId, zoneId, subzoneId, status, from, to } = query;
+    const {
+      page = 1,
+      limit = 20,
+      buildingId,
+      zoneId,
+      subzoneId,
+      status,
+      from,
+      to,
+      excludeCompleted,
+    } = query;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = {};
     if (buildingId) where.buildingId = buildingId;
     if (zoneId) where.zoneId = zoneId;
     if (subzoneId) where.subzoneId = subzoneId;
     if (status) where.status = status;
-    if (from || to) {
+    if (from || to || excludeCompleted) {
       where.checkoutAt = {};
       if (from) where.checkoutAt.gte = new Date(from);
       if (to) where.checkoutAt.lte = new Date(to);
+      if (excludeCompleted) {
+        const startOfToday = businessDayInstantRange().start;
+        where.checkoutAt.gte =
+          where.checkoutAt.gte && where.checkoutAt.gte > startOfToday
+            ? where.checkoutAt.gte
+            : startOfToday;
+      }
     }
 
-    const [data, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       this.prisma.reservation.findMany({
         where,
         skip: (page - 1) * limit,
@@ -41,11 +59,13 @@ export class ReservationsService {
         select: {
           id: true, buildingId: true, floorId: true, zoneId: true, subzoneId: true,
           externalId: true, guestName: true, checkinAt: true, checkoutAt: true,
-          status: true, source: true, createdAt: true, updatedAt: true,
+          source: true, createdAt: true, updatedAt: true,
         },
       }),
       this.prisma.reservation.count({ where }),
     ]);
+
+    const data = await enrichReservationsWithReadiness(this.prisma, rows);
 
     return { data, total, page, limit, pages: Math.ceil(total / limit) };
   }

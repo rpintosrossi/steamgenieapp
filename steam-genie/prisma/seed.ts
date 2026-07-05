@@ -17,6 +17,7 @@ import * as bcrypt from 'bcrypt';
 import {
   ALL_APP_MODULES,
   APP_MODULES,
+  SYSTEM_ROLE_MODULES,
   type AppModuleKey,
 } from '@steam-genie/shared-constants';
 
@@ -26,30 +27,12 @@ const ROLES = [
   { name: 'admin', description: 'Administrador del sistema. Acceso total.' },
   { name: 'manager', description: 'Encargado de edificio. Puede iniciar cualquier servicio en sus edificios.' },
   { name: 'cleaner', description: 'Limpiador. Solo puede iniciar WOs donde tiene assignment ACCEPTED.' },
-  { name: 'client', description: 'Cliente. Acceso a reportes y estado de sus espacios. (Fase 2)' },
-  { name: 'provider', description: 'Proveedor externo de servicios. (Fase 2)' },
+  { name: 'client', description: 'Cliente. Tareas (solo lectura), trabajos recurrentes, órdenes check-in/out y peticiones de servicio en edificios habilitados.' },
+  { name: 'provider', description: 'Proveedor externo. Solo vista de órdenes check-in/out (aceptadas, en curso o completadas) en edificios habilitados.' },
   { name: 'stock', description: 'Encargado de stock. Gestión de inventario y proveedores.' },
 ] as const;
 
-const ROLE_MODULES: Record<string, AppModuleKey[]> = {
-  admin: [...ALL_APP_MODULES],
-  manager: [
-    APP_MODULES.DASHBOARD,
-    APP_MODULES.BUILDINGS,
-    APP_MODULES.TASKS,
-    APP_MODULES.RESERVAS,
-    APP_MODULES.SERVICIOS_EVENTUALES,
-    APP_MODULES.TRABAJOS_RECURRENTES,
-    APP_MODULES.PRESENCIA,
-    APP_MODULES.STOCK,
-    APP_MODULES.STOCK_MONITORING,
-    APP_MODULES.STOCK_SHIPMENTS,
-  ],
-  cleaner: [],
-  client: [],
-  provider: [],
-  stock: [APP_MODULES.DASHBOARD, APP_MODULES.STOCK],
-};
+const ROLE_MODULES: Record<string, AppModuleKey[]> = SYSTEM_ROLE_MODULES;
 
 async function syncRolePermissions(roleId: string, modules: AppModuleKey[]) {
   await prisma.rolePermission.deleteMany({ where: { roleId } });

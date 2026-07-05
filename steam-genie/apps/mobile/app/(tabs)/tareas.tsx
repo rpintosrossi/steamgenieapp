@@ -24,7 +24,12 @@ import { SyncStatusBar } from '../../src/components/SyncStatusBar';
 import { BrandedScreenHeader } from '../../src/components/BrandedScreenHeader';
 import { COLORS } from '../../src/constants/colors';
 import { isNetworkError } from '../../src/utils/network';
-import { sleep } from '../../src/utils/async';
+import {
+  CustomFieldPickerModal,
+  hasTaskCustomFields,
+  type TaskCustomField,
+  type TaskFieldValueInput,
+} from '../../src/components/CustomFieldPickerModal';
 
 const RECONCILE_DELAYS_MS = [0, 500, 1200, 2500] as const;
 
@@ -40,11 +45,13 @@ interface PeriodicDueItem {
     subzoneId: string | null;
     requiresPhoto: boolean;
     requiresRejectionReason: boolean;
+    customFields?: TaskCustomField[];
   };
   execution: {
     id: string;
     status: string;
     photos: { id: string; url: string }[];
+    fieldValues?: TaskFieldValueInput[];
   } | null;
 }
 
@@ -76,14 +83,42 @@ const STATUS_LABELS: Record<string, string> = {
   SKIPPED: 'Omitida',
 };
 
+const DONE_PHOTO_PENDING_LABEL = 'Realizada con foto pendiente';
+
+function isDoneWithPendingPhoto(item: PeriodicDueItem): boolean {
+  return (
+    item.execution?.status === 'DONE' &&
+    item.task.requiresPhoto &&
+    (item.execution?.photos?.length ?? 0) === 0
+  );
+}
+
+function isTaskFullyResolved(item: PeriodicDueItem): boolean {
+  const status = item.execution?.status;
+  if (!status) return false;
+  if (isDoneWithPendingPhoto(item)) return false;
+  return true;
+}
+
+function getTaskStatusLabel(item: PeriodicDueItem): string | null {
+  const status = item.execution?.status;
+  if (!status) return null;
+  if (isDoneWithPendingPhoto(item)) return DONE_PHOTO_PENDING_LABEL;
+  return STATUS_LABELS[status] ?? status;
+}
+
 function countProgress(tasks: PeriodicDueItem[]) {
   const total = tasks.length;
-  const resolved = tasks.filter((t) => t.execution?.status).length;
+  const resolved = tasks.filter(isTaskFullyResolved).length;
   return { total, resolved };
 }
 
 function isTaskPending(item: PeriodicDueItem): boolean {
   return !item.execution?.status;
+}
+
+function isBulkSelectable(item: PeriodicDueItem): boolean {
+  return isTaskPending(item) && !hasTaskCustomFields(item.task.customFields);
 }
 
 function getFloorShortName(name: string, sortOrder: number): string {
@@ -177,6 +212,7 @@ export default function TareasScreen() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [reasonPickerItem, setReasonPickerItem] = useState<PeriodicDueItem | null>(null);
+  const [fieldPickerItem, setFieldPickerItem] = useState<PeriodicDueItem | null>(null);
   const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   const [selectedSubzoneId, setSelectedSubzoneId] = useState<string | null>(null);
@@ -325,6 +361,7 @@ export default function TareasScreen() {
     item: PeriodicDueItem,
     newStatus: 'DONE' | 'NOT_DONE',
     rejectionReasonId?: string,
+    fieldValues?: TaskFieldValueInput[],
     options?: { silent?: boolean; skipReload?: boolean },
   ): Promise<boolean> {
     setMarkingId(item.id);
@@ -335,6 +372,7 @@ export default function TareasScreen() {
         status: newStatus,
         clientOperationId,
         ...(rejectionReasonId ? { rejectionReasonId } : {}),
+        ...(fieldValues?.length ? { fieldValues } : {}),
       };
 
       if (isOnline) {
@@ -360,6 +398,7 @@ export default function TareasScreen() {
             periodicTaskInstanceId: item.id,
             status: newStatus,
             rejectionReasonId,
+            fieldValues,
             deviceId: 'mobile',
           },
           occurredAt,
@@ -374,6 +413,7 @@ export default function TareasScreen() {
                     id: clientOperationId,
                     status: newStatus,
                     photos: i.execution?.photos ?? [],
+                    fieldValues: fieldValues ?? i.execution?.fieldValues,
                   },
                 }
               : i,
@@ -396,25 +436,41 @@ export default function TareasScreen() {
     }
   }
 
-  function toggleSelectItem(itemId: string) {
+  function toggleSelectItem(item: PeriodicDueItem) {
+    if (!isBulkSelectable(item)) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(itemId)) next.delete(itemId);
-      else next.add(itemId);
+      if (next.has(item.id)) next.delete(item.id);
+      else next.add(item.id);
       return next;
     });
   }
 
   function selectAllPendingInSubzone(tasks: PeriodicDueItem[]) {
-    setSelectedIds(new Set(tasks.filter(isTaskPending).map((t) => t.id)));
+    setSelectedIds(new Set(tasks.filter(isBulkSelectable).map((t) => t.id)));
   }
 
   function deselectAllInSubzone() {
     setSelectedIds(new Set());
   }
 
+  function requestMarkDone(item: PeriodicDueItem) {
+    if ((item.task.customFields ?? []).length > 0) {
+      setFieldPickerItem(item);
+      return;
+    }
+    void markItem(item, 'DONE');
+  }
+
+  function handleConfirmFieldValues(values: TaskFieldValueInput[]) {
+    if (!fieldPickerItem) return;
+    const item = fieldPickerItem;
+    setFieldPickerItem(null);
+    void markItem(item, 'DONE', undefined, values);
+  }
+
   async function markSelectedAsDone(tasks: PeriodicDueItem[]) {
-    const toMark = tasks.filter((t) => selectedIds.has(t.id) && isTaskPending(t));
+    const toMark = tasks.filter((t) => selectedIds.has(t.id) && isBulkSelectable(t));
     if (toMark.length === 0) return;
 
     Alert.alert(
@@ -610,7 +666,7 @@ export default function TareasScreen() {
               onDeselectAll={deselectAllInSubzone}
               onBulkMarkDone={() => markSelectedAsDone(activeSubzone?.tasks ?? [])}
               onDone={(item) => {
-                void markItem(item, 'DONE');
+                requestMarkDone(item);
               }}
               onNotDone={handleMarkNotDone}
               onAddPhoto={handlePhotoUpload}
@@ -625,6 +681,15 @@ export default function TareasScreen() {
           )}
         </>
       )}
+
+      <CustomFieldPickerModal
+        visible={fieldPickerItem != null}
+        taskName={fieldPickerItem?.task.name ?? ''}
+        fields={fieldPickerItem?.task.customFields ?? []}
+        initialValues={fieldPickerItem?.execution?.fieldValues}
+        onCancel={() => setFieldPickerItem(null)}
+        onConfirm={handleConfirmFieldValues}
+      />
 
       <Modal visible={!!reasonPickerItem} transparent animationType="slide">
         <View style={styles.modalOverlay}>
@@ -794,7 +859,7 @@ function ZoneDetailView({
   onSelectSubzone: (subId: string) => void;
   onRefresh: () => void;
   onToggleSelectionMode: () => void;
-  onToggleSelectItem: (itemId: string) => void;
+  onToggleSelectItem: (item: PeriodicDueItem) => void;
   onSelectAllPending: () => void;
   onDeselectAll: () => void;
   onBulkMarkDone: () => void;
@@ -805,12 +870,11 @@ function ZoneDetailView({
   const zoneProgress = countProgress(zone.tasks);
   const subzoneTasks = activeSubzone?.tasks ?? [];
   const pendingInSubzone = subzoneTasks.filter(isTaskPending);
-  const selectedCount = subzoneTasks.filter(
-    (t) => selectedIds.has(t.id) && isTaskPending(t),
-  ).length;
-  const allPendingSelected =
-    pendingInSubzone.length > 0 &&
-    pendingInSubzone.every((t) => selectedIds.has(t.id));
+  const bulkSelectablePending = subzoneTasks.filter(isBulkSelectable);
+  const selectedCount = bulkSelectablePending.filter((t) => selectedIds.has(t.id)).length;
+  const allBulkSelectableSelected =
+    bulkSelectablePending.length > 0 &&
+    bulkSelectablePending.every((t) => selectedIds.has(t.id));
 
   return (
     <View style={styles.zoneDetail}>
@@ -884,22 +948,22 @@ function ZoneDetailView({
         })}
       </ScrollView>
 
-      {selectionMode && pendingInSubzone.length > 0 && (
+      {selectionMode && bulkSelectablePending.length > 0 && (
         <View style={styles.selectionToolbar}>
           <TouchableOpacity
             style={styles.selectAllBtn}
             onPress={() => {
-              if (allPendingSelected) onDeselectAll();
+              if (allBulkSelectableSelected) onDeselectAll();
               else onSelectAllPending();
             }}
           >
             <Ionicons
-              name={allPendingSelected ? 'checkbox' : 'square-outline'}
+              name={allBulkSelectableSelected ? 'checkbox' : 'square-outline'}
               size={18}
               color={COLORS.primary}
             />
             <Text style={styles.selectAllText}>
-              {allPendingSelected ? 'Deseleccionar todas' : 'Seleccionar todas'}
+              {allBulkSelectableSelected ? 'Deseleccionar todas' : 'Seleccionar todas'}
             </Text>
           </TouchableOpacity>
           <Text style={styles.selectionCount}>
@@ -925,7 +989,7 @@ function ZoneDetailView({
             isUploadingPhoto={uploadingPhotoForItemId === item.id}
             selectionMode={selectionMode}
             isSelected={selectedIds.has(item.id)}
-            onToggleSelect={() => onToggleSelectItem(item.id)}
+            onToggleSelect={() => onToggleSelectItem(item)}
             onDone={() => onDone(item)}
             onNotDone={() => onNotDone(item)}
             onAddPhoto={() => onAddPhoto(item)}
@@ -993,9 +1057,12 @@ function TaskRow({
   const canChangeNotDoneReason = isNotDone && item.task.requiresRejectionReason;
   const disableNotDoneBtn = isEditing && isNotDone && !canChangeNotDoneReason;
   const photoCount = item.execution?.photos?.length ?? 0;
-  const needsPhoto = isDone && item.task.requiresPhoto && photoCount === 0;
+  const needsPhoto = isDoneWithPendingPhoto(item);
+  const statusLabel = getTaskStatusLabel(item);
   const showMarkActions = !isResolved || isEditing;
-  const canSelect = selectionMode && isTaskPending(item);
+  const requiresIndividualCompletion =
+    isTaskPending(item) && hasTaskCustomFields(item.task.customFields);
+  const canSelect = selectionMode && isBulkSelectable(item);
 
   useEffect(() => {
     setIsEditing(false);
@@ -1026,29 +1093,44 @@ function TaskRow({
       <View style={styles.taskInfo}>
         <Ionicons
           name={
-            isDone
-              ? 'checkmark-circle'
-              : execStatus === 'NOT_DONE'
-                ? 'close-circle'
-                : 'ellipse-outline'
+            needsPhoto
+              ? 'camera-outline'
+              : isDone
+                ? 'checkmark-circle'
+                : execStatus === 'NOT_DONE'
+                  ? 'close-circle'
+                  : 'ellipse-outline'
           }
           size={20}
           color={
-            isDone ? COLORS.success : execStatus === 'NOT_DONE' ? COLORS.error : COLORS.disabled
+            needsPhoto
+              ? COLORS.warning
+              : isDone
+                ? COLORS.success
+                : execStatus === 'NOT_DONE'
+                  ? COLORS.error
+                  : COLORS.disabled
           }
         />
         <View style={styles.taskTextWrap}>
-          <Text style={styles.taskName}>{item.task.name}</Text>
-          {isResolved && (
-            <Text style={styles.taskStatus}>{STATUS_LABELS[execStatus] ?? execStatus}</Text>
-          )}
+          <View style={styles.taskNameRow}>
+            <Text style={[styles.taskName, requiresIndividualCompletion && styles.taskNameWithHint]} numberOfLines={2}>
+              {item.task.name}
+            </Text>
+            {requiresIndividualCompletion ? (
+              <Text style={styles.individualHint}>Completar individualmente</Text>
+            ) : null}
+          </View>
+          {statusLabel ? (
+            <Text style={[styles.taskStatus, needsPhoto && styles.taskStatusPhotoPending]}>
+              {statusLabel}
+            </Text>
+          ) : null}
           {isUploadingPhoto ? (
             <View style={styles.photoUploadingRow}>
               <ActivityIndicator size="small" color={COLORS.primary} />
               <Text style={styles.photoUploadingText}>Subiendo foto...</Text>
             </View>
-          ) : needsPhoto ? (
-            <Text style={styles.photoWarning}>Falta foto obligatoria</Text>
           ) : null}
         </View>
       </View>
@@ -1134,7 +1216,17 @@ function TaskRow({
     );
   }
 
-  return <View style={styles.taskRow}>{rowContent}</View>;
+  return (
+    <View
+      style={[
+        styles.taskRow,
+        needsPhoto && styles.taskRowPhotoPending,
+        requiresIndividualCompletion && selectionMode && styles.taskRowIndividual,
+      ]}
+    >
+      {rowContent}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -1422,13 +1514,38 @@ const styles = StyleSheet.create({
     borderColor: COLORS.primary,
     backgroundColor: '#f0f7ff',
   },
+  taskRowIndividual: {
+    borderStyle: 'dashed',
+    backgroundColor: '#fffbeb',
+    borderColor: '#fde68a',
+  },
+  taskRowPhotoPending: {
+    borderColor: COLORS.warning,
+    backgroundColor: '#fffbeb',
+  },
+  taskNameRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  individualHint: {
+    flex: 1,
+    minWidth: 120,
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.warning,
+    lineHeight: 16,
+  },
   selectCheckbox: {
     marginRight: 2,
   },
   taskInfo: { flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   taskTextWrap: { flex: 1, gap: 2 },
-  taskName: { fontSize: 13, color: COLORS.text },
+  taskName: { fontSize: 13, color: COLORS.text, flexShrink: 1 },
+  taskNameWithHint: { flexShrink: 1, maxWidth: '58%' },
   taskStatus: { fontSize: 11, color: COLORS.textMuted },
+  taskStatusPhotoPending: { color: COLORS.warning, fontWeight: '700' },
   photoWarning: { fontSize: 11, color: COLORS.warning, fontWeight: '600' },
   photoUploadingRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
   photoUploadingText: { fontSize: 11, color: COLORS.primary, fontWeight: '600' },
