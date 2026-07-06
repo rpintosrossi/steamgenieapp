@@ -1,17 +1,20 @@
+const PRODUCTION_API_URL = 'https://steamgenie.up.railway.app';
+
 function parseConfiguredApiUrl(): string {
-  const raw = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+  const raw =
+    process.env.NEXT_PUBLIC_API_URL ??
+    (process.env.NODE_ENV === 'production' ? PRODUCTION_API_URL : 'http://localhost:4000');
   const trimmed = raw.trim().replace(/\/$/, '');
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
   return `https://${trimmed}`;
 }
 
-function extractPortFromUrl(url: string): string {
-  try {
-    const port = new URL(url).port;
-    return port || '4000';
-  } catch {
-    return '4000';
-  }
+function isPrivateLanHost(hostname: string): boolean {
+  return (
+    /^10\./.test(hostname) ||
+    /^192\.168\./.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+  );
 }
 
 /** URL de la API según el host desde el que se abre el panel (soporta acceso por IP en la red local). */
@@ -22,9 +25,21 @@ export function getApiBaseUrl(): string {
 
   const { hostname, protocol } = window.location;
   if (hostname === 'localhost' || hostname === '127.0.0.1') return configured;
+  if (!isPrivateLanHost(hostname)) return configured;
 
-  const apiPort = process.env.NEXT_PUBLIC_API_PORT ?? extractPortFromUrl(configured);
-  return `${protocol}//${hostname}:${apiPort}`;
+  try {
+    const configuredUrl = new URL(configured);
+    if (
+      configuredUrl.hostname !== 'localhost' &&
+      configuredUrl.hostname !== '127.0.0.1'
+    ) {
+      return configured;
+    }
+    const apiPort = process.env.NEXT_PUBLIC_API_PORT ?? (configuredUrl.port || '4000');
+    return `${protocol}//${hostname}:${apiPort}`;
+  } catch {
+    return configured;
+  }
 }
 
 /** @deprecated Usar getApiBaseUrl() — se mantiene por compatibilidad con imports existentes. */
