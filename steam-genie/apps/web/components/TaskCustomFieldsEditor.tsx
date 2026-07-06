@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { api } from '../lib/api-client';
+import type { TaskCustomField, TaskCustomFieldOption } from '../lib/task-custom-fields';
 import {
   CustomFieldDraftOptionsEditor,
   CustomFieldFlagToggles,
@@ -13,21 +14,7 @@ import {
   CustomFieldsSection,
 } from './TaskCustomFieldsShared';
 
-export type TaskCustomFieldOption = {
-  id: string;
-  label: string;
-  sortOrder: number;
-};
-
-export type TaskCustomField = {
-  id: string;
-  label: string;
-  fieldType: 'DROPDOWN';
-  isRequired: boolean;
-  showInReport: boolean;
-  sortOrder: number;
-  options: TaskCustomFieldOption[];
-};
+export type { TaskCustomField, TaskCustomFieldOption };
 
 type TaskCustomFieldsEditorProps = {
   taskId: string;

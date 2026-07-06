@@ -3,7 +3,8 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { TASK_FREQUENCIES } from '@steam-genie/shared-constants';
 import { LocationPicker } from './LocationPicker';
-import { TaskCustomFieldsEditor, type TaskCustomField } from './TaskCustomFieldsEditor';
+import { TaskCustomFieldsEditor } from './TaskCustomFieldsEditor';
+import type { TaskCustomField } from '../lib/task-custom-fields';
 import { api } from '../lib/api-client';
 import { TASK_FREQUENCY_LABELS } from '../lib/labels';
 import type { TaskItem } from '../lib/types';
