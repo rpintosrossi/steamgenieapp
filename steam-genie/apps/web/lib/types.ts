@@ -585,4 +585,21 @@ export interface StockMovementRow {
   } | null;
 }
 
+export interface DashboardOperationalTimes {
+  avgServiceDurationMinutes: number | null;
+  totalAttendanceHoursToday: number;
+}
+
+export interface DashboardStats {
+  pendingServices: number;
+  inProgressServices: number;
+  completedServicesToday: number;
+  upcomingReservations: number;
+  roomsNotReady: number;
+  overdueTasks: number;
+  activePresence: number;
+  operationalTimes: DashboardOperationalTimes;
+  generatedAt: string;
+}
+
 

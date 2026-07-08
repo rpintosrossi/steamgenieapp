@@ -1,8 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { APP_MODULES, ROLES } from '@steam-genie/shared-constants';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { APP_MODULES, ROLES, type RoleName } from '@steam-genie/shared-constants';
 import { getCurrentUserRole, hasModule } from '../../../lib/auth';
+import { api } from '../../../lib/api-client';
+import type { DashboardStats } from '../../../lib/types';
 
 const CLIENT_MODULES = [
   {
@@ -111,10 +114,160 @@ const ADMIN_MODULES = [
   },
 ];
 
+type KpiTone = 'default' | 'warning' | 'error' | 'success' | 'info';
+
+interface DashboardKpi {
+  key: string;
+  label: string;
+  value: string;
+  href: string;
+  tone?: KpiTone;
+  hint?: string;
+}
+
+function toneColor(tone: KpiTone = 'default'): string | undefined {
+  if (tone === 'warning') return 'var(--color-warning)';
+  if (tone === 'error') return 'var(--color-error)';
+  if (tone === 'success') return 'var(--color-success)';
+  if (tone === 'info') return 'var(--color-info, var(--color-primary))';
+  return undefined;
+}
+
+function formatOperationalValue(stats: DashboardStats): string {
+  const { avgServiceDurationMinutes, totalAttendanceHoursToday } = stats.operationalTimes;
+  if (avgServiceDurationMinutes == null) {
+    return `${totalAttendanceHoursToday} h`;
+  }
+  return `${avgServiceDurationMinutes} min`;
+}
+
+function buildKpis(stats: DashboardStats, role: RoleName | null): DashboardKpi[] {
+  const canSeeServices =
+    hasModule(APP_MODULES.RESERVAS) ||
+    hasModule(APP_MODULES.SERVICIOS_EVENTUALES) ||
+    hasModule(APP_MODULES.ORDENES_CHECKIN);
+  const canSeeReservations =
+    hasModule(APP_MODULES.RESERVAS) || hasModule(APP_MODULES.ORDENES_CHECKIN);
+  const canSeeRecurring =
+    hasModule(APP_MODULES.TRABAJOS_RECURRENTES) || hasModule(APP_MODULES.TASKS);
+  const canSeePresence = hasModule(APP_MODULES.PRESENCIA);
+  const canSeeOperationalTimes =
+    canSeePresence || hasModule(APP_MODULES.REPORTES);
+
+  const servicesHref =
+    role === ROLES.CLIENT || role === ROLES.PROVIDER
+      ? '/ordenes-checkin'
+      : '/trabajos-eventuales/servicios';
+
+  const items: DashboardKpi[] = [];
+
+  if (canSeeServices) {
+    items.push(
+      {
+        key: 'pendingServices',
+        label: 'Servicios pendientes',
+        value: String(stats.pendingServices),
+        href: servicesHref,
+        tone: stats.pendingServices > 0 ? 'warning' : 'default',
+      },
+      {
+        key: 'inProgressServices',
+        label: 'Servicios en curso',
+        value: String(stats.inProgressServices),
+        href: servicesHref,
+        tone: stats.inProgressServices > 0 ? 'info' : 'default',
+      },
+      {
+        key: 'completedServicesToday',
+        label: 'Servicios completados hoy',
+        value: String(stats.completedServicesToday),
+        href: servicesHref,
+        tone: stats.completedServicesToday > 0 ? 'success' : 'default',
+      },
+    );
+  }
+
+  if (canSeeReservations) {
+    items.push(
+      {
+        key: 'upcomingReservations',
+        label: 'Reservas próximas',
+        value: String(stats.upcomingReservations),
+        href: '/trabajos-eventuales/reservas',
+      },
+      {
+        key: 'roomsNotReady',
+        label: 'Habitaciones no listas',
+        value: String(stats.roomsNotReady),
+        href: '/trabajos-eventuales/reservas',
+        tone: stats.roomsNotReady > 0 ? 'error' : 'default',
+      },
+    );
+  }
+
+  if (canSeeRecurring) {
+    items.push({
+      key: 'overdueTasks',
+      label: 'Tareas vencidas',
+      value: String(stats.overdueTasks),
+      href: '/trabajos-recurrentes/listado',
+      tone: stats.overdueTasks > 0 ? 'error' : 'default',
+    });
+  }
+
+  if (canSeePresence) {
+    items.push({
+      key: 'activePresence',
+      label: 'Presencia activa',
+      value: String(stats.activePresence),
+      href: '/presencia/timeline',
+      tone: stats.activePresence > 0 ? 'info' : 'default',
+    });
+  }
+
+  if (canSeeOperationalTimes) {
+    items.push({
+      key: 'operationalTimes',
+      label: 'Tiempos operativos hoy',
+      value: formatOperationalValue(stats),
+      href: '/reportes/por-fecha',
+      hint:
+        stats.operationalTimes.avgServiceDurationMinutes == null
+          ? `${stats.operationalTimes.totalAttendanceHoursToday} h fichadas`
+          : `Prom. servicio · ${stats.operationalTimes.totalAttendanceHoursToday} h fichadas`,
+    });
+  }
+
+  return items;
+}
+
 export default function DashboardPage() {
   const role = getCurrentUserRole();
   const isProviderOnly = role === ROLES.PROVIDER;
   const isClient = role === ROLES.CLIENT;
+
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [statsError, setStatsError] = useState<string | null>(null);
+
+  const loadStats = useCallback(async () => {
+    setStatsLoading(true);
+    setStatsError(null);
+    try {
+      const data = await api.get<DashboardStats>('/dashboard/stats');
+      setStats(data);
+    } catch (e) {
+      setStatsError(e instanceof Error ? e.message : 'No se pudieron cargar los indicadores.');
+    } finally {
+      setStatsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadStats();
+  }, [loadStats]);
+
+  const kpis = useMemo(() => (stats ? buildKpis(stats, role) : []), [stats, role]);
 
   const modules = isProviderOnly
     ? PROVIDER_MODULES.filter((mod) => hasModule(mod.module))
@@ -132,7 +285,7 @@ export default function DashboardPage() {
     ? 'Consultá el estado de las órdenes check-in / check-out en tus edificios habilitados.'
     : isClient
       ? 'Tareas, trabajos recurrentes, órdenes de trabajo y peticiones de servicio en tus edificios habilitados.'
-      : 'Gestioná la configuración, trabajos eventuales y recurrentes desde un solo lugar.';
+      : 'Indicadores operativos en tiempo real y acceso rápido a cada módulo.';
 
   return (
     <>
@@ -141,7 +294,46 @@ export default function DashboardPage() {
           <h1 className="page-title">{title}</h1>
           <p className="page-subtitle">{subtitle}</p>
         </div>
+        {kpis.length > 0 ? (
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => void loadStats()}
+            disabled={statsLoading}
+          >
+            {statsLoading ? 'Actualizando…' : 'Actualizar indicadores'}
+          </button>
+        ) : null}
       </div>
+
+      {kpis.length > 0 ? (
+        <section className="dashboard-kpi-section" aria-label="Indicadores operativos">
+          {statsError ? (
+            <p className="alert alert-error" role="alert">
+              {statsError}
+            </p>
+          ) : null}
+
+          <div className="hierarchy-stats dashboard-kpi-grid">
+            {kpis.map((kpi) => (
+              <Link
+                key={kpi.key}
+                href={kpi.href}
+                className="hierarchy-stat-chip dashboard-kpi-chip"
+              >
+                <span
+                  className="hierarchy-stat-value"
+                  style={{ color: toneColor(kpi.tone) }}
+                >
+                  {statsLoading && !stats ? '—' : kpi.value}
+                </span>
+                <span className="hierarchy-stat-label">{kpi.label}</span>
+                {kpi.hint ? <span className="dashboard-kpi-hint">{kpi.hint}</span> : null}
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <div className="module-grid">
         {modules.map((mod) => (
