@@ -19,6 +19,14 @@ export default (): ExpoConfig => ({
     'expo-router',
     'expo-secure-store',
     [
+      'expo-notifications',
+      {
+        icon: './assets/images/logo-sinletras.png',
+        color: '#0a1628',
+        defaultChannel: 'default',
+      },
+    ],
+    [
       'expo-location',
       {
         locationWhenInUsePermission:
@@ -55,7 +63,8 @@ export default (): ExpoConfig => ({
   },
   android: {
     package: 'com.steamgenie.app',
-    versionCode: 6,
+    versionCode: 8,
+    usesCleartextTraffic: true,
     softwareKeyboardLayoutMode: 'resize',
     permissions: [
       'android.permission.INTERNET',
@@ -64,6 +73,7 @@ export default (): ExpoConfig => ({
       'android.permission.ACCESS_COARSE_LOCATION',
       'android.permission.CAMERA',
       'android.permission.READ_EXTERNAL_STORAGE',
+      'android.permission.POST_NOTIFICATIONS',
     ],
   },
   experiments: {

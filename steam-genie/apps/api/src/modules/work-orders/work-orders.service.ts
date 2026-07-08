@@ -16,6 +16,7 @@ import { RejectWorkOrderDto } from './dto/reject-work-order.dto';
 import { CreateCheckoutCleaningDto } from './dto/create-checkout-cleaning.dto';
 import { CreateAdditionalRequestDto } from './dto/create-additional-request.dto';
 import { WORK_ORDER_LIST_SELECT } from './work-order-list.select';
+import { NotificationsService } from '../notifications/notifications.service';
 import type { AuthUser } from '@steam-genie/shared-types';
 
 const EXTERNAL_VIEWER_ROLES = new Set(['client', 'provider']);
@@ -75,7 +76,10 @@ const WO_DETAIL_INCLUDE = {
 
 @Injectable()
 export class WorkOrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   // ─── LIST ─────────────────────────────────────────────────────────────────
 
@@ -389,6 +393,8 @@ export class WorkOrdersService {
       throw new NotFoundException('One or more users not found');
     }
 
+    const notifiedUserIds: string[] = [];
+
     await this.prisma.$transaction(async (tx) => {
       const existing = await tx.workOrderAssignment.findMany({
         where: {
@@ -425,6 +431,7 @@ export class WorkOrdersService {
               respondedAt: null,
             },
           });
+          notifiedUserIds.push(userId);
         } else {
           toCreate.push(userId);
         }
@@ -438,6 +445,7 @@ export class WorkOrdersService {
             status: 'PENDING',
           })),
         });
+        notifiedUserIds.push(...toCreate);
       }
 
       if (wo.status === WorkOrderStatus.UNASSIGNED) {
@@ -447,6 +455,18 @@ export class WorkOrdersService {
         });
       }
     });
+
+    if (notifiedUserIds.length > 0) {
+      const assigned = await this.findOneForList(id);
+      void this.notificationsService
+        .notifyWorkOrderAssigned({
+          workOrderId: assigned.id,
+          title: assigned.title,
+          buildingName: assigned.building.name,
+          userIds: notifiedUserIds,
+        })
+        .catch(() => undefined);
+    }
 
     return this.findOneForList(id);
   }

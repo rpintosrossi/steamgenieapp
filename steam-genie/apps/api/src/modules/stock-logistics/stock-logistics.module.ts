@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { UsersModule } from '../users/users.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { ModulesGuard } from '../../common/guards/modules.guard';
 import { StockLogisticsController } from './stock-logistics.controller';
@@ -10,7 +11,7 @@ import { StockShipmentsService } from './stock-shipments.service';
 import { StockMovementsModule } from './stock-movements.module';
 
 @Module({
-  imports: [UsersModule, StockMovementsModule],
+  imports: [UsersModule, StockMovementsModule, NotificationsModule],
   controllers: [StockLogisticsController],
   providers: [
     StockMonitoringService,

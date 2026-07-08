@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { APP_MODULES } from '@steam-genie/shared-constants';
 import { hasModule } from '../../../lib/auth';
+import { NotificationTestPanel } from '../../../components/NotificationTestPanel';
 
 const SUBMODULES = [
   {
@@ -75,6 +76,8 @@ export default function ConfiguracionPage() {
           </Link>
         ))}
       </div>
+
+      <NotificationTestPanel />
     </>
   );
 }

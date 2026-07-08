@@ -10,6 +10,7 @@ import { Response } from 'express';
 import * as path from 'path';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StorageService } from '../../infrastructure/storage/storage.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateBuildingStockAlertDto } from './dto/create-building-stock-alert.dto';
 
 const ALERT_SELECT = {
@@ -46,6 +47,7 @@ export class BuildingStockAlertsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async listForBuilding(buildingId: string, includeResolved = false) {
@@ -197,6 +199,15 @@ export class BuildingStockAlertsService {
       },
       select: ALERT_SELECT,
     });
+
+    void this.notificationsService
+      .notifyStockAlertCreated({
+        alertId: created.id,
+        buildingId,
+        productName: created.product.name,
+      })
+      .catch(() => undefined);
+
     return this.formatAlert(created);
   }
 

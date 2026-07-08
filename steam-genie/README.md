@@ -277,11 +277,24 @@ pnpm exec eas build --platform android --profile preview
 - Al terminar, EAS muestra un link para **descargar el APK**
 - Instalalo en el celular (habilitar “orígenes desconocidos”)
 
-### 4. Cambiar URL de la API
+### 4. Publicar APK en la web (descarga para operarios)
+
+Después de cada build, copiá la APK al admin web para que el botón de descarga muestre la última versión:
+
+```bash
+cd steam-genie/apps/mobile
+pnpm publish:apk /ruta/descargada/steam-genie.apk
+```
+
+Esto actualiza `apps/web/public/downloads/apk-info.json` (versión desde `app.config.ts`) y copia `steam-genie.apk`. Hacé commit y deploy de `apps/web` (Vercel).
+
+El botón aparece en **login** y en el **menú lateral** del admin, con el texto `vX.Y.Z (build N)`.
+
+### 5. Cambiar URL de la API
 
 Editá `eas.json` → perfil `preview` → `env.EXPO_PUBLIC_API_URL` y volvé a correr `pnpm build:apk`.
 
-### 5. Play Store (más adelante)
+### 6. Play Store (más adelante)
 
 ```bash
 pnpm build:android   # perfil production → AAB

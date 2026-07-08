@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { APP_MODULES, ROLES, type AppModuleKey, type RoleName } from '@steam-genie/shared-constants';
 import { clearTokens, getCurrentUserRole, getUserModules } from '../lib/auth';
+import { ApkDownloadButton } from './ApkDownloadButton';
 
 type NavChild = {
   href: string;
@@ -263,6 +264,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="admin-sidebar-footer">
+          <ApkDownloadButton variant="sidebar" />
           <button
             type="button"
             className="admin-nav-link admin-nav-link--logout"

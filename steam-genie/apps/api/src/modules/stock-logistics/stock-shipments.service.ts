@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import type { AuthUser } from '@steam-genie/shared-types';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   CreateShipmentOrderDto,
   DispatchShipmentOrderDto,
@@ -60,7 +61,10 @@ const ORDER_SELECT = {
 
 @Injectable()
 export class StockShipmentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async findAll() {
     const orders = await this.prisma.stockShipmentOrder.findMany({
@@ -234,7 +238,18 @@ export class StockShipmentsService {
       });
     });
 
-    return this.findOne(id);
+    const dispatched = await this.findOne(id);
+    void this.notificationsService
+      .notifyShipmentDispatched({
+        reference: dispatched.reference,
+        destinations: dispatched.destinations.map((dest) => ({
+          buildingId: dest.buildingId,
+          buildingName: dest.building.name,
+        })),
+      })
+      .catch(() => undefined);
+
+    return dispatched;
   }
 
   async deliverDestination(destinationId: string, user: AuthUser) {

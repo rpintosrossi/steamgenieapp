@@ -11,6 +11,7 @@ import {
   calendarDateKeyInBusinessTz,
 } from '@steam-genie/shared-constants';
 import { WORK_ORDER_STATUS_LABELS } from '../../../../lib/labels';
+import { BuildingCheckboxGrid } from '../../../../components/BuildingCheckboxGrid';
 import type {
   BuildingHierarchy,
   EventualCalendarReservation,
@@ -22,7 +23,8 @@ import type {
 
 const WEEKDAY_LABELS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
 const FILTER_DEBOUNCE_MS = 350;
-const CALENDAR_BUILDING_KEY = 'sg_eventual_calendar_building_id';
+const CALENDAR_BUILDING_KEY = 'sg_eventual_calendar_building_ids';
+const CALENDAR_BUILDING_KEY_LEGACY = 'sg_eventual_calendar_building_id';
 
 interface CalendarDay {
   key: string;
@@ -164,6 +166,44 @@ function formatAssignees(service: EventualCalendarService): string {
     .join(', ');
 }
 
+function formatEventLocation(
+  item: {
+    building?: { name: string } | null;
+    zone?: { name: string } | null;
+    floor?: { name: string } | null;
+  },
+  showBuilding: boolean,
+): string {
+  const parts: string[] = [];
+  if (showBuilding && item.building?.name) parts.push(item.building.name);
+  if (item.zone?.name) parts.push(item.zone.name);
+  if (item.floor?.name) parts.push(item.floor.name);
+  return parts.length > 0 ? parts.join(' · ') : '—';
+}
+
+function readStoredBuildingIds(list: Array<{ id: string }>): string[] {
+  try {
+    const stored = localStorage.getItem(CALENDAR_BUILDING_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored) as unknown;
+      if (Array.isArray(parsed)) {
+        return parsed.filter(
+          (id): id is string => typeof id === 'string' && list.some((b) => b.id === id),
+        );
+      }
+    }
+  } catch {
+    // ignore invalid JSON
+  }
+
+  const legacy = localStorage.getItem(CALENDAR_BUILDING_KEY_LEGACY);
+  if (legacy && list.some((b) => b.id === legacy)) {
+    return [legacy];
+  }
+
+  return [];
+}
+
 function shiftMonth(monthValue: string, delta: number): string {
   const { year, month } = parseMonthInput(monthValue);
   const d = new Date(Date.UTC(year, month - 1 + delta, 1));
@@ -185,7 +225,7 @@ export default function EventualCalendarPage() {
   const [hierarchy, setHierarchy] = useState<BuildingHierarchy | null>(null);
   const [loadingHierarchy, setLoadingHierarchy] = useState(false);
 
-  const [buildingId, setBuildingId] = useState('');
+  const [buildingIds, setBuildingIds] = useState<string[]>([]);
   const [floorId, setFloorId] = useState('');
   const [zoneId, setZoneId] = useState('');
   const [workerId, setWorkerId] = useState('');
@@ -205,6 +245,8 @@ export default function EventualCalendarPage() {
 
   const gridDays = useMemo(() => buildMonthGrid(month), [month]);
   const { from, to } = useMemo(() => monthRangeKeys(month), [month]);
+  const singleBuildingId = buildingIds.length === 1 ? buildingIds[0]! : '';
+  const showBuildingInEvents = buildingIds.length > 1;
 
   const floors = hierarchy?.floors ?? [];
   const zones = useMemo(
@@ -249,7 +291,7 @@ export default function EventualCalendarPage() {
   }, [data, gridDays, showReservations, showServices]);
 
   const loadCalendar = useCallback(async (signal?: AbortSignal) => {
-    if (!buildingId) {
+    if (buildingIds.length === 0) {
       setData(null);
       setLoading(false);
       setError(null);
@@ -259,7 +301,10 @@ export default function EventualCalendarPage() {
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ from, to, buildingId });
+      const params = new URLSearchParams({ from, to });
+      for (const id of buildingIds) {
+        params.append('buildingIds', id);
+      }
       if (floorId) params.set('floorId', floorId);
       if (zoneId) params.set('zoneId', zoneId);
       if (workerId) params.set('workerId', workerId);
@@ -276,37 +321,38 @@ export default function EventualCalendarPage() {
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [from, to, buildingId, floorId, zoneId, workerId]);
+  }, [from, to, buildingIds, floorId, zoneId, workerId]);
 
   useEffect(() => {
     void fetchBuildingsList()
       .then((list) => {
         setBuildings(list);
-        const stored = localStorage.getItem(CALENDAR_BUILDING_KEY);
-        if (stored && list.some((b) => b.id === stored)) {
-          setBuildingId(stored);
-        }
+        setBuildingIds(readStoredBuildingIds(list));
       })
       .catch(() => setBuildings([]))
       .finally(() => setBuildingReady(true));
   }, []);
 
   useEffect(() => {
-    if (!buildingId) {
+    if (!singleBuildingId) {
       setHierarchy(null);
+      if (buildingIds.length !== 1) {
+        setFloorId('');
+        setZoneId('');
+      }
       return;
     }
     void (async () => {
       setLoadingHierarchy(true);
       try {
-        setHierarchy(await fetchBuildingHierarchy(buildingId));
+        setHierarchy(await fetchBuildingHierarchy(singleBuildingId));
       } catch {
         setHierarchy(null);
       } finally {
         setLoadingHierarchy(false);
       }
     })();
-  }, [buildingId]);
+  }, [singleBuildingId, buildingIds.length]);
 
   useEffect(() => {
     if (!buildingReady) return;
@@ -323,14 +369,18 @@ export default function EventualCalendarPage() {
     };
   }, [loadCalendar, buildingReady]);
 
-  function handleBuildingChange(id: string) {
-    setBuildingId(id);
-    setFloorId('');
-    setZoneId('');
-    if (id) {
-      localStorage.setItem(CALENDAR_BUILDING_KEY, id);
+  function handleBuildingIdsChange(ids: string[]) {
+    setBuildingIds(ids);
+    if (ids.length !== 1) {
+      setFloorId('');
+      setZoneId('');
+    }
+    if (ids.length > 0) {
+      localStorage.setItem(CALENDAR_BUILDING_KEY, JSON.stringify(ids));
+      localStorage.removeItem(CALENDAR_BUILDING_KEY_LEGACY);
     } else {
       localStorage.removeItem(CALENDAR_BUILDING_KEY);
+      localStorage.removeItem(CALENDAR_BUILDING_KEY_LEGACY);
     }
   }
 
@@ -369,7 +419,7 @@ export default function EventualCalendarPage() {
         <div>
           <h1 className="page-title">Calendario</h1>
           <p className="page-subtitle">
-            Seleccioná un edificio para ver reservas, servicios y asignaciones del mes.
+            Seleccioná uno o más edificios para ver reservas, servicios y asignaciones del mes.
           </p>
         </div>
         <div className="page-header-actions">
@@ -384,32 +434,34 @@ export default function EventualCalendarPage() {
 
       <div className="card">
         <div className="filters-grid eventual-calendar-filters">
-          <div className="form-field">
-            <label>Edificio *</label>
-            <select
-              value={buildingId}
-              onChange={(e) => handleBuildingChange(e.target.value)}
-            >
-              <option value="">Seleccionar edificio…</option>
-              {buildings.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
+          <div className="form-field eventual-calendar-buildings-field">
+            <label>Edificios *</label>
+            <BuildingCheckboxGrid
+              buildings={buildings}
+              selectedIds={buildingIds}
+              onChange={handleBuildingIdsChange}
+            />
           </div>
 
           <div className="form-field">
             <label>Planta</label>
             <select
               value={floorId}
-              disabled={!buildingId || loadingHierarchy}
+              disabled={!singleBuildingId || loadingHierarchy}
               onChange={(e) => {
                 setFloorId(e.target.value);
                 setZoneId('');
               }}
             >
-              <option value="">{loadingHierarchy ? 'Cargando…' : 'Todas'}</option>
+              <option value="">
+                {!singleBuildingId
+                  ? buildingIds.length > 1
+                    ? 'Solo con un edificio'
+                    : 'Todas'
+                  : loadingHierarchy
+                    ? 'Cargando…'
+                    : 'Todas'}
+              </option>
               {floors.map((f) => (
                 <option key={f.id} value={f.id}>
                   {f.name}
@@ -568,10 +620,9 @@ export default function EventualCalendarPage() {
 
         {error ? <div className="alert alert-error">{error}</div> : null}
 
-        {!buildingId && buildingReady ? (
+        {!buildingIds.length && buildingReady ? (
           <p className="muted eventual-calendar-empty">
-            Elegí un edificio arriba para cargar el calendario. Con muchos edificios, la vista
-            trabaja edificio por edificio para mantener buen rendimiento.
+            Elegí al menos un edificio arriba para cargar el calendario.
           </p>
         ) : loading ? (
           <div className="loading-state">
@@ -616,8 +667,7 @@ export default function EventualCalendarPage() {
                               </span>
                             ) : null}
                             <span className="eventual-calendar-event-loc">
-                              {r.zone?.name ?? '—'}
-                              {r.floor?.name ? ` · ${r.floor.name}` : ''}
+                              {formatEventLocation(r, showBuildingInEvents)}
                             </span>
                           </div>
                         );
@@ -639,8 +689,7 @@ export default function EventualCalendarPage() {
                               {formatAssignees(s)}
                             </span>
                             <span className="eventual-calendar-event-loc">
-                              {s.zone?.name ?? '—'}
-                              {s.floor?.name ? ` · ${s.floor.name}` : ''}
+                              {formatEventLocation(s, showBuildingInEvents)}
                             </span>
                           </Link>
                         );

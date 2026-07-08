@@ -18,6 +18,7 @@ import type {
 } from '../../../../lib/types';
 
 const QUICK_AMOUNTS = [1, 5, 10, 25];
+const PAGE_SIZE = 25;
 
 type StatusFilter = 'ALL' | 'OK' | 'LOW' | 'OUT';
 
@@ -78,6 +79,9 @@ export default function StockInventoryPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [showInactive, setShowInactive] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [pages, setPages] = useState(1);
 
   const [adjustAmount, setAdjustAmount] = useState(1);
   const [adjustingId, setAdjustingId] = useState<string | null>(null);
@@ -105,6 +109,10 @@ export default function StockInventoryPage() {
     return () => window.clearTimeout(timer);
   }, [search]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
+
   const loadCatalog = useCallback(async () => {
     try {
       const [categoriesRes, suppliersRes] = await Promise.all([
@@ -126,16 +134,27 @@ export default function StockInventoryPage() {
     try {
       const params = new URLSearchParams({
         includeInactive: showInactive ? 'true' : 'false',
+        page: String(page),
+        limit: String(PAGE_SIZE),
       });
       if (debouncedSearch) params.set('search', debouncedSearch);
+      if (statusFilter !== 'ALL') params.set('status', statusFilter);
 
       const [statsRes, groupedRes] = await Promise.all([
         api.get<StockStats>('/stock/stats'),
-        api.get<{ groups: StockProductGroup[] }>(`/stock/products/grouped?${params}`),
+        api.get<{
+          groups: StockProductGroup[];
+          total: number;
+          page: number;
+          limit: number;
+          pages: number;
+        }>(`/stock/products/grouped?${params}`),
       ]);
 
       setStats(statsRes);
       setGroups(groupedRes.groups);
+      setTotal(groupedRes.total);
+      setPages(Math.max(1, groupedRes.pages));
       hasLoadedOnce.current = true;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al cargar inventario');
@@ -143,7 +162,7 @@ export default function StockInventoryPage() {
       setInitialLoading(false);
       setInventoryLoading(false);
     }
-  }, [debouncedSearch, showInactive]);
+  }, [debouncedSearch, showInactive, statusFilter, page]);
 
   useEffect(() => {
     void loadCatalog();
@@ -153,20 +172,7 @@ export default function StockInventoryPage() {
     void loadInventory(hasLoadedOnce.current);
   }, [loadInventory]);
 
-  const filteredGroups = useMemo(() => {
-    if (statusFilter === 'ALL') return groups;
-    return groups
-      .map((group) => ({
-        ...group,
-        products: group.products.filter((p) => p.status === statusFilter),
-      }))
-      .filter((group) => group.products.length > 0);
-  }, [groups, statusFilter]);
-
-  const allVisibleProducts = useMemo(
-    () => filteredGroups.flatMap((g) => g.products),
-    [filteredGroups],
-  );
+  const allVisibleProducts = useMemo(() => groups.flatMap((g) => g.products), [groups]);
 
   function toggleSelect(id: string) {
     setSelectedIds((prev) => {
@@ -348,7 +354,10 @@ export default function StockInventoryPage() {
               id="stock-filter"
               className="input"
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+              onChange={(e) => {
+                setStatusFilter(e.target.value as StatusFilter);
+                setPage(1);
+              }}
             >
               <option value="ALL">Todos</option>
               <option value="OK">Disponible</option>
@@ -377,7 +386,10 @@ export default function StockInventoryPage() {
             <input
               type="checkbox"
               checked={showInactive}
-              onChange={(e) => setShowInactive(e.target.checked)}
+              onChange={(e) => {
+                setShowInactive(e.target.checked);
+                setPage(1);
+              }}
             />
             Incluir inactivos
           </label>
@@ -403,7 +415,7 @@ export default function StockInventoryPage() {
             <div className="spinner" role="status" aria-label="Cargando" />
           </div>
         </div>
-      ) : filteredGroups.length === 0 ? (
+      ) : groups.length === 0 ? (
         <div className="card empty-state">
           <p>{inventoryLoading ? 'Actualizando inventario…' : 'No hay productos para mostrar.'}</p>
         </div>
@@ -414,7 +426,7 @@ export default function StockInventoryPage() {
               Actualizando inventario…
             </p>
           ) : null}
-          {filteredGroups.map((group) => (
+          {groups.map((group) => (
           <div key={group.category.id} className="card" style={{ marginBottom: 16 }}>
             <h2 className="stock-category-title">{group.category.name}</h2>
             <div className="table-wrap">
@@ -539,6 +551,27 @@ export default function StockInventoryPage() {
             </div>
           </div>
           ))}
+          <div className="pagination" style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Anterior
+            </button>
+            <span className="pagination-info">
+              Página {page} de {pages} · {total} producto{total === 1 ? '' : 's'}
+            </span>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={page >= pages}
+              onClick={() => setPage((p) => Math.min(pages, p + 1))}
+            >
+              Siguiente
+            </button>
+          </div>
         </>
       )}
 
@@ -553,7 +586,7 @@ export default function StockInventoryPage() {
               }
               onChange={toggleSelectAll}
             />
-            Seleccionar todos los productos visibles ({allVisibleProducts.length})
+            Seleccionar todos los productos de esta página ({allVisibleProducts.length})
           </label>
         </div>
       ) : null}

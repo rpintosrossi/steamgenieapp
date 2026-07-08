@@ -61,6 +61,12 @@ export function getCurrentUserRole(): RoleName | null {
   return decodeAccessTokenPayload(token)?.primaryRole ?? null;
 }
 
+export function getCurrentUserId(): string | null {
+  const token = getAccessToken();
+  if (!token) return null;
+  return decodeAccessTokenPayload(token)?.sub ?? null;
+}
+
 export {
   getUserModules,
   saveUserModules,

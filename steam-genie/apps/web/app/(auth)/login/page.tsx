@@ -4,7 +4,7 @@ import Image from 'next/image';
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { loginSchema } from '@steam-genie/shared-validators';
-import type { LoginResponse } from '@steam-genie/shared-types';
+import type { LoginResponse, SessionResponse } from '@steam-genie/shared-types';
 import { api } from '../../../lib/api-client';
 import {
   WEB_ACCESS_DENIED_MESSAGE,
@@ -14,6 +14,7 @@ import {
   isAuthenticatedForWeb,
   saveSession,
 } from '../../../lib/auth';
+import { ApkDownloadButton } from '../../../components/ApkDownloadButton';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -23,16 +24,37 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const loginError = consumeLoginError();
-    if (loginError) {
-      setError(loginError);
-      return;
+    let cancelled = false;
+
+    async function restoreSession() {
+      const loginError = consumeLoginError();
+      if (loginError) {
+        if (!cancelled) setError(loginError);
+        return;
+      }
+
+      if (!isAuthenticatedForWeb()) {
+        clearTokens();
+        return;
+      }
+
+      try {
+        const session = await api.get<SessionResponse>('/auth/me');
+        if (!canAccessWebWithModules(session.user.primaryRole, session.modules)) {
+          clearTokens();
+          return;
+        }
+        router.replace('/dashboard');
+      } catch {
+        clearTokens();
+      }
     }
-    if (isAuthenticatedForWeb()) {
-      router.replace('/dashboard');
-    } else {
-      clearTokens();
-    }
+
+    void restoreSession();
+
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   async function handleSubmit(e: FormEvent) {
@@ -110,6 +132,13 @@ export default function LoginPage() {
                 {loading ? 'Ingresando…' : 'Ingresar'}
               </button>
             </form>
+
+            <div className="login-apk-download">
+              <p className="muted" style={{ margin: '0 0 12px', fontSize: 13 }}>
+                App móvil para operarios
+              </p>
+              <ApkDownloadButton variant="light" />
+            </div>
           </div>
         </div>
       </div>

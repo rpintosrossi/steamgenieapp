@@ -23,6 +23,23 @@ const nextConfig = {
     '@steam-genie/shared-constants',
   ],
   allowedDevOrigins: getLanDevOrigins(),
+  async headers() {
+    return [
+      {
+        source: '/downloads/:file*.apk',
+        headers: [
+          {
+            key: 'Content-Type',
+            value: 'application/vnd.android.package-archive',
+          },
+          {
+            key: 'Content-Disposition',
+            value: 'attachment; filename="steam-genie.apk"',
+          },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

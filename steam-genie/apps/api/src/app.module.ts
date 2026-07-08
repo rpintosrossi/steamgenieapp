@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { join } from 'path';
 import { PrismaModule } from './infrastructure/prisma/prisma.module';
+import { QueuesModule } from './infrastructure/queues/queues.module';
 import { StorageModule } from './infrastructure/storage/storage.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
@@ -34,6 +35,7 @@ import { TimelineEventsModule } from './common/events/timeline-events.module';
       envFilePath: join(__dirname, '../../../.env'),
     }),
     PrismaModule,
+    QueuesModule,
     StorageModule,
     HealthModule,
     TimelineEventsModule,

@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import type { SessionResponse } from '@steam-genie/shared-types';
 import { api } from '../lib/api-client';
 import {
-  canAccessWeb,
+  canAccessWebWithModules,
   clearTokens,
   getCurrentUserRole,
   getUserModules,
@@ -28,14 +28,18 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      let session: SessionResponse;
       try {
-        const session = await api.get<SessionResponse>('/auth/me');
+        session = await api.get<SessionResponse>('/auth/me');
         saveUserModules(session.modules);
       } catch {
-        // Si falla /auth/me, seguimos con módulos cacheados en localStorage.
+        clearTokens();
+        setLoginError('Tu sesión guardada ya no es válida. Iniciá sesión nuevamente.');
+        router.replace('/login');
+        return;
       }
 
-      if (!canAccessWeb()) {
+      if (!canAccessWebWithModules(session.user.primaryRole, session.modules)) {
         clearTokens();
         setLoginError(WEB_ACCESS_DENIED_MESSAGE);
         router.replace('/login');

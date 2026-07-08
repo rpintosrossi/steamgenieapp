@@ -103,21 +103,96 @@ export class StockService {
 
   async findProductsGrouped(query: QueryStockProductsDto) {
     const where = this.buildProductWhere(query);
+    const orderBy = [
+      { category: { sortOrder: 'asc' as const } },
+      { category: { name: 'asc' as const } },
+      { name: 'asc' as const },
+    ];
+    const paginate = query.page !== undefined || query.limit !== undefined;
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
 
-    const products = await this.prisma.stockProduct.findMany({
-      where,
-      select: PRODUCT_SELECT,
-      orderBy: [
-        { category: { sortOrder: 'asc' } },
-        { category: { name: 'asc' } },
-        { name: 'asc' },
-      ],
-    });
+    if (!paginate) {
+      const products = await this.prisma.stockProduct.findMany({
+        where,
+        select: PRODUCT_SELECT,
+        orderBy,
+      });
+      const mapped = products.map((product) => this.mapProduct(product));
+      return { groups: this.groupByCategory(mapped) };
+    }
+
+    if (query.status) {
+      const rows = await this.prisma.stockProduct.findMany({
+        where,
+        select: {
+          id: true,
+          quantity: true,
+          reservedQuantity: true,
+          minQuantity: true,
+        },
+        orderBy,
+      });
+
+      const matchingIds = rows
+        .filter((row) => {
+          const available =
+            this.toNumber(row.quantity) - this.toNumber(row.reservedQuantity);
+          return (
+            computeStockStatus(available, this.toNumber(row.minQuantity)) ===
+            query.status
+          );
+        })
+        .map((row) => row.id);
+
+      const total = matchingIds.length;
+      const pages = Math.max(1, Math.ceil(total / limit));
+      const pageIds = matchingIds.slice((page - 1) * limit, page * limit);
+
+      if (pageIds.length === 0) {
+        return { groups: [], total, page, limit, pages };
+      }
+
+      const products = await this.prisma.stockProduct.findMany({
+        where: { id: { in: pageIds } },
+        select: PRODUCT_SELECT,
+      });
+      const byId = new Map(products.map((product) => [product.id, product]));
+      const ordered = pageIds
+        .map((id) => byId.get(id))
+        .filter((product): product is NonNullable<typeof product> => product != null);
+      const mapped = ordered.map((product) => this.mapProduct(product));
+
+      return {
+        groups: this.groupByCategory(mapped),
+        total,
+        page,
+        limit,
+        pages,
+      };
+    }
+
+    const [total, products] = await Promise.all([
+      this.prisma.stockProduct.count({ where }),
+      this.prisma.stockProduct.findMany({
+        where,
+        select: PRODUCT_SELECT,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
 
     const mapped = products.map((product) => this.mapProduct(product));
-    const groups = this.groupByCategory(mapped);
+    const pages = Math.max(1, Math.ceil(total / limit));
 
-    return { groups };
+    return {
+      groups: this.groupByCategory(mapped),
+      total,
+      page,
+      limit,
+      pages,
+    };
   }
 
   // ─── Categories ────────────────────────────────────────────────────────────

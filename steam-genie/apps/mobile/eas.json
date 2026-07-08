@@ -23,6 +23,15 @@
         "EXPO_PUBLIC_API_URL": "https://steamgenie.up.railway.app"
       }
     },
+    "lan-preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://192.168.1.86:4000"
+      }
+    },
     "production": {
       "android": {
         "buildType": "app-bundle"

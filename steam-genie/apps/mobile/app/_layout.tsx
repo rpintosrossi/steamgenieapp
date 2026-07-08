@@ -9,6 +9,7 @@ import { useSyncStore } from '../src/stores/sync.store';
 import { syncManager } from '../src/sync/sync-manager';
 import { initDatabase } from '../src/db/database';
 import { COLORS } from '../src/constants/colors';
+import { usePushNotifications } from '../src/hooks/usePushNotifications';
 
 export default function RootLayout() {
   const { accessToken, isHydrated, hydrate } = useAuthStore();
@@ -18,6 +19,8 @@ export default function RootLayout() {
   const segments = useSegments();
   const rootNavigationState = useRootNavigationState();
   const navigationReady = rootNavigationState?.key != null;
+
+  usePushNotifications();
 
   // ── 1. Hydrate auth + init DB on mount ─────────────────────────────────────
   useEffect(() => {
