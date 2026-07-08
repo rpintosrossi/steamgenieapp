@@ -2,8 +2,8 @@
 
 import { FormEvent, useState } from 'react';
 import { ROLES } from '@steam-genie/shared-constants';
-import { api } from '../../lib/api-client';
-import { getCurrentUserId, getCurrentUserRole } from '../../lib/auth';
+import { api } from '../lib/api-client';
+import { getCurrentUserId, getCurrentUserRole } from '../lib/auth';
 
 export function NotificationTestPanel() {
   const role = getCurrentUserRole();
