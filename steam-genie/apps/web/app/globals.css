@@ -1799,6 +1799,11 @@ textarea {
 
 /* ── Checkbox grid ── */
 
+.building-picker-search {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
 .building-picker-actions {
   display: flex;
   align-items: center;

@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo, useState } from 'react';
 import { ROLE_LABELS } from '../lib/labels';
 
 interface BuildingOption {
@@ -14,12 +15,27 @@ interface BuildingCheckboxGridProps {
   disabled?: boolean;
 }
 
+function normalize(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
 export function BuildingCheckboxGrid({
   buildings,
   selectedIds,
   onChange,
   disabled = false,
 }: BuildingCheckboxGridProps) {
+  const [search, setSearch] = useState('');
+
+  const filtered = useMemo(() => {
+    const query = normalize(search.trim());
+    if (!query) return buildings;
+    return buildings.filter((b) => normalize(b.name).includes(query));
+  }, [buildings, search]);
+
   function toggle(buildingId: string) {
     if (disabled) return;
     if (selectedIds.includes(buildingId)) {
@@ -29,44 +45,63 @@ export function BuildingCheckboxGrid({
     }
   }
 
-  function selectAll() {
+  // Los botones operan sobre lo visible: con un filtro activo permiten
+  // marcar/quitar solo el subconjunto buscado sin tocar el resto.
+  function selectVisible() {
     if (disabled) return;
-    onChange(buildings.map((b) => b.id));
+    const visibleIds = filtered.map((b) => b.id);
+    onChange(Array.from(new Set([...selectedIds, ...visibleIds])));
   }
 
-  function clearAll() {
+  function clearVisible() {
     if (disabled) return;
-    onChange([]);
+    const visibleIds = new Set(filtered.map((b) => b.id));
+    onChange(selectedIds.filter((id) => !visibleIds.has(id)));
   }
 
   if (buildings.length === 0) {
     return <p className="muted">No hay edificios disponibles.</p>;
   }
 
+  const filtering = search.trim().length > 0;
+
   return (
     <div className="building-picker">
+      <input
+        type="search"
+        className="building-picker-search"
+        placeholder="Buscar edificio…"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        disabled={disabled}
+        autoComplete="off"
+      />
       <div className="building-picker-actions">
-        <button type="button" className="btn btn-secondary btn-sm" onClick={selectAll} disabled={disabled}>
-          Marcar todos
+        <button type="button" className="btn btn-secondary btn-sm" onClick={selectVisible} disabled={disabled}>
+          {filtering ? 'Marcar visibles' : 'Marcar todos'}
         </button>
-        <button type="button" className="btn btn-secondary btn-sm" onClick={clearAll} disabled={disabled}>
-          Quitar todos
+        <button type="button" className="btn btn-secondary btn-sm" onClick={clearVisible} disabled={disabled}>
+          {filtering ? 'Quitar visibles' : 'Quitar todos'}
         </button>
         <span className="muted">{selectedIds.length} seleccionado(s)</span>
       </div>
-      <div className="checkbox-grid">
-        {buildings.map((building) => (
-          <label key={building.id} className="checkbox-item">
-            <input
-              type="checkbox"
-              checked={selectedIds.includes(building.id)}
-              onChange={() => toggle(building.id)}
-              disabled={disabled}
-            />
-            <span>{building.name}</span>
-          </label>
-        ))}
-      </div>
+      {filtered.length === 0 ? (
+        <p className="muted">Ningún edificio coincide con «{search.trim()}».</p>
+      ) : (
+        <div className="checkbox-grid">
+          {filtered.map((building) => (
+            <label key={building.id} className="checkbox-item">
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(building.id)}
+                onChange={() => toggle(building.id)}
+                disabled={disabled}
+              />
+              <span>{building.name}</span>
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
