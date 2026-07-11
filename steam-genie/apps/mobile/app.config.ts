@@ -49,7 +49,7 @@ export default (): ExpoConfig => ({
   ],
   ios: {
     bundleIdentifier: 'com.steamgenie.app',
-    buildNumber: '3',
+    buildNumber: '12',
     supportsTablet: false,
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
@@ -64,7 +64,7 @@ export default (): ExpoConfig => ({
   android: {
     package: 'com.steamgenie.app',
     googleServicesFile: './google-services.json',
-    versionCode: 11,
+    versionCode: 12,
     usesCleartextTraffic: true,
     softwareKeyboardLayoutMode: 'resize',
     permissions: [
