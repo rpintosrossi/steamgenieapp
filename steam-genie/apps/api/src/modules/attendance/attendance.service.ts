@@ -152,6 +152,7 @@ export class AttendanceService {
       latitude: true,
       longitude: true,
       gpsRadiusM: true,
+      requireGpsValidation: true,
     } as const;
 
     const todayEntries = await this.prisma.attendance.findMany({
@@ -446,16 +447,23 @@ export class AttendanceService {
     gpsLat: number,
     gpsLng: number,
   ) {
-    if (process.env.SKIP_GPS_VALIDATION === 'true') {
-      return;
-    }
-
     const building = await this.prisma.building.findFirst({
       where: { id: buildingId, isActive: true, deletedAt: null },
-      select: { id: true, latitude: true, longitude: true, gpsRadiusM: true },
+      select: {
+        id: true,
+        name: true,
+        latitude: true,
+        longitude: true,
+        gpsRadiusM: true,
+        requireGpsValidation: true,
+      },
     });
 
     if (!building) throw new NotFoundException('Building not found');
+
+    if (!building.requireGpsValidation) {
+      return;
+    }
 
     if (building.latitude == null || building.longitude == null) {
       throw new BadRequestException(
@@ -472,7 +480,7 @@ export class AttendanceService {
 
     if (distanceM > building.gpsRadiusM) {
       throw new ForbiddenException(
-        `You are ${Math.round(distanceM)}m away from "${building.id}" building. ` +
+        `You are ${Math.round(distanceM)}m away from "${building.name}". ` +
         `Maximum allowed radius: ${building.gpsRadiusM}m.`,
       );
     }

@@ -50,5 +50,9 @@ export class UpdateBuildingDto {
 
   @IsOptional()
   @IsBoolean()
+  requireGpsValidation?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   isActive?: boolean;
 }

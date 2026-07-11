@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { BuildingsCatalogImportModal } from '../../../components/BuildingsCatalogImportModal';
 import { CreateBuildingModal } from '../../../components/CreateBuildingModal';
 import { api } from '../../../lib/api-client';
 import { invalidateBuildingsListCache } from '../../../lib/buildings-cache';
@@ -14,8 +15,18 @@ function formatLocation(building: Building): string {
   return parts.length > 0 ? parts.join(' · ') : '—';
 }
 
-function hasGps(building: Building): boolean {
-  return building.latitude != null && building.longitude != null;
+function gpsLabel(building: Building): string {
+  if (building.requireGpsValidation === false) return 'Sin validación';
+  if (building.latitude != null && building.longitude != null) {
+    return `Validación ${building.gpsRadiusM ?? 200}m`;
+  }
+  return 'Sin GPS';
+}
+
+function gpsBadgeClass(building: Building): string {
+  if (building.requireGpsValidation === false) return '';
+  if (building.latitude != null && building.longitude != null) return 'badge-success';
+  return '';
 }
 
 function formatCreatedAt(value?: string | null): string {
@@ -35,12 +46,15 @@ export default function BuildingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [total, setTotal] = useState(0);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const [includeInactive, setIncludeInactive] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const load = useCallback(async () => {
@@ -52,6 +66,7 @@ export default function BuildingsPage() {
       limit: String(PAGE_SIZE),
     });
     if (search.trim()) params.set('search', search.trim());
+    if (includeInactive) params.set('includeInactive', 'true');
 
     try {
       const res = await api.get<Paginated<Building>>(`/buildings?${params.toString()}`);
@@ -63,7 +78,7 @@ export default function BuildingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, refreshKey]);
+  }, [page, search, includeInactive, refreshKey]);
 
   useEffect(() => {
     void load();
@@ -92,6 +107,30 @@ export default function BuildingsPage() {
     setRefreshKey((k) => k + 1);
   }
 
+  async function handleDelete(building: Building) {
+    if (
+      !window.confirm(
+        `¿Eliminar el edificio "${building.name}"?\n\nSolo se puede si no tiene datos asociados (tareas, servicios, usuarios, etc.).`,
+      )
+    ) {
+      return;
+    }
+
+    setDeletingId(building.id);
+    setError(null);
+    setSuccess(null);
+    try {
+      await api.delete(`/buildings/${building.id}`);
+      setSuccess(`Edificio "${building.name}" eliminado.`);
+      invalidateBuildingsListCache();
+      setRefreshKey((k) => k + 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo eliminar el edificio');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <>
       <div className="page-header">
@@ -105,6 +144,13 @@ export default function BuildingsPage() {
           </p>
         </div>
         <div className="page-header-actions">
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => setImportOpen(true)}
+          >
+            Importar Excel
+          </button>
           <button
             type="button"
             className="btn btn-primary btn-sm"
@@ -140,6 +186,18 @@ export default function BuildingsPage() {
           </div>
         </form>
 
+        <label className="checkbox-item" style={{ marginBottom: 16, display: 'flex', gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={includeInactive}
+            onChange={(e) => {
+              setPage(1);
+              setIncludeInactive(e.target.checked);
+            }}
+          />
+          <span>Mostrar inactivos</span>
+        </label>
+
         {loading ? (
           <div className="loading-state">
             <div className="spinner" role="status" aria-label="Cargando" />
@@ -148,11 +206,11 @@ export default function BuildingsPage() {
         ) : items.length === 0 ? (
           <div className="stack" style={{ alignItems: 'flex-start', gap: 12 }}>
             <p className="muted" style={{ margin: 0 }}>
-              {search
+              {search || includeInactive
                 ? 'No se encontraron edificios con ese criterio.'
-                : 'Todavía no hay edificios cargados.'}
+                : 'Todavía no hay edificios activos.'}
             </p>
-            {!search ? (
+            {!search && !includeInactive ? (
               <button
                 type="button"
                 className="btn btn-primary btn-sm"
@@ -184,8 +242,8 @@ export default function BuildingsPage() {
                       </td>
                       <td>{formatLocation(item)}</td>
                       <td>
-                        <span className={`badge ${hasGps(item) ? 'badge-success' : ''}`}>
-                          {hasGps(item) ? 'Configurado' : 'Sin GPS'}
+                        <span className={`badge ${gpsBadgeClass(item)}`}>
+                          {gpsLabel(item)}
                         </span>
                       </td>
                       <td>{formatCreatedAt(item.createdAt)}</td>
@@ -197,9 +255,21 @@ export default function BuildingsPage() {
                         </span>
                       </td>
                       <td>
-                        <Link href={`/buildings/${item.id}`} className="btn btn-secondary btn-sm">
-                          Gestionar
-                        </Link>
+                        <div className="table-row-actions">
+                          <Link href={`/buildings/${item.id}`} className="btn btn-secondary btn-sm">
+                            Gestionar
+                          </Link>
+                          {item.isActive !== false ? (
+                            <button
+                              type="button"
+                              className="btn btn-danger btn-sm"
+                              disabled={deletingId === item.id}
+                              onClick={() => void handleDelete(item)}
+                            >
+                              {deletingId === item.id ? 'Eliminando…' : 'Eliminar'}
+                            </button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -236,6 +306,18 @@ export default function BuildingsPage() {
         <CreateBuildingModal
           onClose={() => setCreateOpen(false)}
           onCreated={handleCreated}
+        />
+      ) : null}
+
+      {importOpen ? (
+        <BuildingsCatalogImportModal
+          onClose={() => setImportOpen(false)}
+          onSuccess={() => {
+            setSuccess('Importación de edificios finalizada. Revisá el detalle en el modal.');
+            setError(null);
+            invalidateBuildingsListCache();
+            setRefreshKey((k) => k + 1);
+          }}
         />
       ) : null}
     </>

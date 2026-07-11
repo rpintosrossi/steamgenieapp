@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsNumber,
   IsInt,
+  IsBoolean,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -45,4 +46,9 @@ export class CreateBuildingDto {
   @IsInt()
   @Min(0)
   gpsRadiusM?: number;
+
+  /** If true, attendance check-in/out validates the user is within gpsRadiusM. */
+  @IsOptional()
+  @IsBoolean()
+  requireGpsValidation?: boolean;
 }

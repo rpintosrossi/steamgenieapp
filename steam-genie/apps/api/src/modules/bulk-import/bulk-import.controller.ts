@@ -94,4 +94,57 @@ export class BulkImportController {
 
     return this.bulkImportService.processExcelForBuilding(buildingId, file.buffer);
   }
+
+  @Get('buildings-catalog/template')
+  @RequiredRoles('admin', 'manager')
+  async downloadBuildingsCatalogTemplate(@Res() res: Response) {
+    const buffer = await this.bulkImportService.generateBuildingsCatalogTemplate();
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': 'attachment; filename="plantilla-edificios.xlsx"',
+      'Content-Length': buffer.length,
+    });
+    res.send(buffer);
+  }
+
+  @Post('buildings-catalog/excel')
+  @RequiredRoles('admin', 'manager')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: MAX_FILE_SIZE_BYTES },
+      fileFilter: (_req, file, cb) => {
+        const ext = file.originalname.toLowerCase();
+        const validExt = ext.endsWith('.xlsx') || ext.endsWith('.xls');
+        if (ALLOWED_MIME_TYPES.has(file.mimetype) || validExt) {
+          cb(null, true);
+        } else {
+          cb(
+            new BadRequestException(
+              'Formato no válido. Subí un archivo Excel (.xlsx).',
+            ),
+            false,
+          );
+        }
+      },
+    }),
+  )
+  async uploadBuildingsCatalogExcel(
+    @UploadedFile() file: Express.Multer.File,
+    @Query('skipAddressLookup') skipAddressLookup?: string,
+    @Query('requireGpsValidation') requireGpsValidation?: string,
+  ) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('No se recibió ningún archivo.');
+    }
+
+    return this.bulkImportService.processBuildingsCatalogExcel(file.buffer, {
+      skipAddressLookup: skipAddressLookup === 'true' || skipAddressLookup === '1',
+      // Default true if omitted (mismo default de Prisma)
+      requireGpsValidation:
+        requireGpsValidation === undefined || requireGpsValidation === ''
+          ? true
+          : requireGpsValidation === 'true' || requireGpsValidation === '1',
+    });
+  }
 }

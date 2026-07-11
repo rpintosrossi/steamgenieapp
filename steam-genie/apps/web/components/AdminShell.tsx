@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { APP_MODULES, ROLES, type AppModuleKey, type RoleName } from '@steam-genie/shared-constants';
 import { clearTokens, getCurrentUserRole, getUserModules } from '../lib/auth';
+import { api } from '../lib/api-client';
 import { ApkDownloadButton } from './ApkDownloadButton';
 
 type NavChild = {
@@ -14,6 +15,8 @@ type NavChild = {
   module: AppModuleKey;
   /** Si se define, basta con tener cualquiera de estos módulos. */
   modules?: AppModuleKey[];
+  /** Solo mostrar si el usuario tiene al menos una rendición propia. */
+  requiresOwnSettlements?: boolean;
 };
 
 type NavItem = {
@@ -158,6 +161,28 @@ const NAV_ITEMS: NavItem[] = [
       { href: '/stock/envios', label: 'Órdenes de envío', module: APP_MODULES.STOCK_SHIPMENTS },
     ],
   },
+  {
+    href: '/gastos-y-comisiones',
+    label: 'Gastos y comisiones',
+    module: null,
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <line x1="12" y1="1" x2="12" y2="23" />
+        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+      </svg>
+    ),
+    children: [
+      { href: '/gastos-y-comisiones/gastos-fijos', label: 'Gastos fijos', module: APP_MODULES.GASTOS_FIJOS },
+      { href: '/gastos-y-comisiones/comisiones', label: 'Nueva comisión', module: APP_MODULES.COMISIONES },
+      { href: '/gastos-y-comisiones/rendiciones', label: 'Rendiciones', module: APP_MODULES.RENDICIONES },
+      {
+        href: '/gastos-y-comisiones/mis-rendiciones',
+        label: 'Mis rendiciones',
+        module: APP_MODULES.MIS_RENDICIONES,
+        requiresOwnSettlements: true,
+      },
+    ],
+  },
 ];
 
 function isActive(pathname: string, href: string) {
@@ -170,9 +195,14 @@ function isNavItemActive(pathname: string, item: NavItem, visibleChildren?: NavC
   return false;
 }
 
-function filterNavItems(modules: AppModuleKey[], role: RoleName | null): NavItem[] {
+function filterNavItems(
+  modules: AppModuleKey[],
+  role: RoleName | null,
+  hasOwnSettlements: boolean,
+): NavItem[] {
   return NAV_ITEMS.reduce<NavItem[]>((acc, item) => {
     const visibleChildren = item.children?.filter((child) => {
+      if (child.requiresOwnSettlements && !hasOwnSettlements) return false;
       if (child.modules?.length) {
         return child.modules.some((m) => modules.includes(m));
       }
@@ -203,13 +233,34 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [modules, setModules] = useState<AppModuleKey[]>([]);
   const [role, setRole] = useState<RoleName | null>(null);
+  const [hasOwnSettlements, setHasOwnSettlements] = useState(false);
 
   useEffect(() => {
     setModules(getUserModules());
     setRole(getCurrentUserRole());
   }, [pathname]);
 
-  const navItems = filterNavItems(modules, role);
+  useEffect(() => {
+    const userModules = getUserModules();
+    if (!userModules.includes(APP_MODULES.MIS_RENDICIONES)) {
+      setHasOwnSettlements(false);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .get<{ hasSettlements: boolean }>('/commissions/mine/summary')
+      .then((res) => {
+        if (!cancelled) setHasOwnSettlements(Boolean(res.hasSettlements));
+      })
+      .catch(() => {
+        if (!cancelled) setHasOwnSettlements(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
+
+  const navItems = filterNavItems(modules, role, hasOwnSettlements);
 
   function logout() {
     clearTokens();

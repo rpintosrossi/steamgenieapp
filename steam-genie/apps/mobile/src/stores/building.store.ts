@@ -15,6 +15,7 @@ export interface Building {
   latitude: string | null;
   longitude: string | null;
   gpsRadiusM: number;
+  requireGpsValidation?: boolean;
 }
 
 export interface RejectionReason {
@@ -157,10 +158,7 @@ export const useBuildingStore = create<BuildingStore>((set, get) => ({
           periodicTasks: Array.isArray(data.periodicTasks) ? data.periodicTasks : [],
           workOrders: Array.isArray(data.workOrders) ? data.workOrders : [],
         },
-        selectedBuilding:
-          get().selectedBuilding?.id === data.building.id
-            ? get().selectedBuilding
-            : data.building,
+        selectedBuilding: data.building,
         isLoadingPrefetch: false,
       });
     } catch (e) {

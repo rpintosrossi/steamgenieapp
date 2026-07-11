@@ -7,7 +7,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { WorkOrderStatus, WorkOrderType } from '@prisma/client';
-import { calendarDateFromInstant, endOfStoredCalendarDateInBusinessTz } from '@steam-genie/shared-constants';
+import { calendarDateFromInstant, endOfStoredCalendarDateInBusinessTz, TASK_CATEGORY_UNCATEGORIZED } from '@steam-genie/shared-constants';
 import { snapshotEventualTasks } from '../../common/work-order-snapshot';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { QueryWorkOrdersDto } from './dto/query-work-orders.dto';
@@ -191,12 +191,44 @@ export class WorkOrdersService {
 
     await this.validateHierarchy(dto.buildingId, dto.floorId, dto.zoneId);
 
+    const selected = [...new Set(dto.categoryIds ?? [])];
+    const includeUncategorized = selected.includes(TASK_CATEGORY_UNCATEGORIZED);
+    const categoryIds = selected.filter((id) => id !== TASK_CATEGORY_UNCATEGORIZED);
+    const hasCategoryFilter = selected.length > 0;
+
+    const uuidRe =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const invalidIds = categoryIds.filter((id) => !uuidRe.test(id));
+    if (invalidIds.length > 0) {
+      throw new BadRequestException('Una o más categorías son inválidas.');
+    }
+
+    if (hasCategoryFilter && categoryIds.length > 0) {
+      const availableCategories = await this.findCategoriesUsedByEventualTasks(
+        dto.buildingId,
+        dto.zoneId,
+      );
+      const availableIds = new Set(availableCategories.map((c) => c.id));
+      const unknown = categoryIds.filter((id) => !availableIds.has(id));
+      if (unknown.length > 0) {
+        throw new BadRequestException(
+          'Una o más categorías no tienen tareas eventuales en esta zona.',
+        );
+      }
+    }
+
     const [zone, eventualTasks] = await Promise.all([
       this.prisma.zone.findFirst({
         where: { id: dto.zoneId },
         select: { name: true },
       }),
-      this.findEventualTasksForZone(dto.buildingId, dto.zoneId),
+      this.findEventualTasksForZone(
+        dto.buildingId,
+        dto.zoneId,
+        hasCategoryFilter
+          ? { categoryIds, includeUncategorized }
+          : undefined,
+      ),
     ]);
     const hasNoTasks = eventualTasks.length === 0;
 
@@ -230,7 +262,9 @@ export class WorkOrdersService {
     return {
       ...result,
       warning: hasNoTasks
-        ? 'No hay tareas EVENTUAL configuradas para esta zona ni sus subzonas'
+        ? hasCategoryFilter
+          ? 'No hay tareas EVENTUAL activas para el filtro de categorías seleccionado en esta zona ni sus subzonas'
+          : 'No hay tareas EVENTUAL configuradas para esta zona ni sus subzonas'
         : undefined,
     };
   }
@@ -923,12 +957,32 @@ export class WorkOrdersService {
     return this.findEventualTasksForZone(buildingId, zoneId);
   }
 
-  private async findEventualTasksForZone(buildingId: string, zoneId: string) {
+  private async findEventualTasksForZone(
+    buildingId: string,
+    zoneId: string,
+    categoryFilter?: { categoryIds: string[]; includeUncategorized: boolean },
+  ) {
     const subzones = await this.prisma.subzone.findMany({
       where: { zoneId, buildingId, deletedAt: null },
       select: { id: true },
     });
     const subzoneIds = subzones.map((s) => s.id);
+
+    const locationOr = [
+      { subzoneId: null },
+      ...(subzoneIds.length > 0 ? [{ subzoneId: { in: subzoneIds } }] : []),
+    ];
+
+    const categoryOr =
+      categoryFilter &&
+      (categoryFilter.categoryIds.length > 0 || categoryFilter.includeUncategorized)
+        ? [
+            ...(categoryFilter.categoryIds.length > 0
+              ? [{ categoryId: { in: categoryFilter.categoryIds } }]
+              : []),
+            ...(categoryFilter.includeUncategorized ? [{ categoryId: null }] : []),
+          ]
+        : null;
 
     return this.prisma.task.findMany({
       where: {
@@ -937,9 +991,9 @@ export class WorkOrdersService {
         frequency: 'EVENTUAL',
         isActive: true,
         deletedAt: null,
-        OR: [
-          { subzoneId: null },
-          ...(subzoneIds.length > 0 ? [{ subzoneId: { in: subzoneIds } }] : []),
+        AND: [
+          { OR: locationOr },
+          ...(categoryOr ? [{ OR: categoryOr }] : []),
         ],
       },
       include: {
@@ -951,6 +1005,40 @@ export class WorkOrdersService {
         },
       },
       orderBy: [{ subzoneId: 'asc' }, { createdAt: 'asc' }],
+    });
+  }
+
+  private async findCategoriesUsedByEventualTasks(buildingId: string, zoneId: string) {
+    const subzones = await this.prisma.subzone.findMany({
+      where: { zoneId, buildingId, deletedAt: null },
+      select: { id: true },
+    });
+    const subzoneIds = subzones.map((s) => s.id);
+
+    const rows = await this.prisma.task.findMany({
+      where: {
+        buildingId,
+        zoneId,
+        frequency: 'EVENTUAL',
+        isActive: true,
+        deletedAt: null,
+        categoryId: { not: null },
+        OR: [
+          { subzoneId: null },
+          ...(subzoneIds.length > 0 ? [{ subzoneId: { in: subzoneIds } }] : []),
+        ],
+      },
+      select: { categoryId: true },
+      distinct: ['categoryId'],
+    });
+
+    const ids = rows.map((r) => r.categoryId).filter((id): id is string => Boolean(id));
+    if (ids.length === 0) return [];
+
+    return this.prisma.taskCategory.findMany({
+      where: { id: { in: ids }, deletedAt: null, isActive: true },
+      select: { id: true, name: true },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
   }
 }

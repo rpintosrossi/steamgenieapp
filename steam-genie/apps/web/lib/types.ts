@@ -15,6 +15,8 @@ export interface Building {
   latitude?: string | number | null;
   longitude?: string | number | null;
   gpsRadiusM?: number;
+  /** If true, attendance validates the user is within the building GPS radius. */
+  requireGpsValidation?: boolean;
   isActive?: boolean;
   createdAt?: string;
 }
@@ -112,6 +114,7 @@ export interface TaskItem {
   buildingId: string;
   zoneId: string | null;
   subzoneId: string | null;
+  categoryId?: string | null;
   name: string;
   frequency: string;
   startDate: string;
@@ -119,10 +122,21 @@ export interface TaskItem {
   allowsObservation: boolean;
   requiresRejectionReason: boolean;
   isActive: boolean;
+  category?: { id: string; name: string } | null;
   building?: { id: string; name: string };
   floor?: { id: string; name: string } | null;
   zone?: { id: string; name: string; floor?: { id: string; name: string } | null } | null;
   subzone?: { id: string; name: string } | null;
+}
+
+export interface TaskCategoryItem {
+  id: string;
+  name: string;
+  sortOrder: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { tasks: number };
 }
 
 export interface RecurringWorkGroupSummary {
@@ -601,5 +615,134 @@ export interface DashboardStats {
   operationalTimes: DashboardOperationalTimes;
   generatedAt: string;
 }
+
+export interface WorkOrderExpenseItem {
+  id: string;
+  workOrderId: string;
+  concept: string;
+  amount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkOrderFinance {
+  id: string;
+  title: string;
+  status: string;
+  scheduledDate: string | null;
+  clientAmountCharged: number | null;
+  building: { id: string; name: string; city: string | null; province: string | null };
+  expenses: WorkOrderExpenseItem[];
+  expensesTotal: number;
+}
+
+export interface FixedExpenseItem {
+  id: string;
+  concept: string;
+  amount: number;
+  startDate: string;
+  endDate: string | null;
+  buildingId: string | null;
+  isActive: boolean;
+  building: { id: string; name: string } | null;
+  scope: 'global' | 'building';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommissionServiceCandidate {
+  id: string;
+  title: string;
+  status: string;
+  scheduledDate: string | null;
+  clientAmountCharged: number | null;
+  building: { id: string; name: string; city: string | null; province: string | null };
+  cleaners: Array<{ id: string; fullName: string }>;
+  expenses: Array<{ id: string; concept: string; amount: number }>;
+  expensesTotal: number;
+}
+
+export interface CommissionSettlementListItem {
+  id: string;
+  beneficiaryName: string;
+  beneficiaryUserId: string | null;
+  beneficiaryUser: { id: string; fullName: string } | null;
+  dateFrom: string;
+  dateTo: string;
+  percentage: number;
+  commissionAmount: number;
+  netAmount: number;
+  currentPdfVersion: number;
+  createdAt: string;
+  createdBy: { id: string; fullName: string };
+}
+
+export interface CommissionSettlementDetail {
+  id: string;
+  beneficiaryUserId: string | null;
+  beneficiaryName: string;
+  beneficiaryUser: { id: string; fullName: string; dni?: string } | null;
+  dateFrom: string;
+  dateTo: string;
+  percentage: number;
+  totalClientCharged: number;
+  totalServiceExpenses: number;
+  totalFixedExpenses: number;
+  netAmount: number;
+  commissionAmount: number;
+  calculationBreakdown: { lines?: string[] };
+  currentPdfVersion: number;
+  createdBy: { id: string; fullName: string };
+  createdAt: string;
+  updatedAt: string;
+  items: Array<{
+    id: string;
+    workOrderId: string;
+    title: string;
+    scheduledDate: string | null;
+    buildingName: string;
+    city: string | null;
+    province: string | null;
+    clientAmountCharged: number;
+    serviceExpensesTotal: number;
+    serviceExpenses: Array<{ concept: string; amount: number }>;
+    cleaners: Array<{ id?: string; fullName: string }>;
+  }>;
+  fixedExpenses: Array<{
+    id: string;
+    fixedExpenseId: string | null;
+    concept: string;
+    buildingName: string | null;
+    isGlobal: boolean;
+    fullAmount: number;
+    proratedAmount: number;
+    daysInBasePeriod: number;
+    daysOverlapping: number;
+    included: boolean;
+    prorationNote: string | null;
+  }>;
+  pdfVersions: Array<{
+    id: string;
+    version: number;
+    note: string | null;
+    createdAt: string;
+    createdById: string | null;
+  }>;
+}
+
+export interface ProratedFixedExpensePreview {
+  fixedExpenseId: string;
+  concept: string;
+  buildingId: string | null;
+  buildingName: string | null;
+  isGlobal: boolean;
+  fullAmount: number;
+  proratedAmount: number;
+  daysInBasePeriod: number;
+  daysOverlapping: number;
+  prorationNote: string;
+  included: boolean;
+}
+
 
 

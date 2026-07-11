@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 
 const LINKS = [
   { href: '/tasks', label: 'Maestro de tareas' },
+  { href: '/tasks/categorias', label: 'Categorías' },
   { href: '/tasks/motivos', label: 'Motivos de no realización' },
 ];
 

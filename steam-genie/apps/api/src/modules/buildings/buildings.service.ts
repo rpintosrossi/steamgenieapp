@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { QueryBuildingsDto } from './dto/query-buildings.dto';
@@ -31,11 +31,14 @@ export class BuildingsService {
   // ─── Buildings ─────────────────────────────────────────────────────────────
 
   async findAll(query: QueryBuildingsDto, user?: AuthUser) {
-    const { page = 1, limit = 20, search } = query;
+    const { page = 1, limit = 20, search, includeInactive } = query;
     const skip = (page - 1) * limit;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = { deletedAt: null };
+    if (!includeInactive) {
+      where.isActive = true;
+    }
     if (search) {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },
@@ -318,6 +321,9 @@ export class BuildingsService {
         latitude: dto.latitude,
         longitude: dto.longitude,
         gpsRadiusM: dto.gpsRadiusM,
+        ...(dto.requireGpsValidation !== undefined
+          ? { requireGpsValidation: dto.requireGpsValidation }
+          : {}),
       },
     });
   }
@@ -334,6 +340,9 @@ export class BuildingsService {
         ...(dto.latitude !== undefined ? { latitude: dto.latitude } : {}),
         ...(dto.longitude !== undefined ? { longitude: dto.longitude } : {}),
         ...(dto.gpsRadiusM !== undefined ? { gpsRadiusM: dto.gpsRadiusM } : {}),
+        ...(dto.requireGpsValidation !== undefined
+          ? { requireGpsValidation: dto.requireGpsValidation }
+          : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       },
     });
@@ -341,7 +350,83 @@ export class BuildingsService {
 
   async remove(id: string) {
     await this.assertBuildingExists(id);
-    await this.prisma.building.update({ where: { id }, data: { deletedAt: new Date(), isActive: false } });
+
+    const [
+      tasks,
+      workOrders,
+      reservations,
+      userRoles,
+      openAttendances,
+      stockItems,
+      openStockAlerts,
+      fixedExpenses,
+    ] = await Promise.all([
+      this.prisma.task.count({ where: { buildingId: id, deletedAt: null } }),
+      this.prisma.workOrder.count({ where: { buildingId: id, deletedAt: null } }),
+      this.prisma.reservation.count({ where: { buildingId: id } }),
+      this.prisma.userBuildingRole.count({ where: { buildingId: id } }),
+      this.prisma.attendance.count({
+        where: { buildingId: id, checkOutAt: null, deletedAt: null },
+      }),
+      this.prisma.buildingStockItem.count({
+        where: { buildingId: id, quantity: { gt: 0 } },
+      }),
+      this.prisma.buildingStockAlert.count({
+        where: { buildingId: id, status: 'OPEN' },
+      }),
+      this.prisma.fixedExpense.count({
+        where: { buildingId: id, deletedAt: null },
+      }),
+    ]);
+
+    const reasons: string[] = [];
+    if (tasks > 0) {
+      reasons.push(`tiene ${tasks} tarea${tasks === 1 ? '' : 's'} asociada${tasks === 1 ? '' : 's'}`);
+    }
+    if (workOrders > 0) {
+      reasons.push(
+        `tiene ${workOrders} servicio${workOrders === 1 ? '' : 's'} eventual${workOrders === 1 ? '' : 'es'}`,
+      );
+    }
+    if (reservations > 0) {
+      reasons.push(
+        `tiene ${reservations} reserva${reservations === 1 ? '' : 's'}`,
+      );
+    }
+    if (userRoles > 0) {
+      reasons.push(
+        `tiene ${userRoles} usuario${userRoles === 1 ? '' : 's'} con rol asignado`,
+      );
+    }
+    if (openAttendances > 0) {
+      reasons.push(
+        `tiene ${openAttendances} fichaje${openAttendances === 1 ? '' : 's'} abierto${openAttendances === 1 ? '' : 's'}`,
+      );
+    }
+    if (stockItems > 0) {
+      reasons.push('tiene stock con cantidad mayor a cero');
+    }
+    if (openStockAlerts > 0) {
+      reasons.push(
+        `tiene ${openStockAlerts} alerta${openStockAlerts === 1 ? '' : 's'} de stock abierta${openStockAlerts === 1 ? '' : 's'}`,
+      );
+    }
+    if (fixedExpenses > 0) {
+      reasons.push(
+        `tiene ${fixedExpenses} gasto${fixedExpenses === 1 ? '' : 's'} fijo${fixedExpenses === 1 ? '' : 's'} asociado${fixedExpenses === 1 ? '' : 's'}`,
+      );
+    }
+
+    if (reasons.length > 0) {
+      throw new ConflictException(
+        `No se puede eliminar el edificio: ${reasons.join('; ')}.`,
+      );
+    }
+
+    await this.prisma.building.update({
+      where: { id },
+      data: { deletedAt: new Date(), isActive: false },
+    });
     return { message: 'Building deleted' };
   }
 

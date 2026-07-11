@@ -21,6 +21,10 @@ export class CreateTaskDto {
   @IsUUID()
   subzoneId?: string;
 
+  @IsOptional()
+  @IsUUID()
+  categoryId?: string;
+
   @IsString()
   @MinLength(1)
   @MaxLength(300)

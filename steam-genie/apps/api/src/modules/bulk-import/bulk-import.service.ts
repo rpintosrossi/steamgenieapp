@@ -573,4 +573,204 @@ export class BulkImportService {
   ): BulkImportRowResult {
     return { row, status: 'error', message, interpretation };
   }
+
+  // ─── Importación de catálogo de edificios ──────────────────────────────────
+
+  async generateBuildingsCatalogTemplate(): Promise<Buffer> {
+    const { generateBuildingsCatalogTemplate } = await import('./buildings-catalog.excel');
+    return generateBuildingsCatalogTemplate();
+  }
+
+  async processBuildingsCatalogExcel(
+    buffer: Buffer,
+    options: { skipAddressLookup: boolean; requireGpsValidation: boolean },
+  ) {
+    const { parseBuildingsCatalogWorkbook } = await import('./buildings-catalog.excel');
+    let rows;
+    try {
+      rows = await parseBuildingsCatalogWorkbook(buffer);
+    } catch (e) {
+      throw new BadRequestException(
+        e instanceof Error ? e.message : 'No se pudo leer el Excel.',
+      );
+    }
+
+    if (rows.length === 0) {
+      throw new BadRequestException('El Excel no tiene filas de datos.');
+    }
+
+    const results: Array<{
+      row: number;
+      status: 'success' | 'error' | 'skipped';
+      message: string;
+      buildingName?: string;
+      buildingId?: string;
+      geocoded?: boolean;
+    }> = [];
+
+    let successCount = 0;
+    let errorCount = 0;
+    let skippedCount = 0;
+
+    for (const row of rows) {
+      try {
+        const existing = await this.prisma.building.findFirst({
+          where: {
+            deletedAt: null,
+            name: { equals: row.name, mode: 'insensitive' },
+          },
+          select: { id: true, name: true },
+        });
+
+        if (existing) {
+          skippedCount += 1;
+          results.push({
+            row: row.rowNumber,
+            status: 'skipped',
+            message: `Ya existe un edificio con el nombre "${existing.name}".`,
+            buildingName: existing.name,
+            buildingId: existing.id,
+          });
+          continue;
+        }
+
+        let latitude = row.latitude;
+        let longitude = row.longitude;
+        let address = row.address;
+        let city = row.city;
+        let province = row.province;
+        let geocoded = false;
+
+        const hasCoords =
+          latitude != null &&
+          longitude != null &&
+          Number.isFinite(latitude) &&
+          Number.isFinite(longitude);
+
+        if (!options.skipAddressLookup && !hasCoords && address) {
+          const geo = await this.geocodeArgentinaAddress(address, province, city);
+          if (geo) {
+            latitude = geo.lat;
+            longitude = geo.lon;
+            if (!province && geo.province) province = geo.province;
+            if (!city && geo.city) city = geo.city;
+            if (geo.address) address = geo.address;
+            geocoded = true;
+          }
+        }
+
+        const created = await this.prisma.building.create({
+          data: {
+            name: row.name,
+            address: address ?? null,
+            city: city ?? null,
+            province: province ?? null,
+            latitude: latitude ?? null,
+            longitude: longitude ?? null,
+            gpsRadiusM:
+              row.gpsRadiusM != null && Number.isFinite(row.gpsRadiusM) && row.gpsRadiusM >= 0
+                ? Math.round(row.gpsRadiusM)
+                : 200,
+            requireGpsValidation: options.requireGpsValidation,
+          },
+        });
+
+        successCount += 1;
+        const notes: string[] = [];
+        if (geocoded) notes.push('dirección geocodificada');
+        if (options.skipAddressLookup) notes.push('sin búsqueda de dirección');
+        if (!hasCoords && !geocoded) notes.push('sin coordenadas (completar en el mapa)');
+        notes.push(
+          options.requireGpsValidation ? 'valida GPS al fichar' : 'sin validación GPS',
+        );
+
+        results.push({
+          row: row.rowNumber,
+          status: 'success',
+          message: `Creado${notes.length ? `: ${notes.join(' · ')}` : '.'}`,
+          buildingName: created.name,
+          buildingId: created.id,
+          geocoded,
+        });
+      } catch (e) {
+        errorCount += 1;
+        results.push({
+          row: row.rowNumber,
+          status: 'error',
+          message: e instanceof Error ? e.message : 'Error al crear el edificio',
+          buildingName: row.name,
+        });
+      }
+    }
+
+    return {
+      totalRows: rows.length,
+      successCount,
+      errorCount,
+      skippedCount,
+      skipAddressLookup: options.skipAddressLookup,
+      requireGpsValidation: options.requireGpsValidation,
+      rows: results,
+    };
+  }
+
+  private async geocodeArgentinaAddress(
+    address: string,
+    province?: string,
+    city?: string,
+  ): Promise<{
+    lat: number;
+    lon: number;
+    address?: string;
+    city?: string;
+    province?: string;
+  } | null> {
+    const queryParts = [address, city, province].filter(Boolean);
+    const direccion = queryParts.join(', ');
+    if (direccion.trim().length < 3) return null;
+
+    try {
+      const params = new URLSearchParams({
+        direccion,
+        max: '1',
+        campos: 'completo',
+      });
+      if (province) params.set('provincia', province);
+
+      const res = await fetch(
+        `https://apis.datos.gob.ar/georef/api/direcciones?${params.toString()}`,
+      );
+      if (!res.ok) return null;
+
+      const json = (await res.json()) as {
+        direcciones?: Array<{
+          nomenclatura?: string;
+          provincia?: { nombre?: string };
+          localidad_censal?: { nombre?: string | null };
+          departamento?: { nombre?: string | null };
+          ubicacion?: { lat?: number | null; lon?: number | null };
+        }>;
+      };
+
+      const first = json.direcciones?.[0];
+      const lat = first?.ubicacion?.lat;
+      const lon = first?.ubicacion?.lon;
+      if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return null;
+      }
+
+      return {
+        lat,
+        lon,
+        address: first?.nomenclatura?.trim() || address,
+        city:
+          first?.localidad_censal?.nombre ||
+          first?.departamento?.nombre ||
+          city,
+        province: first?.provincia?.nombre || province,
+      };
+    } catch {
+      return null;
+    }
+  }
 }

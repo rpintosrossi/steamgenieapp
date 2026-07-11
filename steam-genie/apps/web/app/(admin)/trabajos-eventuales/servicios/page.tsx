@@ -2,7 +2,10 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { APP_MODULES } from '@steam-genie/shared-constants';
+import { WorkOrderFinanceModal } from '../../../../components/WorkOrderFinanceModal';
 import { api } from '../../../../lib/api-client';
+import { hasModule } from '../../../../lib/auth';
 import { fetchBuildingsList } from '../../../../lib/buildings-cache';
 import {
   ASSIGNMENT_STATUS_LABELS,
@@ -175,6 +178,8 @@ export default function EventualServicesPage() {
 
   const [deletingWo, setDeletingWo] = useState<WorkOrderListItem | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [financeWoId, setFinanceWoId] = useState<string | null>(null);
+  const canManageFinance = hasModule(APP_MODULES.GASTOS_SERVICIOS);
 
   const loadServices = useCallback(async () => {
     setLoading(true);
@@ -441,6 +446,16 @@ export default function EventualServicesPage() {
                       <td>{formatAssignments(wo)}</td>
                       <td>
                         <div className="table-row-actions">
+                          {canManageFinance ? (
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => setFinanceWoId(wo.id)}
+                              title="Gastos y monto cobrado"
+                            >
+                              Gastos
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
@@ -627,6 +642,10 @@ export default function EventualServicesPage() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {financeWoId ? (
+        <WorkOrderFinanceModal workOrderId={financeWoId} onClose={() => setFinanceWoId(null)} />
       ) : null}
     </>
   );

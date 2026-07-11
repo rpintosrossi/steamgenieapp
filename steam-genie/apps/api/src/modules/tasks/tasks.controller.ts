@@ -24,6 +24,9 @@ import { TasksService } from './tasks.service';
 import { QueryTasksDto } from './dto/query-tasks.dto';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { CreateTaskCategoryDto } from './dto/create-task-category.dto';
+import { UpdateTaskCategoryDto } from './dto/update-task-category.dto';
+import { QueryTaskCategoriesDto } from './dto/query-task-categories.dto';
 import { CreateCustomFieldDto } from './dto/create-custom-field.dto';
 import { DueTodayQueryDto } from './dto/due-today-query.dto';
 import { QueryRecurringWorkDto } from './dto/query-recurring-work.dto';
@@ -123,6 +126,33 @@ export class TasksController {
   @RequiredRoles('admin', 'manager', 'client')
   findAll(@Query() query: QueryTasksDto, @CurrentUser() user: AuthUser) {
     return this.tasksService.findAll(query, user);
+  }
+
+  @Get('categories')
+  @RequiredRoles('admin', 'manager', 'client')
+  findAllCategories(@Query() query: QueryTaskCategoriesDto) {
+    return this.tasksService.findAllCategories(query);
+  }
+
+  @Post('categories')
+  @RequiredRoles('admin', 'manager')
+  createCategory(@Body() dto: CreateTaskCategoryDto) {
+    return this.tasksService.createCategory(dto);
+  }
+
+  @Patch('categories/:id')
+  @RequiredRoles('admin', 'manager')
+  updateCategory(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateTaskCategoryDto,
+  ) {
+    return this.tasksService.updateCategory(id, dto);
+  }
+
+  @Delete('categories/:id')
+  @RequiredRoles('admin', 'manager')
+  removeCategory(@Param('id', ParseUUIDPipe) id: string) {
+    return this.tasksService.removeCategory(id);
   }
 
   @Post()

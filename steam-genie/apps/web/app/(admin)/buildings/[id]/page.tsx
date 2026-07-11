@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { BuildingBulkImportModal } from '../../../../components/BuildingBulkImportModal';
 import { BuildingHierarchyManager } from '../../../../components/BuildingHierarchyManager';
+import { BuildingSettingsCard } from '../../../../components/BuildingSettingsCard';
 import { BuildingUsersManager } from '../../../../components/BuildingUsersManager';
 import { api } from '../../../../lib/api-client';
 import type { BuildingDetail } from '../../../../lib/types';
@@ -79,6 +80,16 @@ export default function BuildingDetailPage() {
 
       {error ? <div className="alert alert-error">{error}</div> : null}
       {success ? <div className="alert alert-success">{success}</div> : null}
+
+      <BuildingSettingsCard
+        building={building}
+        onSaved={(updated) => setBuilding(updated)}
+        onError={(msg) => setError(msg || null)}
+        onSuccess={(msg) => {
+          setSuccess(msg);
+          setError(null);
+        }}
+      />
 
       <BuildingHierarchyManager
         building={building}

@@ -14,7 +14,7 @@ import {
   setLoginError,
   WEB_ACCESS_DENIED_MESSAGE,
 } from '../lib/auth';
-import { canAccessPath } from '../lib/modules';
+import { canAccessPath, getDefaultHomePath } from '../lib/modules';
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -49,7 +49,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       const modules = getUserModules();
       const role = getCurrentUserRole();
       if (!canAccessPath(modules, pathname, role)) {
-        router.replace('/dashboard');
+        router.replace(getDefaultHomePath(modules));
         return;
       }
 

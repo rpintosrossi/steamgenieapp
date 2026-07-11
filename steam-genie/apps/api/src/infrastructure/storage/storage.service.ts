@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   DeleteObjectCommand,
+  GetObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -92,6 +93,25 @@ export class StorageService implements OnModuleInit {
     }
 
     return this.uploadToLocal(key, buffer);
+  }
+
+  /** Lee un objeto desde R2/S3 (para descargas autenticadas sin URL pública). */
+  async getObjectBuffer(key: string): Promise<Buffer | null> {
+    if (!this.objectStorage || !this.s3Client) return null;
+    try {
+      const res = await this.s3Client.send(
+        new GetObjectCommand({
+          Bucket: this.objectStorage.bucket,
+          Key: key,
+        }),
+      );
+      if (!res.Body) return null;
+      const bytes = await res.Body.transformToByteArray();
+      return Buffer.from(bytes);
+    } catch (err) {
+      this.logger.warn(`getObjectBuffer failed for key=${key}: ${String(err)}`);
+      return null;
+    }
   }
 
   getPublicUrl(key: string): string {

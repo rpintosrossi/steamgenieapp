@@ -2358,6 +2358,19 @@ textarea {
   align-items: flex-end;
 }
 
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.form-row > .form-field {
+  flex: 1;
+  min-width: 160px;
+  margin: 0;
+}
+
 .stock-category-title {
   margin: 0 0 16px;
   font-size: 18px;
@@ -3462,6 +3475,101 @@ textarea {
   background: #fee2e2;
 }
 
+.building-location-map {
+  height: 320px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+}
+
+.building-location-map.is-disabled {
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.building-location-map-hint {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.building-location-map-loading {
+  height: 320px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--color-border);
+  border-radius: 10px;
+  color: var(--color-text-muted);
+  font-size: 14px;
+}
+
+.building-location-fields .leaflet-container {
+  font-family: inherit;
+}
+
+.address-autocomplete {
+  position: relative;
+}
+
+.address-autocomplete-status {
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+
+.address-autocomplete-list {
+  position: absolute;
+  z-index: 30;
+  left: 0;
+  right: 0;
+  top: calc(100% - 2px);
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.12));
+  max-height: 240px;
+  overflow: auto;
+}
+
+.address-autocomplete-empty {
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.address-autocomplete-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  color: inherit;
+}
+
+.address-autocomplete-item:hover,
+.address-autocomplete-item.is-active {
+  background: var(--color-surface-muted, rgba(37, 99, 235, 0.08));
+}
+
+.address-autocomplete-item-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.address-autocomplete-item-meta {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
 @media (max-width: 900px) {
   .eventual-calendar-grid,
   .eventual-calendar-weekdays {
@@ -3474,5 +3582,10 @@ textarea {
 
   .eventual-calendar-day-events {
     max-height: 160px;
+  }
+
+  .building-location-map,
+  .building-location-map-loading {
+    height: 260px;
   }
 }

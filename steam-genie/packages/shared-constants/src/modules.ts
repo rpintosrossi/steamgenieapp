@@ -15,6 +15,11 @@ export const APP_MODULES = {
   STOCK: 'stock',
   STOCK_MONITORING: 'stock_monitoring',
   STOCK_SHIPMENTS: 'stock_shipments',
+  GASTOS_SERVICIOS: 'gastos_servicios',
+  GASTOS_FIJOS: 'gastos_fijos',
+  COMISIONES: 'comisiones',
+  RENDICIONES: 'rendiciones',
+  MIS_RENDICIONES: 'mis_rendiciones',
 } as const;
 
 export type AppModuleKey = (typeof APP_MODULES)[keyof typeof APP_MODULES];
@@ -36,6 +41,10 @@ export const SYSTEM_ROLE_MODULES: Record<string, AppModuleKey[]> = {
     APP_MODULES.STOCK,
     APP_MODULES.STOCK_MONITORING,
     APP_MODULES.STOCK_SHIPMENTS,
+    APP_MODULES.GASTOS_SERVICIOS,
+    APP_MODULES.GASTOS_FIJOS,
+    APP_MODULES.COMISIONES,
+    APP_MODULES.RENDICIONES,
   ],
   cleaner: [],
   client: [
@@ -65,6 +74,11 @@ export const APP_MODULE_LABELS: Record<AppModuleKey, string> = {
   [APP_MODULES.STOCK]: 'Stock (depósito)',
   [APP_MODULES.STOCK_MONITORING]: 'Monitoreo de stock',
   [APP_MODULES.STOCK_SHIPMENTS]: 'Órdenes de envío',
+  [APP_MODULES.GASTOS_SERVICIOS]: 'Gastos de servicios',
+  [APP_MODULES.GASTOS_FIJOS]: 'Gastos fijos',
+  [APP_MODULES.COMISIONES]: 'Comisiones',
+  [APP_MODULES.RENDICIONES]: 'Rendiciones',
+  [APP_MODULES.MIS_RENDICIONES]: 'Mis rendiciones',
 };
 
 export const APP_MODULE_GROUPS: Array<{
@@ -105,6 +119,16 @@ export const APP_MODULE_GROUPS: Array<{
       APP_MODULES.STOCK,
       APP_MODULES.STOCK_MONITORING,
       APP_MODULES.STOCK_SHIPMENTS,
+    ],
+  },
+  {
+    label: 'Gastos y comisiones',
+    modules: [
+      APP_MODULES.GASTOS_SERVICIOS,
+      APP_MODULES.GASTOS_FIJOS,
+      APP_MODULES.COMISIONES,
+      APP_MODULES.RENDICIONES,
+      APP_MODULES.MIS_RENDICIONES,
     ],
   },
 ];

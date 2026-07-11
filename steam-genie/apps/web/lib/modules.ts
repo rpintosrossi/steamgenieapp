@@ -15,6 +15,7 @@ const ROUTE_MODULE_MAP: Array<{ prefix: string; module: AppModuleKey | null }> =
   { prefix: '/users', module: APP_MODULES.USERS },
   { prefix: '/roles', module: APP_MODULES.ROLES },
   { prefix: '/tasks/motivos', module: APP_MODULES.BUILDINGS },
+  { prefix: '/tasks/categorias', module: APP_MODULES.TASKS },
   { prefix: '/tasks', module: APP_MODULES.TASKS },
   { prefix: '/import', module: APP_MODULES.BUILDINGS },
   { prefix: '/trabajos-eventuales/calendario', module: APP_MODULES.RESERVAS },
@@ -34,6 +35,11 @@ const ROUTE_MODULE_MAP: Array<{ prefix: string; module: AppModuleKey | null }> =
   { prefix: '/stock/categorias', module: APP_MODULES.STOCK },
   { prefix: '/stock/proveedores', module: APP_MODULES.STOCK },
   { prefix: '/stock', module: null },
+  { prefix: '/gastos-y-comisiones/gastos-fijos', module: APP_MODULES.GASTOS_FIJOS },
+  { prefix: '/gastos-y-comisiones/comisiones', module: APP_MODULES.COMISIONES },
+  { prefix: '/gastos-y-comisiones/rendiciones', module: APP_MODULES.RENDICIONES },
+  { prefix: '/gastos-y-comisiones/mis-rendiciones', module: APP_MODULES.MIS_RENDICIONES },
+  { prefix: '/gastos-y-comisiones', module: null },
 ];
 
 export function resolveModuleForPath(pathname: string): AppModuleKey | null {
@@ -75,6 +81,30 @@ export function canAccessPath(
       hasModuleAccess(modules, APP_MODULES.SERVICIOS_EVENTUALES)
     );
   }
+  if (
+    pathname === '/gastos-y-comisiones' ||
+    pathname.startsWith('/gastos-y-comisiones/')
+  ) {
+    if (pathname.startsWith('/gastos-y-comisiones/gastos-fijos')) {
+      return hasModuleAccess(modules, APP_MODULES.GASTOS_FIJOS);
+    }
+    if (pathname.startsWith('/gastos-y-comisiones/comisiones')) {
+      return hasModuleAccess(modules, APP_MODULES.COMISIONES);
+    }
+    if (pathname.startsWith('/gastos-y-comisiones/rendiciones')) {
+      return hasModuleAccess(modules, APP_MODULES.RENDICIONES);
+    }
+    if (pathname.startsWith('/gastos-y-comisiones/mis-rendiciones')) {
+      return hasModuleAccess(modules, APP_MODULES.MIS_RENDICIONES);
+    }
+    return (
+      hasModuleAccess(modules, APP_MODULES.GASTOS_FIJOS) ||
+      hasModuleAccess(modules, APP_MODULES.COMISIONES) ||
+      hasModuleAccess(modules, APP_MODULES.RENDICIONES) ||
+      hasModuleAccess(modules, APP_MODULES.MIS_RENDICIONES) ||
+      hasModuleAccess(modules, APP_MODULES.GASTOS_SERVICIOS)
+    );
+  }
   const required = resolveModuleForPath(pathname);
   return hasModuleAccess(modules, required);
 }
@@ -104,7 +134,29 @@ export function canRoleAccessWeb(role: RoleName): boolean {
 
 export function canAccessWebWithModules(role: RoleName | null, modules: AppModuleKey[]): boolean {
   if (!role) return false;
-  if (role === ROLES.CLEANER) return false;
+  if (role === ROLES.CLEANER) {
+    return modules.includes(APP_MODULES.MIS_RENDICIONES);
+  }
   if (modules.length > 0) return true;
   return canRoleAccessWeb(role);
+}
+
+/** Primera ruta usable según módulos (útil si no tiene dashboard). */
+export function getDefaultHomePath(modules: AppModuleKey[]): string {
+  const candidates = [
+    '/dashboard',
+    '/gastos-y-comisiones/mis-rendiciones',
+    '/gastos-y-comisiones/rendiciones',
+    '/gastos-y-comisiones/comisiones',
+    '/gastos-y-comisiones/gastos-fijos',
+    '/gastos-y-comisiones',
+    '/trabajos-eventuales/servicios',
+    '/buildings',
+    '/tasks',
+    '/stock',
+  ];
+  for (const path of candidates) {
+    if (canAccessPath(modules, path)) return path;
+  }
+  return '/dashboard';
 }

@@ -15,6 +15,9 @@ import type { AuthUser } from '@steam-genie/shared-types';
 import { QueryTasksDto } from './dto/query-tasks.dto';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { CreateTaskCategoryDto } from './dto/create-task-category.dto';
+import { UpdateTaskCategoryDto } from './dto/update-task-category.dto';
+import { QueryTaskCategoriesDto } from './dto/query-task-categories.dto';
 import { CreateCustomFieldDto } from './dto/create-custom-field.dto';
 import { UpdateCustomFieldDto } from './dto/update-custom-field.dto';
 import { CreateFieldOptionDto } from './dto/create-field-option.dto';
@@ -29,7 +32,7 @@ import {
   matchesRecurringWorkLocation,
 } from './recurring-work-groups.util';
 import { TimelineEventsService } from '../../common/events/timeline-events.service';
-import { calendarDateKeyInBusinessTz } from '@steam-genie/shared-constants';
+import { calendarDateKeyInBusinessTz, TASK_CATEGORY_UNCATEGORIZED } from '@steam-genie/shared-constants';
 import {
   validateTaskFieldValues,
   upsertTaskFieldValues,
@@ -41,11 +44,21 @@ function startOfDay(dateStr?: string): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 }
 
+const TASK_CATEGORY_SELECT = {
+  id: true,
+  name: true,
+  sortOrder: true,
+  isActive: true,
+  createdAt: true,
+  updatedAt: true,
+};
+
 const TASK_SELECT = {
   id: true,
   buildingId: true,
   zoneId: true,
   subzoneId: true,
+  categoryId: true,
   name: true,
   frequency: true,
   startDate: true,
@@ -59,6 +72,7 @@ const TASK_SELECT = {
 
 const TASK_LIST_SELECT = {
   ...TASK_SELECT,
+  category: { select: { id: true, name: true } },
   building: { select: { id: true, name: true } },
   zone: {
     select: {
@@ -173,6 +187,7 @@ export class TasksService {
           orderBy: { sortOrder: 'asc' },
           include: { options: { orderBy: { sortOrder: 'asc' } } },
         },
+        category: { select: { id: true, name: true } },
         building: { select: { id: true, name: true } },
         zone: {
           select: {
@@ -206,11 +221,23 @@ export class TasksService {
       await this.assertNoActiveSubzones(dto.zoneId);
     }
 
+    const categoryId =
+      dto.frequency === TaskFrequency.EVENTUAL ? (dto.categoryId ?? null) : null;
+    if (dto.categoryId && dto.frequency !== TaskFrequency.EVENTUAL) {
+      throw new BadRequestException(
+        'La categoría solo se puede asignar a tareas con frecuencia Eventual.',
+      );
+    }
+    if (categoryId) {
+      await this.assertCategoryExists(categoryId);
+    }
+
     return this.prisma.task.create({
       data: {
         buildingId: dto.buildingId,
         zoneId: dto.zoneId,
         subzoneId: dto.subzoneId ?? null,
+        categoryId,
         name: dto.name,
         frequency: dto.frequency,
         startDate: startOfDay(dto.startDate),
@@ -236,12 +263,25 @@ export class TasksService {
       }
     }
 
+    if ('categoryId' in dto && dto.categoryId) {
+      if (existing.frequency !== TaskFrequency.EVENTUAL) {
+        throw new BadRequestException(
+          'La categoría solo se puede asignar a tareas con frecuencia Eventual.',
+        );
+      }
+      await this.assertCategoryExists(dto.categoryId);
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data: any = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.startDate !== undefined) data.startDate = new Date(dto.startDate);
     if (dto.zoneId !== undefined) data.zoneId = dto.zoneId;
     if ('subzoneId' in dto) data.subzoneId = dto.subzoneId ?? null;
+    if ('categoryId' in dto) {
+      data.categoryId =
+        existing.frequency === TaskFrequency.EVENTUAL ? (dto.categoryId ?? null) : null;
+    }
     if (dto.requiresPhoto !== undefined) data.requiresPhoto = dto.requiresPhoto;
     if (dto.allowsObservation !== undefined) data.allowsObservation = dto.allowsObservation;
     if (dto.requiresRejectionReason !== undefined) data.requiresRejectionReason = dto.requiresRejectionReason;
@@ -254,6 +294,183 @@ export class TasksService {
     await this.assertTaskExists(id);
     await this.prisma.task.update({ where: { id }, data: { deletedAt: new Date(), isActive: false } });
     return { message: 'Task deleted' };
+  }
+
+  // ─── CATEGORIES ────────────────────────────────────────────────────────────
+
+  async findAllCategories(query: QueryTaskCategoriesDto) {
+    const includeInactive = query.includeInactive === true;
+
+    if (query.forEventualService && query.buildingId && query.zoneId) {
+      return this.findCategoriesForEventualService(query.buildingId, query.zoneId);
+    }
+
+    return this.prisma.taskCategory.findMany({
+      where: {
+        deletedAt: null,
+        ...(includeInactive ? {} : { isActive: true }),
+      },
+      select: {
+        ...TASK_CATEGORY_SELECT,
+        _count: { select: { tasks: { where: { deletedAt: null, frequency: TaskFrequency.EVENTUAL } } } },
+      },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  /**
+   * Categorías usadas por tareas EVENTUAL activas de la zona (y subzonas),
+   * más la opción sintética "Sin categoría" si hay tareas sin categoría.
+   */
+  async findCategoriesForEventualService(buildingId: string, zoneId: string) {
+    const subzones = await this.prisma.subzone.findMany({
+      where: { zoneId, buildingId, deletedAt: null },
+      select: { id: true },
+    });
+    const subzoneIds = subzones.map((s) => s.id);
+    const locationOr = [
+      { subzoneId: null },
+      ...(subzoneIds.length > 0 ? [{ subzoneId: { in: subzoneIds } }] : []),
+    ];
+
+    const eventualWhere = {
+      buildingId,
+      zoneId,
+      frequency: TaskFrequency.EVENTUAL,
+      isActive: true,
+      deletedAt: null,
+      OR: locationOr,
+    };
+
+    const [categorized, uncategorizedCount] = await Promise.all([
+      this.prisma.task.findMany({
+        where: { ...eventualWhere, categoryId: { not: null } },
+        select: { categoryId: true },
+        distinct: ['categoryId'],
+      }),
+      this.prisma.task.count({
+        where: { ...eventualWhere, categoryId: null },
+      }),
+    ]);
+
+    const categoryIds = categorized
+      .map((t) => t.categoryId)
+      .filter((id): id is string => Boolean(id));
+
+    const categories =
+      categoryIds.length > 0
+        ? await this.prisma.taskCategory.findMany({
+            where: {
+              id: { in: categoryIds },
+              deletedAt: null,
+              isActive: true,
+            },
+            select: {
+              ...TASK_CATEGORY_SELECT,
+              _count: {
+                select: {
+                  tasks: {
+                    where: {
+                      ...eventualWhere,
+                    },
+                  },
+                },
+              },
+            },
+            orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+          })
+        : [];
+
+    const result = [...categories];
+
+    if (uncategorizedCount > 0) {
+      result.unshift({
+        id: TASK_CATEGORY_UNCATEGORIZED,
+        name: 'Sin categoría',
+        sortOrder: -1,
+        isActive: true,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+        _count: { tasks: uncategorizedCount },
+      });
+    }
+
+    return result;
+  }
+
+  async createCategory(dto: CreateTaskCategoryDto) {
+    const name = dto.name.trim();
+    await this.assertCategoryNameAvailable(name);
+
+    return this.prisma.taskCategory.create({
+      data: {
+        name,
+        sortOrder: dto.sortOrder ?? 0,
+        isActive: true,
+      },
+      select: TASK_CATEGORY_SELECT,
+    });
+  }
+
+  async updateCategory(id: string, dto: UpdateTaskCategoryDto) {
+    const existing = await this.assertCategoryExists(id);
+
+    if (dto.name !== undefined) {
+      const name = dto.name.trim();
+      if (name !== existing.name) {
+        await this.assertCategoryNameAvailable(name, id);
+      }
+    }
+
+    return this.prisma.taskCategory.update({
+      where: { id },
+      data: {
+        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+        ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+      },
+      select: TASK_CATEGORY_SELECT,
+    });
+  }
+
+  async removeCategory(id: string) {
+    await this.assertCategoryExists(id);
+
+    const taskCount = await this.prisma.task.count({
+      where: { categoryId: id, deletedAt: null },
+    });
+    if (taskCount > 0) {
+      throw new ConflictException(
+        'No se puede eliminar una categoría con tareas asignadas.',
+      );
+    }
+
+    await this.prisma.taskCategory.update({
+      where: { id },
+      data: { deletedAt: new Date(), isActive: false },
+    });
+    return { message: 'Categoría eliminada' };
+  }
+
+  private async assertCategoryExists(id: string) {
+    const category = await this.prisma.taskCategory.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!category) throw new NotFoundException('Categoría no encontrada');
+    return category;
+  }
+
+  private async assertCategoryNameAvailable(name: string, excludeId?: string) {
+    const duplicate = await this.prisma.taskCategory.findFirst({
+      where: {
+        name: { equals: name, mode: 'insensitive' },
+        deletedAt: null,
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+    });
+    if (duplicate) {
+      throw new ConflictException('Ya existe una categoría con ese nombre.');
+    }
   }
 
   // ─── CUSTOM FIELDS ─────────────────────────────────────────────────────────

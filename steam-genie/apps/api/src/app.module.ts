@@ -24,6 +24,7 @@ import { StockModule } from './modules/stock/stock.module';
 import { StockLogisticsModule } from './modules/stock-logistics/stock-logistics.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { EventualCalendarModule } from './modules/eventual-calendar/eventual-calendar.module';
+import { FinanceModule } from './modules/finance/finance.module';
 import { HealthModule } from './health/health.module';
 import { TimelineEventsModule } from './common/events/timeline-events.module';
 
@@ -59,6 +60,7 @@ import { TimelineEventsModule } from './common/events/timeline-events.module';
     StockLogisticsModule,
     ReportsModule,
     EventualCalendarModule,
+    FinanceModule,
   ],
 })
 export class AppModule {}

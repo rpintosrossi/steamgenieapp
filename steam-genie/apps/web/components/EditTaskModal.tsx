@@ -7,7 +7,7 @@ import { TaskCustomFieldsEditor } from './TaskCustomFieldsEditor';
 import type { TaskCustomField } from '../lib/task-custom-fields';
 import { api } from '../lib/api-client';
 import { TASK_FREQUENCY_LABELS } from '../lib/labels';
-import type { TaskItem } from '../lib/types';
+import type { TaskCategoryItem, TaskItem } from '../lib/types';
 
 type TaskDetail = TaskItem & {
   customFields: TaskCustomField[];
@@ -30,6 +30,8 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
   });
   const [name, setName] = useState('');
   const [frequency, setFrequency] = useState<string>(TASK_FREQUENCIES.EVENTUAL);
+  const [categoryId, setCategoryId] = useState('');
+  const [categories, setCategories] = useState<TaskCategoryItem[]>([]);
   const [requiresPhoto, setRequiresPhoto] = useState(false);
   const [allowsObservation, setAllowsObservation] = useState(true);
   const [requiresRejectionReason, setRequiresRejectionReason] = useState(true);
@@ -45,15 +47,20 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
       setLoading(true);
       setError(null);
       try {
-        const data = await api.get<TaskDetail>(`/tasks/${taskId}`);
+        const [data, cats] = await Promise.all([
+          api.get<TaskDetail>(`/tasks/${taskId}`),
+          api.get<TaskCategoryItem[]>('/tasks/categories?includeInactive=true'),
+        ]);
         if (cancelled) return;
         setTask(data);
         setName(data.name);
         setFrequency(data.frequency);
+        setCategoryId(data.categoryId ?? '');
         setRequiresPhoto(data.requiresPhoto);
         setAllowsObservation(data.allowsObservation);
         setRequiresRejectionReason(data.requiresRejectionReason);
         setCustomFields(data.customFields ?? []);
+        setCategories(cats.filter((c) => c.isActive || c.id === data.categoryId));
         setLocation({
           buildingId: data.buildingId,
           floorId: data.zone?.floor?.id ?? '',
@@ -90,6 +97,9 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
         name: name.trim(),
         zoneId: location.zoneId,
         subzoneId: location.subzoneId || null,
+        ...(frequency === TASK_FREQUENCIES.EVENTUAL
+          ? { categoryId: categoryId || null }
+          : {}),
         requiresPhoto,
         allowsObservation,
         requiresRejectionReason,
@@ -147,6 +157,21 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
                   </p>
                 </div>
               </div>
+
+              {frequency === TASK_FREQUENCIES.EVENTUAL ? (
+                <div className="form-field">
+                  <label>Categoría (opcional)</label>
+                  <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+                    <option value="">Sin categoría</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                        {!c.isActive ? ' (inactiva)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
 
               <div className="grid-3">
                 <label>

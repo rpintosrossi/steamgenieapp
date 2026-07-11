@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsBoolean,
   IsISO8601,
+  ValidateIf,
 } from 'class-validator';
 
 export class UpdateTaskDto {
@@ -24,8 +25,14 @@ export class UpdateTaskDto {
   zoneId?: string;
 
   @IsOptional()
+  @ValidateIf((_, value) => value !== null)
   @IsUUID()
   subzoneId?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsUUID()
+  categoryId?: string | null;
 
   @IsOptional()
   @IsBoolean()

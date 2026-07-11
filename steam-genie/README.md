@@ -158,7 +158,6 @@ El monorepo vive en `steam-genie/`. Si el repo git es `APP-SG`, en Railway → *
 | `JWT_REFRESH_EXPIRES_IN` | `90d` |
 | `API_URL` | `https://<tu-dominio>.up.railway.app` |
 | `ALLOWED_ORIGINS` | URL del admin (Vercel) + localhost si hace falta |
-| `SKIP_GPS_VALIDATION` | `false` en producción |
 | `S3_ENDPOINT` | `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` |
 | `S3_REGION` | `auto` |
 | `S3_BUCKET` | nombre del bucket |

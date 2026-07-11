@@ -198,6 +198,11 @@ model User {
   createdStockShipmentOrders StockShipmentOrder[]     @relation("StockShipmentCreator")
   dispatchedStockOrders      StockShipmentOrder[]     @relation("StockShipmentDispatcher")
   stockMovements             StockMovement[]          @relation("StockMovementPerformer")
+  workOrderExpenses          WorkOrderExpense[]       @relation("WorkOrderExpenseCreator")
+  fixedExpensesCreated       FixedExpense[]           @relation("FixedExpenseCreator")
+  commissionSettlements      CommissionSettlement[]   @relation("CommissionBeneficiary")
+  commissionsCreated         CommissionSettlement[]   @relation("CommissionCreator")
+  commissionPdfVersions      CommissionSettlementPdfVersion[] @relation("CommissionPdfCreator")
 
   @@index([deletedAt, fullName])
   @@map("users")
@@ -268,10 +273,12 @@ model Building {
   address     String?  @db.VarChar(300)
   city        String?  @db.VarChar(100)
   province    String?  @db.VarChar(100)
-  latitude    Decimal? @db.Decimal(10, 7)
-  longitude   Decimal? @db.Decimal(10, 7)
-  gpsRadiusM  Int      @default(200)
-  isActive    Boolean  @default(true)
+  latitude             Decimal? @db.Decimal(10, 7)
+  longitude            Decimal? @db.Decimal(10, 7)
+  gpsRadiusM           Int      @default(200)
+  /// If true, check-in/out must be within the building GPS radius.
+  requireGpsValidation Boolean  @default(true)
+  isActive             Boolean  @default(true)
   deletedAt   DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -288,6 +295,7 @@ model Building {
   buildingStockAlerts       BuildingStockAlert[]
   stockShipmentDestinations StockShipmentDestination[]
   stockMovements            StockMovement[]
+  fixedExpenses             FixedExpense[]
 
   @@index([deletedAt])
   @@map("buildings")
@@ -357,6 +365,21 @@ model Subzone {
 
 // ─── Tasks ────────────────────────────────────────────────────────────────────
 
+model TaskCategory {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String    @db.VarChar(100)
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  tasks Task[]
+
+  @@index([deletedAt, sortOrder])
+  @@map("task_categories")
+}
+
 model Task {
   id         String        @id @default(uuid()) @db.Uuid
   building   Building      @relation(fields: [buildingId], references: [id])
@@ -365,6 +388,8 @@ model Task {
   zoneId     String?       @db.Uuid
   subzone    Subzone?      @relation(fields: [subzoneId], references: [id])
   subzoneId  String?       @db.Uuid
+  category   TaskCategory? @relation(fields: [categoryId], references: [id])
+  categoryId String?       @db.Uuid
   name       String        @db.VarChar(300)
   frequency  TaskFrequency
   startDate  DateTime      @db.Date
@@ -382,6 +407,7 @@ model Task {
 
   @@index([buildingId, zoneId, subzoneId, frequency])
   @@index([buildingId, isActive, deletedAt])
+  @@index([categoryId, deletedAt])
   @@map("tasks")
 }
 
@@ -729,6 +755,8 @@ model WorkOrder {
   scheduledTime DateTime?       @db.Time
   deadlineAt    DateTime?
   status        WorkOrderStatus @default(UNASSIGNED)
+  /// Monto cobrado al cliente por este servicio eventual (opcional).
+  clientAmountCharged Decimal?  @db.Decimal(12, 2)
   createdBy     User            @relation(fields: [createdById], references: [id])
   createdById   String          @db.Uuid
   startedAt     DateTime?
@@ -742,6 +770,8 @@ model WorkOrder {
   workOrderTasks     WorkOrderTask[]
   serviceExecutions  ServiceExecution[]
   integrationLogs    IntegrationInboundLog[]
+  expenses           WorkOrderExpense[]
+  commissionItems    CommissionSettlementItem[]
 
   @@index([buildingId, status, scheduledDate])
   @@index([type, buildingId, status, scheduledDate])
@@ -1068,4 +1098,139 @@ model AuditLog {
   createdAt  DateTime @default(now())
 
   @@map("audit_log")
+}
+
+// ─── Gastos y comisiones ──────────────────────────────────────────────────────
+
+/// Gastos opcionales asociados a un servicio eventual (concepto + monto).
+model WorkOrderExpense {
+  id          String    @id @default(uuid()) @db.Uuid
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id])
+  workOrderId String    @db.Uuid
+  concept     String    @db.VarChar(300)
+  amount      Decimal   @db.Decimal(12, 2)
+  createdBy   User?     @relation("WorkOrderExpenseCreator", fields: [createdById], references: [id])
+  createdById String?   @db.Uuid
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workOrderId])
+  @@map("work_order_expenses")
+}
+
+/// Gasto fijo global o por edificio, con rango de vigencia (fin opcional).
+model FixedExpense {
+  id          String    @id @default(uuid()) @db.Uuid
+  concept     String    @db.VarChar(300)
+  amount      Decimal   @db.Decimal(12, 2)
+  startDate   DateTime  @db.Date
+  endDate     DateTime? @db.Date
+  /// null = aplica a todos los edificios (global)
+  building    Building? @relation(fields: [buildingId], references: [id])
+  buildingId  String?   @db.Uuid
+  isActive    Boolean   @default(true)
+  deletedAt   DateTime?
+  createdBy   User?     @relation("FixedExpenseCreator", fields: [createdById], references: [id])
+  createdById String?   @db.Uuid
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  settlementLines CommissionSettlementFixedExpense[]
+
+  @@index([deletedAt, isActive, startDate])
+  @@index([buildingId])
+  @@map("fixed_expenses")
+}
+
+/// Rendición / comisión generada para un beneficiario (usuario o externo).
+model CommissionSettlement {
+  id                   String   @id @default(uuid()) @db.Uuid
+  beneficiaryUser      User?    @relation("CommissionBeneficiary", fields: [beneficiaryUserId], references: [id])
+  beneficiaryUserId    String?  @db.Uuid
+  /// Nombre siempre guardado (del usuario o texto libre si no es usuario).
+  beneficiaryName      String   @db.VarChar(200)
+  dateFrom             DateTime @db.Date
+  dateTo               DateTime @db.Date
+  percentage           Decimal  @db.Decimal(5, 2)
+  totalClientCharged   Decimal  @db.Decimal(14, 2)
+  totalServiceExpenses Decimal  @db.Decimal(14, 2)
+  totalFixedExpenses   Decimal  @db.Decimal(14, 2)
+  netAmount            Decimal  @db.Decimal(14, 2)
+  commissionAmount     Decimal  @db.Decimal(14, 2)
+  /// Desglose legible del cálculo (prorrateos, fórmulas, etc.).
+  calculationBreakdown Json
+  currentPdfVersion    Int      @default(1)
+  createdBy            User     @relation("CommissionCreator", fields: [createdById], references: [id])
+  createdById          String   @db.Uuid
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  items           CommissionSettlementItem[]
+  fixedExpenses   CommissionSettlementFixedExpense[]
+  pdfVersions     CommissionSettlementPdfVersion[]
+
+  @@index([beneficiaryUserId, dateFrom, dateTo])
+  @@index([createdAt])
+  @@index([beneficiaryName])
+  @@map("commission_settlements")
+}
+
+model CommissionSettlementItem {
+  id                     String               @id @default(uuid()) @db.Uuid
+  settlement             CommissionSettlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  settlementId           String               @db.Uuid
+  workOrder              WorkOrder            @relation(fields: [workOrderId], references: [id])
+  workOrderId            String               @db.Uuid
+  titleSnapshot          String               @db.VarChar(300)
+  scheduledDateSnapshot  DateTime?            @db.Date
+  buildingNameSnapshot   String               @db.VarChar(200)
+  citySnapshot           String?              @db.VarChar(100)
+  provinceSnapshot       String?              @db.VarChar(100)
+  clientAmountCharged    Decimal              @db.Decimal(12, 2)
+  serviceExpensesTotal   Decimal              @db.Decimal(12, 2)
+  /// [{ concept, amount }]
+  serviceExpensesJson    Json
+  /// [{ id?, fullName }]
+  cleanersSnapshot       Json
+
+  @@index([settlementId])
+  @@index([workOrderId])
+  @@map("commission_settlement_items")
+}
+
+model CommissionSettlementFixedExpense {
+  id                   String               @id @default(uuid()) @db.Uuid
+  settlement           CommissionSettlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  settlementId         String               @db.Uuid
+  fixedExpense         FixedExpense?        @relation(fields: [fixedExpenseId], references: [id])
+  fixedExpenseId       String?              @db.Uuid
+  conceptSnapshot      String               @db.VarChar(300)
+  buildingNameSnapshot String?              @db.VarChar(200)
+  isGlobal             Boolean              @default(true)
+  fullAmount           Decimal              @db.Decimal(12, 2)
+  proratedAmount       Decimal              @db.Decimal(12, 2)
+  daysInBasePeriod     Int
+  daysOverlapping      Int
+  included             Boolean              @default(true)
+  prorationNote        String?
+
+  @@index([settlementId])
+  @@map("commission_settlement_fixed_expenses")
+}
+
+model CommissionSettlementPdfVersion {
+  id            String               @id @default(uuid()) @db.Uuid
+  settlement    CommissionSettlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  settlementId  String               @db.Uuid
+  version       Int
+  storageKey    String               @db.VarChar(500)
+  storageBucket String?              @db.VarChar(100) @default("local")
+  note          String?
+  createdBy     User?                @relation("CommissionPdfCreator", fields: [createdById], references: [id])
+  createdById   String?              @db.Uuid
+  createdAt     DateTime             @default(now())
+
+  @@unique([settlementId, version])
+  @@index([settlementId])
+  @@map("commission_settlement_pdf_versions")
 }

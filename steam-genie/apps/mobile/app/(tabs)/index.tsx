@@ -317,7 +317,14 @@ export default function FichajeScreen() {
             </Text>
           </View>
         )}
-        {selectedBuilding?.latitude ? (
+        {selectedBuilding?.requireGpsValidation === false ? (
+          <View style={styles.infoBox}>
+            <Ionicons name="location-outline" size={14} color={COLORS.textMuted} />
+            <Text style={styles.infoText}>
+              Este edificio no exige validación de ubicación al fichar
+            </Text>
+          </View>
+        ) : selectedBuilding?.latitude ? (
           <View style={styles.infoBox}>
             <Ionicons name="location-outline" size={14} color={COLORS.textMuted} />
             <Text style={styles.infoText}>

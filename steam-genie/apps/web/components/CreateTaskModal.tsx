@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { TASK_FREQUENCIES } from '@steam-genie/shared-constants';
 import { LocationPicker } from './LocationPicker';
 import { TaskCustomFieldsDraftEditor } from './TaskCustomFieldsDraftEditor';
@@ -11,6 +11,7 @@ import {
   validateCustomFieldDraft,
   type TaskCustomFieldDraft,
 } from '../lib/task-custom-fields';
+import type { TaskCategoryItem } from '../lib/types';
 
 type CreateTaskModalProps = {
   buildings: Array<{ id: string; name: string }>;
@@ -31,12 +32,29 @@ export function CreateTaskModal({ buildings, onClose, onCreated }: CreateTaskMod
   });
   const [name, setName] = useState('');
   const [frequency, setFrequency] = useState<string>(TASK_FREQUENCIES.EVENTUAL);
+  const [categoryId, setCategoryId] = useState('');
+  const [categories, setCategories] = useState<TaskCategoryItem[]>([]);
   const [requiresPhoto, setRequiresPhoto] = useState(false);
   const [allowsObservation, setAllowsObservation] = useState(true);
   const [requiresRejectionReason, setRequiresRejectionReason] = useState(true);
   const [customFields, setCustomFields] = useState<TaskCustomFieldDraft[]>([]);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<TaskCategoryItem[]>('/tasks/categories')
+      .then((data) => {
+        if (!cancelled) setCategories(data.filter((c) => c.isActive));
+      })
+      .catch(() => {
+        if (!cancelled) setCategories([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function createTask() {
     if (!location.buildingId || !location.zoneId) {
@@ -60,6 +78,9 @@ export function CreateTaskModal({ buildings, onClose, onCreated }: CreateTaskMod
         buildingId: location.buildingId,
         zoneId: location.zoneId,
         subzoneId: location.subzoneId || undefined,
+        ...(frequency === TASK_FREQUENCIES.EVENTUAL && categoryId
+          ? { categoryId }
+          : {}),
         name: name.trim(),
         frequency,
         requiresPhoto,
@@ -101,7 +122,7 @@ export function CreateTaskModal({ buildings, onClose, onCreated }: CreateTaskMod
 
         <p className="muted" style={{ marginTop: 0 }}>
           Las tareas <strong>Eventual (checkout)</strong> se usan al crear reservas. Las demás son
-          periódicas.
+          periódicas. La categoría es opcional y solo aplica a tareas eventuales.
         </p>
 
         {error ? <div className="alert alert-error">{error}</div> : null}
@@ -122,7 +143,14 @@ export function CreateTaskModal({ buildings, onClose, onCreated }: CreateTaskMod
               </div>
               <div className="form-field">
                 <label>Frecuencia *</label>
-                <select value={frequency} onChange={(e) => setFrequency(e.target.value)}>
+                <select
+                  value={frequency}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setFrequency(next);
+                    if (next !== TASK_FREQUENCIES.EVENTUAL) setCategoryId('');
+                  }}
+                >
                   {Object.values(TASK_FREQUENCIES).map((f) => (
                     <option key={f} value={f}>
                       {TASK_FREQUENCY_LABELS[f] ?? f}
@@ -131,6 +159,20 @@ export function CreateTaskModal({ buildings, onClose, onCreated }: CreateTaskMod
                 </select>
               </div>
             </div>
+
+            {frequency === TASK_FREQUENCIES.EVENTUAL ? (
+              <div className="form-field">
+                <label>Categoría (opcional)</label>
+                <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+                  <option value="">Sin categoría</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
 
             <div className="grid-3">
               <label>

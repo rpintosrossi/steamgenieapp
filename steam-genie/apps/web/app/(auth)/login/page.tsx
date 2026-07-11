@@ -13,7 +13,9 @@ import {
   consumeLoginError,
   isAuthenticatedForWeb,
   saveSession,
+  saveUserModules,
 } from '../../../lib/auth';
+import { getDefaultHomePath } from '../../../lib/modules';
 import { ApkDownloadButton } from '../../../components/ApkDownloadButton';
 
 export default function LoginPage() {
@@ -44,7 +46,8 @@ export default function LoginPage() {
           clearTokens();
           return;
         }
-        router.replace('/dashboard');
+        saveUserModules(session.modules);
+        router.replace(getDefaultHomePath(session.modules));
       } catch {
         clearTokens();
       }
@@ -75,7 +78,7 @@ export default function LoginPage() {
         return;
       }
       saveSession(res.accessToken, res.refreshToken, res.modules);
-      router.replace('/dashboard');
+      router.replace(getDefaultHomePath(res.modules));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo iniciar sesión');
     } finally {

@@ -220,7 +220,8 @@ export default function BuildingSelectScreen() {
 
   function renderBuilding({ item }: { item: Building }) {
     const isSelecting = selectingId === item.id;
-    const hasGPS = item.latitude && item.longitude;
+    const gpsValidationOff = item.requireGpsValidation === false;
+    const hasGPS = !gpsValidationOff && item.latitude && item.longitude;
     const pendingCount = pendingByBuilding.get(item.id) ?? 0;
     const isActiveNow = activeBuildingId === item.id;
     const checkedInToday = todayBuildingIds.has(item.id);
@@ -243,9 +244,18 @@ export default function BuildingSelectScreen() {
           </View>
           {item.address && <Text style={styles.cardAddress}>{item.address}</Text>}
           <View style={styles.cardMeta}>
-            <View style={[styles.badge, hasGPS ? styles.badgeOk : styles.badgeWarn]}>
+            <View
+              style={[
+                styles.badge,
+                gpsValidationOff || hasGPS ? styles.badgeOk : styles.badgeWarn,
+              ]}
+            >
               <Text style={styles.badgeText}>
-                {hasGPS ? `GPS ${item.gpsRadiusM}m` : 'Sin GPS'}
+                {gpsValidationOff
+                  ? 'Sin validación GPS'
+                  : hasGPS
+                    ? `GPS ${item.gpsRadiusM}m`
+                    : 'Sin GPS'}
               </Text>
             </View>
             {isActiveNow ? (

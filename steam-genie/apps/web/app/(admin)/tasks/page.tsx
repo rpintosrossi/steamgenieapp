@@ -247,6 +247,7 @@ export default function TasksPage() {
                   <tr>
                     <th>Nombre</th>
                     <th>Frecuencia</th>
+                    <th>Categoría</th>
                     <th>Edificio</th>
                     <th>Ubicación</th>
                     <th>Foto</th>
@@ -259,6 +260,7 @@ export default function TasksPage() {
                     <tr key={task.id} className={!task.isActive ? 'row-muted' : undefined}>
                       <td>{task.name}</td>
                       <td>{TASK_FREQUENCY_LABELS[task.frequency] ?? task.frequency}</td>
+                      <td>{task.category?.name ?? '—'}</td>
                       <td>{task.building?.name ?? '—'}</td>
                       <td>
                         <LocationDisplay

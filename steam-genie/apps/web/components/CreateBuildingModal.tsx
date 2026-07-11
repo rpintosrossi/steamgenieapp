@@ -3,17 +3,34 @@
 import { FormEvent, useState } from 'react';
 import { api } from '../lib/api-client';
 import type { Building } from '../lib/types';
+import {
+  BuildingLocationFields,
+  type BuildingLocationFieldsValue,
+} from './BuildingLocationFields';
 
 type CreateBuildingModalProps = {
   onClose: () => void;
   onCreated: (building: Building) => void;
 };
 
+function parseOptionalNumber(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 export function CreateBuildingModal({ onClose, onCreated }: CreateBuildingModalProps) {
   const [name, setName] = useState('');
-  const [address, setAddress] = useState('');
-  const [city, setCity] = useState('');
-  const [province, setProvince] = useState('');
+  const [location, setLocation] = useState<BuildingLocationFieldsValue>({
+    address: '',
+    province: '',
+    city: '',
+    latitude: '',
+    longitude: '',
+    gpsRadiusM: '200',
+    requireGpsValidation: true,
+  });
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,11 +40,25 @@ export function CreateBuildingModal({ onClose, onCreated }: CreateBuildingModalP
     setError(null);
 
     try {
+      const lat = parseOptionalNumber(location.latitude);
+      const lng = parseOptionalNumber(location.longitude);
+      const radius = parseOptionalNumber(location.gpsRadiusM);
+
+      if (location.requireGpsValidation && (lat == null || lng == null)) {
+        setError('Seleccioná la ubicación del edificio en el mapa.');
+        setCreating(false);
+        return;
+      }
+
       const building = await api.post<Building>('/buildings', {
         name: name.trim(),
-        address: address.trim() || undefined,
-        city: city.trim() || undefined,
-        province: province.trim() || undefined,
+        address: location.address.trim() || undefined,
+        city: location.city.trim() || undefined,
+        province: location.province.trim() || undefined,
+        requireGpsValidation: location.requireGpsValidation,
+        latitude: lat,
+        longitude: lng,
+        gpsRadiusM: radius,
       });
       onCreated(building);
     } catch (err) {
@@ -39,7 +70,7 @@ export function CreateBuildingModal({ onClose, onCreated }: CreateBuildingModalP
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="modal-title">Nuevo edificio</h2>
           <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
@@ -48,8 +79,8 @@ export function CreateBuildingModal({ onClose, onCreated }: CreateBuildingModalP
         </div>
 
         <p className="muted" style={{ marginTop: 0 }}>
-          Completá los datos básicos. Después podés configurar plantas, zonas y tareas desde el
-          detalle del edificio.
+          Completá los datos básicos y la ubicación. Después podés configurar plantas, zonas y
+          tareas desde el detalle del edificio.
         </p>
 
         {error ? <div className="alert alert-error">{error}</div> : null}
@@ -66,25 +97,10 @@ export function CreateBuildingModal({ onClose, onCreated }: CreateBuildingModalP
             />
           </div>
 
-          <div className="form-field">
-            <label>Dirección</label>
-            <input
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              placeholder="Calle y número"
-            />
-          </div>
-
-          <div className="grid-2">
-            <div className="form-field">
-              <label>Ciudad</label>
-              <input value={city} onChange={(e) => setCity(e.target.value)} />
-            </div>
-            <div className="form-field">
-              <label>Provincia</label>
-              <input value={province} onChange={(e) => setProvince(e.target.value)} />
-            </div>
-          </div>
+          <BuildingLocationFields
+            value={location}
+            onChange={(patch) => setLocation((prev) => ({ ...prev, ...patch }))}
+          />
 
           <div className="form-actions">
             <button type="button" className="btn btn-secondary" onClick={onClose}>

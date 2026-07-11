@@ -4,6 +4,8 @@ import {
   IsOptional,
   IsISO8601,
   MaxLength,
+  IsArray,
+  ArrayUnique,
 } from 'class-validator';
 
 export class CreateCheckoutCleaningDto {
@@ -15,6 +17,18 @@ export class CreateCheckoutCleaningDto {
 
   @IsUUID()
   zoneId!: string;
+
+  /**
+   * Filtro opcional de categorías.
+   * - Vacío / omitido → todas las tareas eventuales de la zona.
+   * - UUIDs → tareas de esas categorías.
+   * - `__uncategorized__` → tareas sin categoría.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  categoryIds?: string[];
 
   @IsISO8601()
   scheduledAt!: string;
