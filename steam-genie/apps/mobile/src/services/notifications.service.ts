@@ -63,7 +63,7 @@ export async function registerPushNotifications(): Promise<string | null> {
       name: 'Steam Genie',
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#0a1628',
+      lightColor: '#2f6fed',
     });
   }
 

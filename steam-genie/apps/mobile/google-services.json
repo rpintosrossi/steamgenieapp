@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1087219154832",
+    "project_id": "steam-genie",
+    "storage_bucket": "steam-genie.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1087219154832:android:fcd768f33464f861c37d15",
+        "android_client_info": {
+          "package_name": "com.steamgenie.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyADglXv9vKvmeNAj4qNLZuIwlTj9GppUx4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

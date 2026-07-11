@@ -40,5 +40,14 @@
         "EXPO_PUBLIC_API_URL": "https://steamgenie.up.railway.app"
       }
     }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appleId": "rpintosrossi@frba.utn.edu.ar",
+        "ascAppId": "6788861275",
+        "appleTeamId": "9U4NU2UU9Q"
+      }
+    }
   }
 }

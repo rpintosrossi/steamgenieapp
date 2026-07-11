@@ -1,18 +1,18 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
-import { useRouter } from 'expo-router';
+import { useRouter, useRootNavigationState } from 'expo-router';
 import { useAuthStore } from '../stores/auth.store';
+import { useBuildingStore } from '../stores/building.store';
 import {
   parseNotificationData,
   registerPushNotifications,
+  type NotificationRouteData,
 } from '../services/notifications.service';
 
-function navigateFromNotification(
+function performNavigation(
   router: ReturnType<typeof useRouter>,
-  data: Record<string, unknown> | undefined,
+  route: NotificationRouteData,
 ): void {
-  const route = parseNotificationData(data);
-
   if (route.screen === 'service' && route.workOrderId) {
     router.push(`/service/${route.workOrderId}`);
     return;
@@ -33,10 +33,22 @@ function navigateFromNotification(
   }
 }
 
+// Evita re-navegar a la misma notificación en cada arranque en frío,
+// porque getLastNotificationResponseAsync devuelve siempre la última respuesta.
+const handledResponseIds = new Set<string>();
+
 export function usePushNotifications(): void {
   const router = useRouter();
   const accessToken = useAuthStore((state) => state.accessToken);
   const isHydrated = useAuthStore((state) => state.isHydrated);
+  const selectedBuilding = useBuildingStore((state) => state.selectedBuilding);
+  const rootNavigationState = useRootNavigationState();
+  const navigationReady = rootNavigationState?.key != null;
+
+  const pendingRouteRef = useRef<NotificationRouteData | null>(null);
+
+  const readyToNavigate =
+    isHydrated && Boolean(accessToken) && Boolean(selectedBuilding) && navigationReady;
 
   useEffect(() => {
     if (!isHydrated || !accessToken) return;
@@ -49,29 +61,48 @@ export function usePushNotifications(): void {
     });
   }, [isHydrated, accessToken]);
 
+  const flushPending = useCallback(() => {
+    if (!readyToNavigate) return;
+    const route = pendingRouteRef.current;
+    if (!route || !route.screen) return;
+    pendingRouteRef.current = null;
+    performNavigation(router, route);
+  }, [readyToNavigate, router]);
+
+  const queueResponse = useCallback(
+    (response: Notifications.NotificationResponse | null) => {
+      if (!response) return;
+      const id = response.notification.request.identifier;
+      if (id) {
+        if (handledResponseIds.has(id)) return;
+        handledResponseIds.add(id);
+      }
+      pendingRouteRef.current = parseNotificationData(
+        response.notification.request.content.data as Record<string, unknown>,
+      );
+      flushPending();
+    },
+    [flushPending],
+  );
+
   useEffect(() => {
     const receivedSub = Notifications.addNotificationReceivedListener(() => {
       // El handler global ya muestra la notificación en foreground.
     });
 
-    const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
-      navigateFromNotification(
-        router,
-        response.notification.request.content.data as Record<string, unknown>,
-      );
-    });
+    const responseSub = Notifications.addNotificationResponseReceivedListener(queueResponse);
 
-    void Notifications.getLastNotificationResponseAsync().then((response) => {
-      if (!response) return;
-      navigateFromNotification(
-        router,
-        response.notification.request.content.data as Record<string, unknown>,
-      );
-    });
+    void Notifications.getLastNotificationResponseAsync().then(queueResponse);
 
     return () => {
       receivedSub.remove();
       responseSub.remove();
     };
-  }, [router]);
+  }, [queueResponse]);
+
+  // Cuando la app termina de hidratarse / seleccionar edificio / montar el
+  // router, procesamos la navegación pendiente que dejó la notificación.
+  useEffect(() => {
+    flushPending();
+  }, [flushPending]);
 }

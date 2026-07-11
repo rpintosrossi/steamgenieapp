@@ -21,8 +21,8 @@ export default (): ExpoConfig => ({
     [
       'expo-notifications',
       {
-        icon: './assets/images/logo-sinletras.png',
-        color: '#0a1628',
+        icon: './assets/images/notification-icon.png',
+        color: '#2f6fed',
         defaultChannel: 'default',
       },
     ],
@@ -49,7 +49,7 @@ export default (): ExpoConfig => ({
   ],
   ios: {
     bundleIdentifier: 'com.steamgenie.app',
-    buildNumber: '1',
+    buildNumber: '3',
     supportsTablet: false,
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
@@ -63,7 +63,8 @@ export default (): ExpoConfig => ({
   },
   android: {
     package: 'com.steamgenie.app',
-    versionCode: 8,
+    googleServicesFile: './google-services.json',
+    versionCode: 11,
     usesCleartextTraffic: true,
     softwareKeyboardLayoutMode: 'resize',
     permissions: [
