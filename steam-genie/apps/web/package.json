@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "docs:pdf": "node scripts/generate-manual-pdfs.mjs"
   },
   "dependencies": {
     "@steam-genie/shared-constants": "workspace:*",
@@ -26,6 +27,8 @@
     "@types/node": "^20.0.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
+    "marked": "^18.0.6",
+    "puppeteer": "^25.3.0",
     "typescript": "^5.4.0"
   }
 }

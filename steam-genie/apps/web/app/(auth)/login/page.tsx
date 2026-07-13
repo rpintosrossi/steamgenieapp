@@ -141,6 +141,9 @@ export default function LoginPage() {
                 App móvil para operarios
               </p>
               <ApkDownloadButton variant="light" />
+              <p className="muted" style={{ margin: '16px 0 0', fontSize: 13, textAlign: 'center' }}>
+                <a href="/documentacion">Ver documentación / manuales</a>
+              </p>
             </div>
           </div>
         </div>
