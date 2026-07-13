@@ -52,6 +52,12 @@ export class WorkOrdersController {
     return this.workOrdersService.createAdditionalRequest(dto, user.id);
   }
 
+  @Delete('purge-all')
+  @RequiredRoles('admin')
+  purgeAll(@Query('confirm') confirm?: string) {
+    return this.workOrdersService.purgeAll(confirm ?? '');
+  }
+
   @Get(':id')
   @RequiredRoles('admin', 'manager', 'cleaner', 'client', 'provider')
   findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {

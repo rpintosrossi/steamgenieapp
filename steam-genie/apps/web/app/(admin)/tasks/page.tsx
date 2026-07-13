@@ -8,15 +8,17 @@ import { EditTaskModal } from '../../../components/EditTaskModal';
 import { TasksSubnav } from '../../../components/TasksSubnav';
 import { api } from '../../../lib/api-client';
 import { fetchBuildingsList } from '../../../lib/buildings-cache';
-import { hasModule } from '../../../lib/auth';
+import { getCurrentUserRole, hasModule } from '../../../lib/auth';
 import { TASK_FREQUENCY_LABELS } from '../../../lib/labels';
 import type { Paginated, TaskItem } from '../../../lib/types';
 import { LocationDisplay } from '../../../components/LocationDisplay';
 
 const PAGE_SIZE = 20;
+const PURGE_CONFIRM_TOKEN = 'DELETE_ALL_TASKS';
 
 export default function TasksPage() {
   const readOnly = hasModule(APP_MODULES.TASKS) && !hasModule(APP_MODULES.BUILDINGS);
+  const isAdmin = getCurrentUserRole() === 'admin';
   const [items, setItems] = useState<TaskItem[]>([]);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
@@ -27,6 +29,7 @@ export default function TasksPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [purging, setPurging] = useState(false);
 
   const [buildings, setBuildings] = useState<Array<{ id: string; name: string }>>([]);
   const [buildingFilter, setBuildingFilter] = useState('');
@@ -116,6 +119,47 @@ export default function TasksPage() {
     void load();
   }
 
+  async function handlePurgeAll() {
+    if (
+      !window.confirm(
+        '¿Eliminar TODAS las tareas de la base de datos?\n\nTambién se borran ejecuciones, instancias periódicas, campos custom y checklists de servicios eventuales.\n\nEsta acción no se puede deshacer.',
+      )
+    ) {
+      return;
+    }
+
+    const typed = window.prompt(
+      `Para confirmar, escribí exactamente:\n${PURGE_CONFIRM_TOKEN}`,
+      '',
+    );
+    if (typed !== PURGE_CONFIRM_TOKEN) {
+      if (typed != null) {
+        setError('Confirmación incorrecta. No se eliminó ninguna tarea.');
+      }
+      return;
+    }
+
+    setPurging(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await api.delete<{
+        message: string;
+        totalBefore: number;
+        deletedTasks: number;
+      }>(`/tasks/purge-all?confirm=${PURGE_CONFIRM_TOKEN}`);
+      setSuccess(
+        `Se eliminaron ${res.deletedTasks} tarea${res.deletedTasks === 1 ? '' : 's'} (había ${res.totalBefore}).`,
+      );
+      setPage(1);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudieron eliminar las tareas');
+    } finally {
+      setPurging(false);
+    }
+  }
+
   return (
     <>
       <div className="page-header">
@@ -141,6 +185,16 @@ export default function TasksPage() {
             <Link href="/tasks/motivos" className="btn btn-secondary btn-sm">
               Motivos de no realización
             </Link>
+            {isAdmin ? (
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                disabled={purging}
+                onClick={() => void handlePurgeAll()}
+              >
+                {purging ? 'Eliminando…' : 'Eliminar todas'}
+              </button>
+            ) : null}
             <button
               type="button"
               className="btn btn-primary btn-sm"

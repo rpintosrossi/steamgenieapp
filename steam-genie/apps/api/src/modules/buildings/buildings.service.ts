@@ -348,9 +348,28 @@ export class BuildingsService {
     });
   }
 
-  async remove(id: string) {
+  async remove(id: string, cascade = false) {
     await this.assertBuildingExists(id);
 
+    if (cascade) {
+      return this.removeWithCascade(id);
+    }
+
+    const reasons = await this.collectDeleteBlockers(id);
+    if (reasons.length > 0) {
+      throw new ConflictException(
+        `No se puede eliminar el edificio: ${reasons.join('; ')}.`,
+      );
+    }
+
+    await this.prisma.building.update({
+      where: { id },
+      data: { deletedAt: new Date(), isActive: false },
+    });
+    return { message: 'Building deleted' };
+  }
+
+  private async collectDeleteBlockers(id: string): Promise<string[]> {
     const [
       tasks,
       workOrders,
@@ -416,18 +435,240 @@ export class BuildingsService {
         `tiene ${fixedExpenses} gasto${fixedExpenses === 1 ? '' : 's'} fijo${fixedExpenses === 1 ? '' : 's'} asociado${fixedExpenses === 1 ? '' : 's'}`,
       );
     }
+    return reasons;
+  }
 
-    if (reasons.length > 0) {
-      throw new ConflictException(
-        `No se puede eliminar el edificio: ${reasons.join('; ')}.`,
-      );
-    }
+  /**
+   * Hard-delete de dependencias en orden FK, luego soft-delete del edificio
+   * y su jerarquía (pisos/zonas/subzonas).
+   */
+  private async removeWithCascade(id: string) {
+    const now = new Date();
 
-    await this.prisma.building.update({
-      where: { id },
-      data: { deletedAt: new Date(), isActive: false },
-    });
-    return { message: 'Building deleted' };
+    await this.prisma.$transaction(
+      async (tx) => {
+        const [workOrders, tasks, attendances, reservations, destinations, fixedExpenses] =
+          await Promise.all([
+            tx.workOrder.findMany({ where: { buildingId: id }, select: { id: true } }),
+            tx.task.findMany({ where: { buildingId: id }, select: { id: true } }),
+            tx.attendance.findMany({ where: { buildingId: id }, select: { id: true } }),
+            tx.reservation.findMany({ where: { buildingId: id }, select: { id: true } }),
+            tx.stockShipmentDestination.findMany({
+              where: { buildingId: id },
+              select: { id: true },
+            }),
+            tx.fixedExpense.findMany({ where: { buildingId: id }, select: { id: true } }),
+          ]);
+
+        const woIds = workOrders.map((w) => w.id);
+        const taskIds = tasks.map((t) => t.id);
+        const attendanceIds = attendances.map((a) => a.id);
+        const reservationIds = reservations.map((r) => r.id);
+        const destIds = destinations.map((d) => d.id);
+        const fixedExpenseIds = fixedExpenses.map((f) => f.id);
+
+        const [woTasks, periodicInstances, serviceExecsByWo, serviceExecsByAttendance] =
+          await Promise.all([
+            woIds.length
+              ? tx.workOrderTask.findMany({
+                  where: { workOrderId: { in: woIds } },
+                  select: { id: true },
+                })
+              : Promise.resolve([]),
+            taskIds.length
+              ? tx.periodicTaskInstance.findMany({
+                  where: { taskId: { in: taskIds } },
+                  select: { id: true },
+                })
+              : Promise.resolve([]),
+            woIds.length
+              ? tx.serviceExecution.findMany({
+                  where: { workOrderId: { in: woIds } },
+                  select: { id: true },
+                })
+              : Promise.resolve([]),
+            attendanceIds.length
+              ? tx.serviceExecution.findMany({
+                  where: { attendanceId: { in: attendanceIds } },
+                  select: { id: true },
+                })
+              : Promise.resolve([]),
+          ]);
+
+        const woTaskIds = woTasks.map((t) => t.id);
+        const periodicIds = periodicInstances.map((p) => p.id);
+        const seIds = [
+          ...new Set([
+            ...serviceExecsByWo.map((s) => s.id),
+            ...serviceExecsByAttendance.map((s) => s.id),
+          ]),
+        ];
+
+        const taskExecFilters = [
+          ...(woTaskIds.length ? [{ workOrderTaskId: { in: woTaskIds } }] : []),
+          ...(periodicIds.length ? [{ periodicTaskInstanceId: { in: periodicIds } }] : []),
+          ...(seIds.length ? [{ serviceExecutionId: { in: seIds } }] : []),
+        ];
+        const taskExecs = taskExecFilters.length
+          ? await tx.taskExecutionRecord.findMany({
+              where: { OR: taskExecFilters },
+              select: { id: true },
+            })
+          : [];
+        const taskExecIds = taskExecs.map((t) => t.id);
+
+        // 1) Ejecuciones de tareas (hojas)
+        if (taskExecIds.length) {
+          await tx.taskPhoto.deleteMany({ where: { taskExecutionId: { in: taskExecIds } } });
+          await tx.taskExecutionFieldValue.deleteMany({
+            where: { taskExecutionId: { in: taskExecIds } },
+          });
+          await tx.taskExecutionRecord.deleteMany({ where: { id: { in: taskExecIds } } });
+        }
+
+        // 2) Ejecuciones de servicio
+        if (seIds.length) {
+          await tx.serviceExecutionParticipant.deleteMany({
+            where: { serviceExecutionId: { in: seIds } },
+          });
+          await tx.serviceExecution.deleteMany({ where: { id: { in: seIds } } });
+        }
+        if (attendanceIds.length) {
+          await tx.serviceExecutionParticipant.deleteMany({
+            where: { attendanceId: { in: attendanceIds } },
+          });
+        }
+
+        // 3) Servicios eventuales: comisiones, gastos, snapshots, asignaciones
+        if (woIds.length) {
+          await tx.commissionSettlementItem.deleteMany({
+            where: { workOrderId: { in: woIds } },
+          });
+          await tx.workOrderExpense.deleteMany({ where: { workOrderId: { in: woIds } } });
+        }
+
+        if (woTaskIds.length) {
+          const woFields = await tx.workOrderTaskCustomField.findMany({
+            where: { workOrderTaskId: { in: woTaskIds } },
+            select: { id: true },
+          });
+          const woFieldIds = woFields.map((f) => f.id);
+          if (woFieldIds.length) {
+            await tx.workOrderTaskCustomFieldOption.deleteMany({
+              where: { workOrderTaskFieldId: { in: woFieldIds } },
+            });
+            await tx.taskExecutionFieldValue.deleteMany({
+              where: { snapshotFieldId: { in: woFieldIds } },
+            });
+            await tx.workOrderTaskCustomField.deleteMany({
+              where: { id: { in: woFieldIds } },
+            });
+          }
+          await tx.workOrderTask.deleteMany({ where: { id: { in: woTaskIds } } });
+        }
+
+        if (woIds.length) {
+          await tx.workOrderAssignment.deleteMany({ where: { workOrderId: { in: woIds } } });
+          await tx.integrationInboundLog.updateMany({
+            where: { relatedWorkOrderId: { in: woIds } },
+            data: { relatedWorkOrderId: null },
+          });
+        }
+
+        // 4) Stock / logística del edificio
+        await tx.buildingStockAlert.deleteMany({ where: { buildingId: id } });
+
+        if (destIds.length) {
+          const lines = await tx.stockShipmentLine.findMany({
+            where: { destinationId: { in: destIds } },
+            select: { id: true },
+          });
+          const lineIds = lines.map((l) => l.id);
+          await tx.stockMovement.updateMany({
+            where: {
+              OR: [
+                { shipmentDestinationId: { in: destIds } },
+                ...(lineIds.length ? [{ shipmentLineId: { in: lineIds } }] : []),
+              ],
+            },
+            data: { shipmentDestinationId: null, shipmentLineId: null },
+          });
+          await tx.stockShipmentDestination.deleteMany({ where: { id: { in: destIds } } });
+        }
+
+        await tx.stockMovement.updateMany({
+          where: { buildingId: id },
+          data: { buildingId: null },
+        });
+        await tx.buildingStockItem.deleteMany({ where: { buildingId: id } });
+
+        // 5) Work orders y reservas
+        if (woIds.length) {
+          await tx.workOrder.deleteMany({ where: { id: { in: woIds } } });
+        }
+        if (reservationIds.length) {
+          await tx.integrationInboundLog.updateMany({
+            where: { relatedReservationId: { in: reservationIds } },
+            data: { relatedReservationId: null },
+          });
+          await tx.reservation.deleteMany({ where: { id: { in: reservationIds } } });
+        }
+
+        // 6) Tareas e instancias periódicas
+        if (periodicIds.length) {
+          await tx.periodicTaskInstance.deleteMany({ where: { id: { in: periodicIds } } });
+        }
+        if (taskIds.length) {
+          const fields = await tx.taskCustomField.findMany({
+            where: { taskId: { in: taskIds } },
+            select: { id: true },
+          });
+          const fieldIds = fields.map((f) => f.id);
+          if (fieldIds.length) {
+            await tx.taskExecutionFieldValue.deleteMany({
+              where: { masterFieldId: { in: fieldIds } },
+            });
+            await tx.taskCustomFieldOption.deleteMany({ where: { fieldId: { in: fieldIds } } });
+            await tx.taskCustomField.deleteMany({ where: { id: { in: fieldIds } } });
+          }
+          await tx.task.deleteMany({ where: { id: { in: taskIds } } });
+        }
+
+        // 7) Gastos fijos, roles y fichajes
+        if (fixedExpenseIds.length) {
+          await tx.commissionSettlementFixedExpense.updateMany({
+            where: { fixedExpenseId: { in: fixedExpenseIds } },
+            data: { fixedExpenseId: null },
+          });
+          await tx.fixedExpense.deleteMany({ where: { id: { in: fixedExpenseIds } } });
+        }
+        await tx.userBuildingRole.deleteMany({ where: { buildingId: id } });
+        if (attendanceIds.length) {
+          await tx.attendance.deleteMany({ where: { id: { in: attendanceIds } } });
+        }
+
+        // 8) Jerarquía + edificio (soft delete)
+        await tx.subzone.updateMany({
+          where: { buildingId: id, deletedAt: null },
+          data: { deletedAt: now },
+        });
+        await tx.zone.updateMany({
+          where: { buildingId: id, deletedAt: null },
+          data: { deletedAt: now },
+        });
+        await tx.floor.updateMany({
+          where: { buildingId: id, deletedAt: null },
+          data: { deletedAt: now },
+        });
+        await tx.building.update({
+          where: { id },
+          data: { deletedAt: now, isActive: false },
+        });
+      },
+      { timeout: 120_000 },
+    );
+
+    return { message: 'Building deleted with cascade' };
   }
 
   // ─── Floors ────────────────────────────────────────────────────────────────

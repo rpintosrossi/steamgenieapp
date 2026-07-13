@@ -62,8 +62,13 @@ export class UsersController {
 
   @Delete(':id')
   @RequiredRoles('admin')
-  remove(@Param('id', ParseUUIDPipe) id: string) {
-    return this.usersService.remove(id);
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('cascade') cascade?: string,
+    @CurrentUser() user?: AuthUser,
+  ) {
+    const cascadeDelete = cascade === 'true' || cascade === '1';
+    return this.usersService.remove(id, cascadeDelete, user?.id);
   }
 
   @Get(':id/building-roles')

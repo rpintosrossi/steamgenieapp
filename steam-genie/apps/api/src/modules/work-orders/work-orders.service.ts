@@ -825,6 +825,102 @@ export class WorkOrdersService {
     return { message: 'Work order deleted' };
   }
 
+  /**
+   * Hard-delete de TODOS los servicios eventuales y dependencias
+   * (ejecuciones, asignaciones, snapshots, gastos, ítems de comisión).
+   * No toca tareas maestras ni instancias periódicas.
+   */
+  async purgeAll(confirm: string) {
+    if (confirm !== 'DELETE_ALL_WORK_ORDERS') {
+      throw new BadRequestException(
+        'Confirmación inválida. Enviá confirm=DELETE_ALL_WORK_ORDERS para vaciar todos los servicios.',
+      );
+    }
+
+    const deleted = await this.prisma.$transaction(
+      async (tx) => {
+        const totalBefore = await tx.workOrder.count();
+
+        const [woTasks, serviceExecs] = await Promise.all([
+          tx.workOrderTask.findMany({ select: { id: true } }),
+          tx.serviceExecution.findMany({ select: { id: true } }),
+        ]);
+        const woTaskIds = woTasks.map((t) => t.id);
+        const seIds = serviceExecs.map((s) => s.id);
+
+        const taskExecFilters = [
+          ...(woTaskIds.length ? [{ workOrderTaskId: { in: woTaskIds } }] : []),
+          ...(seIds.length ? [{ serviceExecutionId: { in: seIds } }] : []),
+        ];
+        const taskExecs = taskExecFilters.length
+          ? await tx.taskExecutionRecord.findMany({
+              where: { OR: taskExecFilters },
+              select: { id: true },
+            })
+          : [];
+        const taskExecIds = taskExecs.map((t) => t.id);
+
+        // 1) Ejecuciones de checklist de servicios
+        if (taskExecIds.length) {
+          await tx.taskPhoto.deleteMany({ where: { taskExecutionId: { in: taskExecIds } } });
+          await tx.taskExecutionFieldValue.deleteMany({
+            where: { taskExecutionId: { in: taskExecIds } },
+          });
+          await tx.taskExecutionRecord.deleteMany({ where: { id: { in: taskExecIds } } });
+        }
+
+        // 2) Ejecuciones de servicio
+        if (seIds.length) {
+          await tx.serviceExecutionParticipant.deleteMany({
+            where: { serviceExecutionId: { in: seIds } },
+          });
+          await tx.serviceExecution.deleteMany({ where: { id: { in: seIds } } });
+        }
+
+        // 3) Snapshots de tareas en WO
+        if (woTaskIds.length) {
+          const woFields = await tx.workOrderTaskCustomField.findMany({
+            where: { workOrderTaskId: { in: woTaskIds } },
+            select: { id: true },
+          });
+          const woFieldIds = woFields.map((f) => f.id);
+          if (woFieldIds.length) {
+            await tx.workOrderTaskCustomFieldOption.deleteMany({
+              where: { workOrderTaskFieldId: { in: woFieldIds } },
+            });
+            await tx.taskExecutionFieldValue.deleteMany({
+              where: { snapshotFieldId: { in: woFieldIds } },
+            });
+            await tx.workOrderTaskCustomField.deleteMany({
+              where: { id: { in: woFieldIds } },
+            });
+          }
+          await tx.workOrderTask.deleteMany({ where: { id: { in: woTaskIds } } });
+        }
+
+        // 4) Asignaciones, gastos, comisiones, logs
+        await tx.workOrderAssignment.deleteMany({});
+        await tx.workOrderExpense.deleteMany({});
+        await tx.commissionSettlementItem.deleteMany({});
+        await tx.integrationInboundLog.updateMany({
+          where: { relatedWorkOrderId: { not: null } },
+          data: { relatedWorkOrderId: null },
+        });
+
+        // 5) Servicios
+        const result = await tx.workOrder.deleteMany({});
+
+        return { totalBefore, deletedWorkOrders: result.count };
+      },
+      { timeout: 180_000 },
+    );
+
+    return {
+      message: 'All work orders purged',
+      ...deleted,
+    };
+  }
+
   private async assertWorkOrderExists(id: string) {
     const wo = await this.prisma.workOrder.findFirst({
       where: { id, deletedAt: null },

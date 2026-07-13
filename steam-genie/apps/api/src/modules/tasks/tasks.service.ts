@@ -296,6 +296,52 @@ export class TasksService {
     return { message: 'Task deleted' };
   }
 
+  /**
+   * Hard-delete de TODAS las tareas y dependencias (ejecuciones, snapshots WO,
+   * instancias periódicas, campos custom). Los work orders quedan sin checklist.
+   */
+  async purgeAll(confirm: string) {
+    if (confirm !== 'DELETE_ALL_TASKS') {
+      throw new BadRequestException(
+        'Confirmación inválida. Enviá confirm=DELETE_ALL_TASKS para vaciar todas las tareas.',
+      );
+    }
+
+    const deleted = await this.prisma.$transaction(
+      async (tx) => {
+        const totalBefore = await tx.task.count();
+
+        // 1) Ejecuciones (fotos → valores → registros)
+        await tx.taskPhoto.deleteMany({});
+        await tx.taskExecutionFieldValue.deleteMany({});
+        await tx.taskExecutionRecord.deleteMany({});
+
+        // 2) Snapshots de tareas en servicios eventuales
+        await tx.workOrderTaskCustomFieldOption.deleteMany({});
+        await tx.workOrderTaskCustomField.deleteMany({});
+        await tx.workOrderTask.deleteMany({});
+
+        // 3) Instancias periódicas
+        await tx.periodicTaskInstance.deleteMany({});
+
+        // 4) Campos custom del maestro
+        await tx.taskCustomFieldOption.deleteMany({});
+        await tx.taskCustomField.deleteMany({});
+
+        // 5) Tareas
+        const result = await tx.task.deleteMany({});
+
+        return { totalBefore, deletedTasks: result.count };
+      },
+      { timeout: 180_000 },
+    );
+
+    return {
+      message: 'All tasks purged',
+      ...deleted,
+    };
+  }
+
   // ─── CATEGORIES ────────────────────────────────────────────────────────────
 
   async findAllCategories(query: QueryTaskCategoriesDto) {

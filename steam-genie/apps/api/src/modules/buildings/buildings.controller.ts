@@ -96,8 +96,12 @@ export class BuildingsController {
 
   @Delete(':id')
   @RequiredRoles('admin')
-  remove(@Param('id', ParseUUIDPipe) id: string) {
-    return this.buildingsService.remove(id);
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('cascade') cascade?: string,
+  ) {
+    const cascadeDelete = cascade === 'true' || cascade === '1';
+    return this.buildingsService.remove(id, cascadeDelete);
   }
 
   // ─── Floors under building ─────────────────────────────────────────────────

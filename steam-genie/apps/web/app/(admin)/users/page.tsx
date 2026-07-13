@@ -55,6 +55,7 @@ export default function UsersPage() {
   const [assignModal, setAssignModal] = useState<AssignModalState | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editForm, setEditForm] = useState<EditFormState>(EMPTY_EDIT);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [total, setTotal] = useState(0);
@@ -157,6 +158,53 @@ export default function UsersPage() {
     void load();
   }
 
+  async function handleDelete(user: UserItem) {
+    if (
+      !window.confirm(
+        `¿Eliminar el usuario "${user.fullName}"?\n\nSi no tiene datos asociados se elimina directamente.`,
+      )
+    ) {
+      return;
+    }
+
+    setDeletingId(user.id);
+    setError(null);
+    setSuccess(null);
+    try {
+      await api.delete(`/users/${user.id}`);
+      setSuccess(`Usuario "${user.fullName}" eliminado.`);
+      await load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'No se pudo eliminar el usuario';
+      const canCascade = msg.includes('No se puede eliminar el usuario');
+      if (canCascade) {
+        const confirmCascade = window.confirm(
+          `${msg}\n\n¿Querés borrar también todo lo asociado (roles, dispositivos, fichajes, asignaciones, etc.)?\n\nEsta acción no se puede deshacer.`,
+        );
+        if (confirmCascade) {
+          try {
+            await api.delete(`/users/${user.id}?cascade=true`);
+            setSuccess(
+              `Usuario "${user.fullName}" y todos sus datos asociados fueron eliminados.`,
+            );
+            await load();
+            return;
+          } catch (cascadeErr) {
+            setError(
+              cascadeErr instanceof Error
+                ? cascadeErr.message
+                : 'No se pudo eliminar el usuario en cascada',
+            );
+            return;
+          }
+        }
+      }
+      setError(msg);
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <>
       <div className="page-header">
@@ -224,6 +272,16 @@ export default function UsersPage() {
                         >
                           Gestionar Edificios
                         </button>
+                        {user.isActive ? (
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-sm"
+                            disabled={deletingId === user.id}
+                            onClick={() => void handleDelete(user)}
+                          >
+                            {deletingId === user.id ? 'Eliminando…' : 'Eliminar'}
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>

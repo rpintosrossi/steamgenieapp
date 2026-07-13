@@ -161,6 +161,12 @@ export class TasksController {
     return this.tasksService.create(dto);
   }
 
+  @Delete('purge-all')
+  @RequiredRoles('admin')
+  purgeAll(@Query('confirm') confirm?: string) {
+    return this.tasksService.purgeAll(confirm ?? '');
+  }
+
   @Get(':id')
   @RequiredRoles('admin', 'manager', 'client')
   findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {

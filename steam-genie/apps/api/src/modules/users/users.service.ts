@@ -231,13 +231,236 @@ export class UsersService {
     });
   }
 
-  async remove(id: string) {
+  async remove(id: string, cascade = false, actorId?: string) {
     await this.assertExists(id);
+
+    if (actorId && actorId === id) {
+      throw new BadRequestException('No podés eliminarte a vos mismo.');
+    }
+
+    if (cascade) {
+      return this.removeWithCascade(id, actorId);
+    }
+
+    const reasons = await this.collectDeleteBlockers(id);
+    if (reasons.length > 0) {
+      throw new ConflictException(
+        `No se puede eliminar el usuario: ${reasons.join('; ')}.`,
+      );
+    }
+
     await this.prisma.user.update({
       where: { id },
       data: { deletedAt: new Date(), isActive: false },
     });
     return { message: 'User deleted' };
+  }
+
+  private async collectDeleteBlockers(id: string): Promise<string[]> {
+    const [
+      roles,
+      devices,
+      attendances,
+      assignments,
+      openStockAlerts,
+      grantedRoles,
+      createdWorkOrders,
+      createdShipments,
+      createdCommissions,
+    ] = await Promise.all([
+      this.prisma.userBuildingRole.count({ where: { userId: id } }),
+      this.prisma.userDevice.count({ where: { userId: id } }),
+      this.prisma.attendance.count({ where: { userId: id, deletedAt: null } }),
+      this.prisma.workOrderAssignment.count({ where: { userId: id } }),
+      this.prisma.buildingStockAlert.count({
+        where: { reportedById: id, status: 'OPEN' },
+      }),
+      this.prisma.userBuildingRole.count({ where: { grantedById: id } }),
+      this.prisma.workOrder.count({ where: { createdById: id, deletedAt: null } }),
+      this.prisma.stockShipmentOrder.count({ where: { createdById: id } }),
+      this.prisma.commissionSettlement.count({ where: { createdById: id } }),
+    ]);
+
+    const reasons: string[] = [];
+    if (roles > 0) {
+      reasons.push(
+        `tiene ${roles} rol${roles === 1 ? '' : 'es'} asignado${roles === 1 ? '' : 's'}`,
+      );
+    }
+    if (devices > 0) {
+      reasons.push(
+        `tiene ${devices} dispositivo${devices === 1 ? '' : 's'} registrado${devices === 1 ? '' : 's'}`,
+      );
+    }
+    if (attendances > 0) {
+      reasons.push(
+        `tiene ${attendances} fichaje${attendances === 1 ? '' : 's'}`,
+      );
+    }
+    if (assignments > 0) {
+      reasons.push(
+        `tiene ${assignments} asignación${assignments === 1 ? '' : 'es'} a servicios`,
+      );
+    }
+    if (openStockAlerts > 0) {
+      reasons.push(
+        `tiene ${openStockAlerts} alerta${openStockAlerts === 1 ? '' : 's'} de stock abierta${openStockAlerts === 1 ? '' : 's'}`,
+      );
+    }
+    if (grantedRoles > 0) {
+      reasons.push(
+        `otorgó ${grantedRoles} asignación${grantedRoles === 1 ? '' : 'es'} de rol`,
+      );
+    }
+    if (createdWorkOrders > 0) {
+      reasons.push(
+        `creó ${createdWorkOrders} servicio${createdWorkOrders === 1 ? '' : 's'} eventual${createdWorkOrders === 1 ? '' : 'es'}`,
+      );
+    }
+    if (createdShipments > 0) {
+      reasons.push(
+        `creó ${createdShipments} pedido${createdShipments === 1 ? '' : 's'} de stock`,
+      );
+    }
+    if (createdCommissions > 0) {
+      reasons.push(
+        `creó ${createdCommissions} comisión${createdCommissions === 1 ? '' : 'es'}/rendición${createdCommissions === 1 ? '' : 'es'}`,
+      );
+    }
+    return reasons;
+  }
+
+  /**
+   * Limpia asociaciones del usuario en orden FK y soft-deletea el usuario.
+   * Los registros de edificio (servicios creados, etc.) se desvinculan o soft-deletean
+   * sin borrar el historial operativo completo del edificio.
+   */
+  private async removeWithCascade(id: string, actorId?: string) {
+    const now = new Date();
+
+    await this.prisma.$transaction(
+      async (tx) => {
+        let fallbackGranter =
+          actorId && actorId !== id
+            ? actorId
+            : (
+                await tx.user.findFirst({
+                  where: {
+                    id: { not: id },
+                    deletedAt: null,
+                    isActive: true,
+                    primaryRole: 'admin',
+                  },
+                  select: { id: true },
+                })
+              )?.id;
+
+        if (!fallbackGranter) {
+          fallbackGranter = (
+            await tx.user.findFirst({
+              where: { id: { not: id }, deletedAt: null, isActive: true },
+              select: { id: true },
+            })
+          )?.id;
+        }
+
+        if (fallbackGranter) {
+          await tx.userBuildingRole.updateMany({
+            where: { grantedById: id },
+            data: { grantedById: fallbackGranter },
+          });
+        } else {
+          await tx.userBuildingRole.deleteMany({ where: { grantedById: id } });
+        }
+
+        await tx.userDevice.deleteMany({ where: { userId: id } });
+        await tx.userBuildingRole.deleteMany({ where: { userId: id } });
+        await tx.workOrderAssignment.deleteMany({ where: { userId: id } });
+        await tx.serviceExecutionParticipant.deleteMany({ where: { userId: id } });
+        await tx.buildingStockAlert.deleteMany({ where: { reportedById: id } });
+
+        const attendances = await tx.attendance.findMany({
+          where: { userId: id },
+          select: { id: true },
+        });
+        const attendanceIds = attendances.map((a) => a.id);
+
+        if (attendanceIds.length) {
+          await tx.buildingStockAlert.deleteMany({
+            where: { attendanceId: { in: attendanceIds } },
+          });
+          await tx.serviceExecutionParticipant.deleteMany({
+            where: { attendanceId: { in: attendanceIds } },
+          });
+          await tx.attendance.updateMany({
+            where: { id: { in: attendanceIds } },
+            data: { deletedAt: now },
+          });
+        }
+
+        await tx.syncConflict.deleteMany({ where: { userId: id } });
+        await tx.syncOperation.deleteMany({ where: { userId: id } });
+
+        await tx.attendance.updateMany({
+          where: { correctedById: id },
+          data: { correctedById: null },
+        });
+        await tx.syncConflict.updateMany({
+          where: { resolvedById: id },
+          data: { resolvedById: null },
+        });
+        await tx.domainEvent.updateMany({
+          where: { triggeredById: id },
+          data: { triggeredById: null },
+        });
+        await tx.auditLog.updateMany({
+          where: { userId: id },
+          data: { userId: null },
+        });
+        await tx.stockShipmentOrder.updateMany({
+          where: { dispatchedById: id },
+          data: { dispatchedById: null },
+        });
+        await tx.stockShipmentDestination.updateMany({
+          where: { confirmedById: id },
+          data: { confirmedById: null },
+        });
+        await tx.stockMovement.updateMany({
+          where: { performedById: id },
+          data: { performedById: null },
+        });
+        await tx.workOrderExpense.updateMany({
+          where: { createdById: id },
+          data: { createdById: null },
+        });
+        await tx.fixedExpense.updateMany({
+          where: { createdById: id },
+          data: { createdById: null },
+        });
+        await tx.commissionSettlement.updateMany({
+          where: { beneficiaryUserId: id },
+          data: { beneficiaryUserId: null },
+        });
+        await tx.commissionSettlementPdfVersion.updateMany({
+          where: { createdById: id },
+          data: { createdById: null },
+        });
+
+        // Soft-delete de servicios eventuales creados por el usuario (no borra el historial de otros).
+        await tx.workOrder.updateMany({
+          where: { createdById: id, deletedAt: null },
+          data: { deletedAt: now },
+        });
+
+        await tx.user.update({
+          where: { id },
+          data: { deletedAt: now, isActive: false },
+        });
+      },
+      { timeout: 120_000 },
+    );
+
+    return { message: 'User deleted with cascade' };
   }
 
   async getBuildingRoles(userId: string) {

@@ -110,7 +110,7 @@ export default function BuildingsPage() {
   async function handleDelete(building: Building) {
     if (
       !window.confirm(
-        `¿Eliminar el edificio "${building.name}"?\n\nSolo se puede si no tiene datos asociados (tareas, servicios, usuarios, etc.).`,
+        `¿Eliminar el edificio "${building.name}"?\n\nSi no tiene datos asociados se elimina directamente.`,
       )
     ) {
       return;
@@ -125,7 +125,32 @@ export default function BuildingsPage() {
       invalidateBuildingsListCache();
       setRefreshKey((k) => k + 1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'No se pudo eliminar el edificio');
+      const msg = e instanceof Error ? e.message : 'No se pudo eliminar el edificio';
+      const canCascade = msg.includes('No se puede eliminar el edificio');
+      if (canCascade) {
+        const confirmCascade = window.confirm(
+          `${msg}\n\n¿Querés borrar también todo lo asociado (tareas, servicios, reservas, stock, roles, fichajes, etc.)?\n\nEsta acción no se puede deshacer.`,
+        );
+        if (confirmCascade) {
+          try {
+            await api.delete(`/buildings/${building.id}?cascade=true`);
+            setSuccess(
+              `Edificio "${building.name}" y todos sus datos asociados fueron eliminados.`,
+            );
+            invalidateBuildingsListCache();
+            setRefreshKey((k) => k + 1);
+            return;
+          } catch (cascadeErr) {
+            setError(
+              cascadeErr instanceof Error
+                ? cascadeErr.message
+                : 'No se pudo eliminar el edificio en cascada',
+            );
+            return;
+          }
+        }
+      }
+      setError(msg);
     } finally {
       setDeletingId(null);
     }

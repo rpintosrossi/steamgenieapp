@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { APP_MODULES } from '@steam-genie/shared-constants';
 import { WorkOrderFinanceModal } from '../../../../components/WorkOrderFinanceModal';
 import { api } from '../../../../lib/api-client';
-import { hasModule } from '../../../../lib/auth';
+import { getCurrentUserRole, hasModule } from '../../../../lib/auth';
 import { fetchBuildingsList } from '../../../../lib/buildings-cache';
 import {
   ASSIGNMENT_STATUS_LABELS,
@@ -98,6 +98,7 @@ function buildPriorRejectionAssignWarning(
 }
 
 const NON_DELETABLE_STATUSES = new Set(['IN_PROGRESS', 'COMPLETED']);
+const PURGE_CONFIRM_TOKEN = 'DELETE_ALL_WORK_ORDERS';
 
 function CleanerAssignOption({
   cleaner,
@@ -154,6 +155,7 @@ function CleanerAssignOption({
 }
 
 export default function EventualServicesPage() {
+  const isAdmin = getCurrentUserRole() === 'admin';
   const [items, setItems] = useState<WorkOrderListItem[]>([]);
   const [buildings, setBuildings] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(true);
@@ -178,6 +180,7 @@ export default function EventualServicesPage() {
 
   const [deletingWo, setDeletingWo] = useState<WorkOrderListItem | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [purging, setPurging] = useState(false);
   const [financeWoId, setFinanceWoId] = useState<string | null>(null);
   const canManageFinance = hasModule(APP_MODULES.GASTOS_SERVICIOS);
 
@@ -320,6 +323,47 @@ export default function EventualServicesPage() {
     }
   }
 
+  async function handlePurgeAll() {
+    if (
+      !window.confirm(
+        '¿Eliminar TODOS los servicios eventuales de la base de datos?\n\nTambién se borran ejecuciones, asignaciones, checklists, gastos del servicio e ítems de comisión.\n\nEsta acción no se puede deshacer.',
+      )
+    ) {
+      return;
+    }
+
+    const typed = window.prompt(
+      `Para confirmar, escribí exactamente:\n${PURGE_CONFIRM_TOKEN}`,
+      '',
+    );
+    if (typed !== PURGE_CONFIRM_TOKEN) {
+      if (typed != null) {
+        setError('Confirmación incorrecta. No se eliminó ningún servicio.');
+      }
+      return;
+    }
+
+    setPurging(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await api.delete<{
+        message: string;
+        totalBefore: number;
+        deletedWorkOrders: number;
+      }>(`/work-orders/purge-all?confirm=${PURGE_CONFIRM_TOKEN}`);
+      setSuccess(
+        `Se eliminaron ${res.deletedWorkOrders} servicio${res.deletedWorkOrders === 1 ? '' : 's'} (había ${res.totalBefore}).`,
+      );
+      setPage(1);
+      await loadServices();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudieron eliminar los servicios');
+    } finally {
+      setPurging(false);
+    }
+  }
+
   return (
     <>
       <div className="page-header">
@@ -333,6 +377,18 @@ export default function EventualServicesPage() {
             acá.
           </p>
         </div>
+        {isAdmin ? (
+          <div className="page-header-actions">
+            <button
+              type="button"
+              className="btn btn-danger btn-sm"
+              disabled={purging}
+              onClick={() => void handlePurgeAll()}
+            >
+              {purging ? 'Eliminando…' : 'Eliminar todos'}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {error ? <div className="alert alert-error">{error}</div> : null}
