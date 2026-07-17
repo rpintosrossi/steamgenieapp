@@ -6,9 +6,11 @@ import {
   IsNumber,
   IsInt,
   IsBoolean,
+  IsEnum,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { PhotoEvidenceMode } from '@prisma/client';
 
 export class CreateBuildingDto {
   @IsString()
@@ -51,4 +53,9 @@ export class CreateBuildingDto {
   @IsOptional()
   @IsBoolean()
   requireGpsValidation?: boolean;
+
+  /** PER_TASK (default) or BEFORE_DURING_AFTER phase evidence. */
+  @IsOptional()
+  @IsEnum(PhotoEvidenceMode)
+  photoEvidenceMode?: PhotoEvidenceMode;
 }

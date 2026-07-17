@@ -18,6 +18,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ServiceExecutionsService } from './service-executions.service';
 import { MarkTaskDto } from './dto/mark-task.dto';
 import { UploadPhotoDto } from './dto/upload-photo.dto';
+import { UploadPhasePhotoDto } from './dto/upload-phase-photo.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
 
 const ALLOWED_MIME_TYPES = [
@@ -89,5 +90,41 @@ export class ServiceExecutionsController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.serviceExecutionsService.getPhotosForTask(id, workOrderTaskId, user);
+  }
+
+  @Post(':id/phase-photos')
+  @UseInterceptors(
+    FileInterceptor('photo', {
+      storage: memoryStorage(),
+      limits: { fileSize: 8 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+          cb(null, true);
+        } else {
+          cb(
+            new BadRequestException(
+              `Invalid file type "${file.mimetype}". Allowed: ${ALLOWED_MIME_TYPES.join(', ')}`,
+            ),
+            false,
+          );
+        }
+      },
+    }),
+  )
+  uploadPhasePhoto(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() dto: UploadPhasePhotoDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.serviceExecutionsService.uploadPhasePhoto(id, file, dto, user);
+  }
+
+  @Get(':id/phase-photos')
+  getPhasePhotos(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.serviceExecutionsService.getPhasePhotos(id, user);
   }
 }

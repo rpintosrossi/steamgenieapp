@@ -59,6 +59,12 @@ const STATUS_BADGE_CLASS: Record<string, string> = {
   OVERDUE: 'badge-warning',
 };
 
+const PHASE_LABELS: Record<string, string> = {
+  BEFORE: 'Antes',
+  DURING: 'Durante',
+  AFTER: 'Después',
+};
+
 function RecurringTaskDetailList({ tasks }: { tasks: RecurringWorkListItem[] }) {
   return (
     <div className="recurring-task-list">
@@ -66,8 +72,11 @@ function RecurringTaskDetailList({ tasks }: { tasks: RecurringWorkListItem[] }) 
         {tasks.length} tarea{tasks.length === 1 ? '' : 's'} en esta ubicación
       </p>
       {tasks.map((item) => {
+        const isBda = item.photoEvidenceMode === 'BEFORE_DURING_AFTER';
         const photos = item.execution?.photos ?? [];
+        const phasePhotos = item.phasePhotos ?? [];
         const photoPending =
+          !isBda &&
           item.requiresPhoto &&
           item.execution?.status === 'DONE' &&
           photos.length === 0;
@@ -109,7 +118,50 @@ function RecurringTaskDetailList({ tasks }: { tasks: RecurringWorkListItem[] }) 
               <div className="recurring-task-meta-item recurring-task-meta-item--full">
                 <dt>Evidencia fotográfica</dt>
                 <dd>
-                  {photos.length > 0 ? (
+                  {isBda ? (
+                    phasePhotos.length > 0 ? (
+                      <div className="stack" style={{ gap: 8 }}>
+                        {(['BEFORE', 'DURING', 'AFTER'] as const).map((phase) => {
+                          const phaseItems = phasePhotos.filter((p) => p.phase === phase);
+                          if (phaseItems.length === 0) return null;
+                          return (
+                            <div key={phase}>
+                              <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+                                {PHASE_LABELS[phase]}
+                              </div>
+                              <div className="photo-thumbs">
+                                {phaseItems.map((photo) => (
+                                  <TaskPhotoThumb
+                                    key={photo.id}
+                                    photoId={photo.id}
+                                    photoUrl={photo.url}
+                                    title={photo.originalFilename ?? PHASE_LABELS[phase]}
+                                    context={{
+                                      capturedAt: photo.capturedAt,
+                                      uploadedAt: photo.uploadedAt,
+                                      uploadedByName:
+                                        photo.uploadedBy?.fullName ??
+                                        item.execution?.executedBy.fullName ??
+                                        null,
+                                      taskName: item.taskName,
+                                      buildingName: item.building?.name ?? null,
+                                      floor: item.floor,
+                                      zone: item.zone,
+                                      subzone: item.subzone,
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : item.execution || item.displayStatus === 'COMPLETED' ? (
+                      <span className="muted">Sin fotos de fase</span>
+                    ) : (
+                      <span className="muted">—</span>
+                    )
+                  ) : photos.length > 0 ? (
                     <div className="photo-thumbs">
                       {photos.map((photo) => (
                         <TaskPhotoThumb

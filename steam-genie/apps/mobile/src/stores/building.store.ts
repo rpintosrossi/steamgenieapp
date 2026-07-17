@@ -8,6 +8,8 @@ import {
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
+export type PhotoEvidenceMode = 'PER_TASK' | 'BEFORE_DURING_AFTER';
+
 export interface Building {
   id: string;
   name: string;
@@ -16,6 +18,8 @@ export interface Building {
   longitude: string | null;
   gpsRadiusM: number;
   requireGpsValidation?: boolean;
+  /** Default PER_TASK when absent (older servers / cache). */
+  photoEvidenceMode?: PhotoEvidenceMode;
 }
 
 export interface RejectionReason {

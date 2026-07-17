@@ -3476,16 +3476,40 @@ textarea {
 }
 
 .building-location-map {
+  position: relative;
+}
+
+.building-location-map-canvas {
   height: 320px;
   border: 1px solid var(--color-border);
   border-radius: 10px;
   overflow: hidden;
-  position: relative;
 }
 
-.building-location-map.is-disabled {
+.building-location-map.is-disabled .building-location-map-canvas {
   opacity: 0.65;
   pointer-events: none;
+}
+
+.building-location-map-overlay {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 320px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-surface) 88%, transparent);
+  color: var(--color-text-muted);
+  font-size: 14px;
+  padding: 16px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.building-location-map-overlay.is-error {
+  color: var(--color-danger, #b91c1c);
+  pointer-events: auto;
 }
 
 .building-location-map-hint {
@@ -3502,10 +3526,6 @@ textarea {
   border-radius: 10px;
   color: var(--color-text-muted);
   font-size: 14px;
-}
-
-.building-location-fields .leaflet-container {
-  font-family: inherit;
 }
 
 .address-autocomplete {
@@ -3584,7 +3604,8 @@ textarea {
     max-height: 160px;
   }
 
-  .building-location-map,
+  .building-location-map-canvas,
+  .building-location-map-overlay,
   .building-location-map-loading {
     height: 260px;
   }

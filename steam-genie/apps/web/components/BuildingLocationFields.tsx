@@ -12,13 +12,17 @@ import {
 import {
   fetchArgentinaLocalities,
   fetchArgentinaProvinces,
+  findLocalityByName,
   findProvinceByName,
-  searchArgentinaAddresses,
-  type ArgentinaAddressSuggestion,
   type ArgentinaCentroide,
   type ArgentinaLocality,
   type ArgentinaProvince,
 } from '../lib/argentina-georef';
+import {
+  resolveGooglePlace,
+  searchGoogleAddresses,
+  type GoogleAddressSuggestion,
+} from '../lib/google-address-search';
 
 const BuildingLocationMap = dynamic(
   () =>
@@ -63,17 +67,18 @@ export function BuildingLocationFields({
 }: BuildingLocationFieldsProps) {
   const [provinces, setProvinces] = useState<ArgentinaProvince[]>([]);
   const [localities, setLocalities] = useState<ArgentinaLocality[]>([]);
-  const [loadingLocalities, setLoadingLocalities] = useState(false);
   const [viewCenter, setViewCenter] = useState<ArgentinaCentroide | null>(null);
   const [viewZoom, setViewZoom] = useState<number | undefined>(undefined);
-  const [cityManual, setCityManual] = useState(false);
 
-  const [suggestions, setSuggestions] = useState<ArgentinaAddressSuggestion[]>([]);
+  const [suggestions, setSuggestions] = useState<GoogleAddressSuggestion[]>([]);
   const [searchingAddress, setSearchingAddress] = useState(false);
+  const [resolvingPlace, setResolvingPlace] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [activeSuggestion, setActiveSuggestion] = useState(-1);
   const addressWrapRef = useRef<HTMLDivElement>(null);
   const searchSeq = useRef(0);
+  /** Dirección aplicada desde una sugerencia; no rebuscar hasta que el usuario edite. */
+  const appliedAddressRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,12 +95,9 @@ export function BuildingLocationFields({
         const locs = await fetchArgentinaLocalities(matched.id);
         if (cancelled) return;
         setLocalities(locs);
-        const cityKnown = locs.some(
-          (l) => l.name.toLowerCase() === value.city.trim().toLowerCase(),
-        );
-        setCityManual(Boolean(value.city) && !cityKnown);
-      } else if (value.city) {
-        setCityManual(true);
+        if (value.address.trim()) {
+          appliedAddressRef.current = value.address.trim();
+        }
       }
     })();
     return () => {
@@ -120,21 +122,26 @@ export function BuildingLocationFields({
   );
 
   const loadLocalities = useCallback(async (provinceId: string) => {
-    setLoadingLocalities(true);
-    try {
-      const locs = await fetchArgentinaLocalities(provinceId);
-      setLocalities(locs);
-      return locs;
-    } finally {
-      setLoadingLocalities(false);
-    }
+    const locs = await fetchArgentinaLocalities(provinceId);
+    setLocalities(locs);
+    return locs;
   }, []);
 
   useEffect(() => {
     const query = value.address.trim();
+
+    if (appliedAddressRef.current != null && appliedAddressRef.current === query) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      setSearchingAddress(false);
+      setActiveSuggestion(-1);
+      return;
+    }
+
     if (query.length < 3) {
       setSuggestions([]);
       setSearchingAddress(false);
+      setShowSuggestions(false);
       return;
     }
 
@@ -142,9 +149,10 @@ export function BuildingLocationFields({
     setSearchingAddress(true);
     const timer = window.setTimeout(() => {
       void (async () => {
-        const results = await searchArgentinaAddresses(query, {
-          provinceId: selectedProvince?.id,
-          max: 8,
+        const bias = selectedProvince?.centroide;
+        const results = await searchGoogleAddresses(query, {
+          biasLat: bias?.lat,
+          biasLon: bias?.lon,
         });
         if (seq !== searchSeq.current) return;
         setSuggestions(results);
@@ -155,81 +163,50 @@ export function BuildingLocationFields({
     }, 400);
 
     return () => window.clearTimeout(timer);
-  }, [value.address, selectedProvince?.id]);
+  }, [value.address, selectedProvince?.centroide?.lat, selectedProvince?.centroide?.lon]);
 
-  async function handleProvinceChange(name: string) {
-    onChange({ province: name, city: '' });
-    setCityManual(false);
-    setLocalities([]);
-
-    const province = provinces.find((p) => p.name === name);
-    if (!province) {
-      setViewCenter(null);
-      return;
-    }
-
-    setViewCenter(province.centroide);
-    setViewZoom(8);
-    await loadLocalities(province.id);
-  }
-
-  function handleCityChange(name: string) {
-    if (name === '__manual__') {
-      setCityManual(true);
-      onChange({ city: '' });
-      return;
-    }
-    setCityManual(false);
-    const locality = localities.find((l) => l.name === name);
-    if (locality?.centroide && (!value.latitude.trim() || !value.longitude.trim())) {
-      setViewCenter(locality.centroide);
-      setViewZoom(14);
-      onChange({
-        city: name,
-        latitude: String(locality.centroide.lat),
-        longitude: String(locality.centroide.lon),
-      });
-      return;
-    }
-    onChange({ city: name });
-    if (locality?.centroide) {
-      setViewCenter(locality.centroide);
-      setViewZoom(14);
-    }
-  }
-
-  async function applyAddressSuggestion(item: ArgentinaAddressSuggestion) {
+  async function applyAddressSuggestion(item: GoogleAddressSuggestion) {
+    searchSeq.current += 1;
     setShowSuggestions(false);
     setSuggestions([]);
     setActiveSuggestion(-1);
+    setSearchingAddress(false);
+    setResolvingPlace(true);
 
-    const province =
-      findProvinceByName(provinces, item.provinceName) ??
-      provinces.find((p) => p.id === item.provinceId);
+    try {
+      const place = await resolveGooglePlace(item.placeId);
+      if (!place) return;
 
-    let locs = localities;
-    if (province) {
-      locs = await loadLocalities(province.id);
+      const province = findProvinceByName(provinces, place.province);
+
+      let locs = localities;
+      if (province) {
+        locs = await loadLocalities(province.id);
+      }
+
+      let nextCity = '';
+      if (province?.id === '02') {
+        nextCity = locs[0]?.name ?? 'Ciudad Autónoma de Buenos Aires';
+      } else {
+        const cityMatch = findLocalityByName(locs, place.city);
+        nextCity = cityMatch?.name ?? place.city?.trim() ?? '';
+      }
+
+      const nextAddress = place.streetLine || item.mainText;
+      appliedAddressRef.current = nextAddress.trim();
+      setViewCenter({ lat: place.lat, lon: place.lon });
+      setViewZoom(17);
+
+      onChange({
+        address: nextAddress,
+        province: province?.name ?? place.province ?? '',
+        city: nextCity,
+        latitude: place.lat.toFixed(7),
+        longitude: place.lon.toFixed(7),
+      });
+    } finally {
+      setResolvingPlace(false);
     }
-
-    const cityMatch =
-      locs.find((l) => l.name.toLowerCase() === item.cityName.toLowerCase()) ??
-      locs.find((l) => item.cityName.toLowerCase().includes(l.name.toLowerCase())) ??
-      locs.find((l) => l.name.toLowerCase().includes(item.cityName.toLowerCase()));
-
-    const nextCity = cityMatch?.name ?? item.cityName;
-    setCityManual(Boolean(nextCity) && !cityMatch);
-
-    setViewCenter({ lat: item.lat, lon: item.lon });
-    setViewZoom(17);
-
-    onChange({
-      address: item.streetLine,
-      province: province?.name ?? item.provinceName,
-      city: nextCity,
-      latitude: item.lat.toFixed(7),
-      longitude: item.lon.toFixed(7),
-    });
   }
 
   function handleMapPick(lat: number, lng: number) {
@@ -273,7 +250,15 @@ export function BuildingLocationFields({
         <input
           value={value.address}
           onChange={(e) => {
-            onChange({ address: e.target.value });
+            appliedAddressRef.current = null;
+            onChange({
+              address: e.target.value,
+              province: '',
+              city: '',
+              latitude: '',
+              longitude: '',
+            });
+            setLocalities([]);
             setShowSuggestions(true);
           }}
           onFocus={() => {
@@ -286,16 +271,21 @@ export function BuildingLocationFields({
           aria-expanded={showSuggestions}
           aria-autocomplete="list"
         />
-        {searchingAddress ? (
-          <p className="muted address-autocomplete-status">Buscando direcciones…</p>
+        {searchingAddress || resolvingPlace ? (
+          <p className="muted address-autocomplete-status">
+            {resolvingPlace ? 'Ubicando dirección…' : 'Buscando direcciones…'}
+          </p>
         ) : null}
-        {showSuggestions && value.address.trim().length >= 3 && !searchingAddress ? (
+        {showSuggestions &&
+        value.address.trim().length >= 3 &&
+        !searchingAddress &&
+        !resolvingPlace ? (
           <ul className="address-autocomplete-list" role="listbox">
             {suggestions.length === 0 ? (
               <li className="address-autocomplete-empty">No se encontraron direcciones</li>
             ) : (
               suggestions.map((item, index) => (
-                <li key={item.id}>
+                <li key={item.placeId}>
                   <button
                     type="button"
                     className={`address-autocomplete-item${
@@ -306,8 +296,10 @@ export function BuildingLocationFields({
                     role="option"
                     aria-selected={index === activeSuggestion}
                   >
-                    <span className="address-autocomplete-item-title">{item.streetLine}</span>
-                    <span className="address-autocomplete-item-meta">{item.label}</span>
+                    <span className="address-autocomplete-item-title">{item.mainText}</span>
+                    <span className="address-autocomplete-item-meta">
+                      {item.secondaryText || item.label}
+                    </span>
                   </button>
                 </li>
               ))
@@ -315,69 +307,27 @@ export function BuildingLocationFields({
           </ul>
         ) : null}
         <p className="muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
-          Escribí la dirección y elegí una opción del listado para ubicarla en el mapa.
+          Elegí una dirección del listado: provincia, ciudad y mapa se completan solos.
         </p>
       </div>
 
       <div className="grid-2">
         <div className="form-field">
           <label>Provincia</label>
-          <select
+          <input
             value={value.province}
-            onChange={(e) => void handleProvinceChange(e.target.value)}
-          >
-            <option value="">Seleccionar provincia</option>
-            {provinces.map((p) => (
-              <option key={p.id} value={p.name}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+            readOnly
+            placeholder="Se completa al elegir la dirección"
+          />
         </div>
 
         <div className="form-field">
           <label>Ciudad / municipio</label>
-          {cityManual || (!loadingLocalities && localities.length === 0 && selectedProvince) ? (
-            <input
-              value={value.city}
-              onChange={(e) => onChange({ city: e.target.value })}
-              placeholder="Nombre de la ciudad"
-            />
-          ) : (
-            <select
-              value={value.city}
-              onChange={(e) => handleCityChange(e.target.value)}
-              disabled={!selectedProvince || loadingLocalities}
-            >
-              <option value="">
-                {loadingLocalities
-                  ? 'Cargando…'
-                  : selectedProvince
-                    ? 'Seleccionar ciudad'
-                    : 'Elegí una provincia primero'}
-              </option>
-              {localities.map((l) => (
-                <option key={l.id} value={l.name}>
-                  {l.name}
-                </option>
-              ))}
-              <option value="__manual__">Otra (escribir manualmente)…</option>
-            </select>
-          )}
-          {cityManual ? (
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              style={{ marginTop: 8 }}
-              onClick={() => {
-                setCityManual(false);
-                onChange({ city: '' });
-              }}
-              disabled={!selectedProvince}
-            >
-              Volver al listado
-            </button>
-          ) : null}
+          <input
+            value={value.city}
+            readOnly
+            placeholder="Se completa al elegir la dirección"
+          />
         </div>
       </div>
 

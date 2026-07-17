@@ -15,7 +15,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { takeTaskPhoto } from '../../../src/utils/camera';
+import { pickTaskPhoto, type PhotoPhase } from '../../../src/utils/camera';
 import * as Location from 'expo-location';
 import { apiService } from '../../../src/services/api.service';
 import { syncQueue, photoQueue, generateClientId } from '../../../src/sync/sync-queue';
@@ -23,6 +23,10 @@ import { syncManager } from '../../../src/sync/sync-manager';
 import { useNetworkStatus } from '../../../src/hooks/useNetworkStatus';
 import { useSyncStore } from '../../../src/stores/sync.store';
 import { useBuildingStore, RejectionReason } from '../../../src/stores/building.store';
+import {
+  PhasePhotosSection,
+  type PhasePhotoItem,
+} from '../../../src/components/PhasePhotosSection';
 import { COLORS } from '../../../src/constants/colors';
 import {
   ATTENDANCE_REQUIRED_MESSAGE,
@@ -94,14 +98,11 @@ function isBulkSelectable(task: TaskExecutionItem): boolean {
   return canMarkTask(task) && task.customFields.length === 0;
 }
 
-function isTaskResolved(task: TaskExecutionItem): boolean {
-  const status = getTaskStatus(task);
-  if (status === 'NOT_STARTED' || status === 'IN_PROGRESS') return false;
-  if (isDoneWithPendingPhoto(task)) return false;
-  return true;
-}
-
-function isDoneWithPendingPhoto(task: TaskExecutionItem): boolean {
+function isDoneWithPendingPhoto(
+  task: TaskExecutionItem,
+  perTaskPhotosEnabled = true,
+): boolean {
+  if (!perTaskPhotosEnabled) return false;
   return (
     getTaskStatus(task) === 'DONE' &&
     task.requiresPhotoSnapshot &&
@@ -109,14 +110,32 @@ function isDoneWithPendingPhoto(task: TaskExecutionItem): boolean {
   );
 }
 
-function getTaskStatusLabel(task: TaskExecutionItem): string {
+function isTaskResolved(
+  task: TaskExecutionItem,
+  perTaskPhotosEnabled = true,
+): boolean {
   const status = getTaskStatus(task);
-  if (isDoneWithPendingPhoto(task)) return 'Realizada con foto pendiente';
+  if (status === 'NOT_STARTED' || status === 'IN_PROGRESS') return false;
+  if (isDoneWithPendingPhoto(task, perTaskPhotosEnabled)) return false;
+  return true;
+}
+
+function getTaskStatusLabel(
+  task: TaskExecutionItem,
+  perTaskPhotosEnabled = true,
+): string {
+  const status = getTaskStatus(task);
+  if (isDoneWithPendingPhoto(task, perTaskPhotosEnabled)) {
+    return 'Realizada con foto pendiente';
+  }
   return STATUS_LABELS[status] ?? status;
 }
 
-function getTaskStatusIcon(task: TaskExecutionItem) {
-  if (isDoneWithPendingPhoto(task)) {
+function getTaskStatusIcon(
+  task: TaskExecutionItem,
+  perTaskPhotosEnabled = true,
+) {
+  if (isDoneWithPendingPhoto(task, perTaskPhotosEnabled)) {
     return { name: 'camera-outline' as const, color: COLORS.warning };
   }
   const status = getTaskStatus(task);
@@ -158,16 +177,20 @@ export default function ChecklistScreen() {
     prefetchData?.activeAttendance,
     workOrderBuildingId,
   );
+  const isBdaMode = selectedBuilding?.photoEvidenceMode === 'BEFORE_DURING_AFTER';
+  const perTaskPhotosEnabled = !isBdaMode;
 
   const taskNotDoneReasons = (prefetchData?.rejectionReasons ?? []).filter(
     (r) => r.type === 'TASK_NOT_DONE',
   );
 
   const [tasks, setTasks] = useState<TaskExecutionItem[]>([]);
+  const [phasePhotos, setPhasePhotos] = useState<PhasePhotoItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [markingTaskId, setMarkingTaskId] = useState<string | null>(null);
   const [uploadingPhotoForWotId, setUploadingPhotoForWotId] = useState<string | null>(null);
+  const [uploadingPhase, setUploadingPhase] = useState<PhotoPhase | null>(null);
   const [reasonPickerTask, setReasonPickerTask] = useState<TaskExecutionItem | null>(null);
   const [fieldPickerTask, setFieldPickerTask] = useState<TaskExecutionItem | null>(null);
   const [pendingMarkStatus, setPendingMarkStatus] = useState<'DONE' | null>(null);
@@ -226,6 +249,21 @@ export default function ChecklistScreen() {
     }
   }, [selectedZone, selectedSubzoneId]);
 
+  const loadPhasePhotos = useCallback(async () => {
+    if (!seId || !isBdaMode) {
+      setPhasePhotos([]);
+      return;
+    }
+    try {
+      const data = await apiService.get<PhasePhotoItem[]>(
+        `/service-executions/${seId}/phase-photos`,
+      );
+      setPhasePhotos(Array.isArray(data) ? data : []);
+    } catch {
+      // keep previous phase photos on soft failures
+    }
+  }, [seId, isBdaMode]);
+
   const loadTasks = useCallback(async (mode: 'initial' | 'refresh' | 'silent' = 'initial'): Promise<TaskExecutionItem[] | null> => {
     if (!seId) {
       if (mode === 'initial') setIsLoading(false);
@@ -246,6 +284,9 @@ export default function ChecklistScreen() {
         subzoneId: item.subzoneId ?? cachedWo?.subzoneId ?? null,
       }));
       setTasks(mapped);
+      if (isBdaMode) {
+        await loadPhasePhotos();
+      }
       return mapped;
     } catch (e) {
       if (mode !== 'silent') {
@@ -257,7 +298,7 @@ export default function ChecklistScreen() {
       if (mode === 'initial') setIsLoading(false);
       if (mode === 'refresh') setIsRefreshing(false);
     }
-  }, [seId, workOrderId]);
+  }, [seId, workOrderId, isBdaMode, loadPhasePhotos]);
 
   useEffect(() => {
     prefetchForReasonsAttempted.current = false;
@@ -493,10 +534,122 @@ export default function ChecklistScreen() {
     setPendingMarkStatus(null);
   }
 
+  async function uploadPhasePhotoAsset(
+    phase: PhotoPhase,
+    seIdParam: string,
+    asset: NonNullable<Awaited<ReturnType<typeof pickTaskPhoto>>>,
+  ): Promise<boolean> {
+    try {
+      let gpsLat: number | undefined;
+      let gpsLng: number | undefined;
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          gpsLat = loc.coords.latitude;
+          gpsLng = loc.coords.longitude;
+        }
+      } catch {
+        // GPS optional
+      }
+
+      const formData = new FormData();
+      formData.append('photo', {
+        uri: asset.uri,
+        name: asset.fileName ?? `photo_${Date.now()}.jpg`,
+        type: asset.mimeType ?? 'image/jpeg',
+      } as unknown as Blob);
+      formData.append('phase', phase);
+      formData.append('clientOperationId', generateClientId());
+      formData.append('capturedAt', new Date().toISOString());
+      if (gpsLat != null) formData.append('gpsLat', String(gpsLat));
+      if (gpsLng != null) formData.append('gpsLng', String(gpsLng));
+
+      await apiService.postMultipart(
+        `/service-executions/${seIdParam}/phase-photos`,
+        formData,
+      );
+      await loadPhasePhotos();
+      return true;
+    } catch (e) {
+      Alert.alert('Error al subir foto', e instanceof Error ? e.message : 'Error desconocido');
+      return false;
+    }
+  }
+
+  async function queuePhasePhotoAsset(
+    phase: PhotoPhase,
+    seIdParam: string,
+    asset: NonNullable<Awaited<ReturnType<typeof pickTaskPhoto>>>,
+  ) {
+    const clientOperationId = generateClientId();
+    let gpsLat: number | undefined;
+    let gpsLng: number | undefined;
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        gpsLat = loc.coords.latitude;
+        gpsLng = loc.coords.longitude;
+      }
+    } catch {
+      // GPS optional
+    }
+
+    await photoQueue.enqueue({
+      id: generateClientId(),
+      clientOperationId,
+      photoKind: 'service_phase',
+      serviceExecutionId: seIdParam,
+      workOrderTaskId: null,
+      periodicInstanceId: null,
+      phase,
+      localUri: asset.uri,
+      mimeType: asset.mimeType ?? 'image/jpeg',
+      capturedAt: new Date().toISOString(),
+      gpsLat: gpsLat ?? null,
+      gpsLng: gpsLng ?? null,
+      deviceId: 'mobile',
+    });
+
+    setPhasePhotos((prev) => [
+      ...prev,
+      { id: clientOperationId, phase, url: asset.uri },
+    ]);
+    setStatus('pending');
+    await syncManager.refreshPendingCount();
+  }
+
+  async function addPhasePhoto(phase: PhotoPhase) {
+    if (!seId) return;
+    if (!canExecute) {
+      Alert.alert('Fichaje requerido', ATTENDANCE_REQUIRED_MESSAGE);
+      return;
+    }
+
+    const asset = await pickTaskPhoto();
+    if (!asset) return;
+
+    setUploadingPhase(phase);
+    try {
+      if (isOnline) {
+        await uploadPhasePhotoAsset(phase, seId, asset);
+      } else {
+        await queuePhasePhotoAsset(phase, seId, asset);
+      }
+    } finally {
+      setUploadingPhase(null);
+    }
+  }
+
   async function uploadPhotoAsset(
     task: TaskExecutionItem,
     seIdParam: string,
-    asset: NonNullable<Awaited<ReturnType<typeof takeTaskPhoto>>>,
+    asset: NonNullable<Awaited<ReturnType<typeof pickTaskPhoto>>>,
   ): Promise<boolean> {
     try {
       let gpsLat: number | undefined;
@@ -539,7 +692,7 @@ export default function ChecklistScreen() {
   async function queuePhotoAsset(
     task: TaskExecutionItem,
     seIdParam: string,
-    asset: NonNullable<Awaited<ReturnType<typeof takeTaskPhoto>>>,
+    asset: NonNullable<Awaited<ReturnType<typeof pickTaskPhoto>>>,
   ) {
     const clientOperationId = generateClientId();
 
@@ -559,8 +712,11 @@ export default function ChecklistScreen() {
     await photoQueue.enqueue({
       id: generateClientId(),
       clientOperationId,
+      photoKind: 'task',
       serviceExecutionId: seIdParam,
       workOrderTaskId: task.workOrderTaskId,
+      periodicInstanceId: null,
+      phase: null,
       localUri: asset.uri,
       mimeType: asset.mimeType ?? 'image/jpeg',
       capturedAt: new Date().toISOString(),
@@ -595,7 +751,7 @@ export default function ChecklistScreen() {
       return;
     }
 
-    const asset = await takeTaskPhoto();
+    const asset = await pickTaskPhoto();
     if (!asset) return;
 
     setUploadingPhotoForWotId(task.workOrderTaskId);
@@ -611,7 +767,7 @@ export default function ChecklistScreen() {
   }
 
   const sortedTasks = [...tasks].sort((a, b) => a.sortOrder - b.sortOrder);
-  const resolvedCount = tasks.filter(isTaskResolved).length;
+  const resolvedCount = tasks.filter((t) => isTaskResolved(t, perTaskPhotosEnabled)).length;
   const totalCount = tasks.length;
   const allResolved = totalCount > 0 && resolvedCount === totalCount;
   const progress = totalCount > 0 ? resolvedCount / totalCount : 0;
@@ -623,6 +779,7 @@ export default function ChecklistScreen() {
         key={task.workOrderTaskId}
         task={task}
         canExecute={canExecute}
+        perTaskPhotosEnabled={perTaskPhotosEnabled}
         isMarking={markingTaskId === task.workOrderTaskId || isBulkMarking}
         isUploadingPhoto={uploadingPhotoForWotId === task.workOrderTaskId}
         selectionMode={selectionMode}
@@ -671,6 +828,16 @@ export default function ChecklistScreen() {
         </Text>
       </View>
 
+      {isBdaMode ? (
+        <PhasePhotosSection
+          photos={phasePhotos}
+          canEdit={canExecute}
+          uploadingPhase={uploadingPhase}
+          onAddPhoto={addPhasePhoto}
+          title="Fotos del servicio (antes / durante / después)"
+        />
+      ) : null}
+
       {isLoading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={COLORS.primary} />
@@ -693,6 +860,7 @@ export default function ChecklistScreen() {
             floors={hierarchy}
             selectedFloorId={selectedFloor?.floorId ?? null}
             onSelect={setSelectedFloorId}
+            perTaskPhotosEnabled={perTaskPhotosEnabled}
           />
 
           {selectedZone ? (
@@ -705,6 +873,7 @@ export default function ChecklistScreen() {
               selectionMode={selectionMode}
               selectedIds={selectedIds}
               canExecute={canExecute}
+              perTaskPhotosEnabled={perTaskPhotosEnabled}
               bottomPad={bottomPad}
               onBack={() => {
                 clearSelection();
@@ -734,7 +903,9 @@ export default function ChecklistScreen() {
               <Text style={styles.sectionTitle}>Zonas</Text>
               <View style={styles.zoneGridInner}>
                 {(selectedFloor?.zones ?? []).map((zone) => {
-                  const resolved = zone.items.filter(isTaskResolved).length;
+                  const resolved = zone.items.filter((t) =>
+                    isTaskResolved(t, perTaskPhotosEnabled),
+                  ).length;
                   const total = zone.items.length;
                   const pct = total ? resolved / total : 0;
                   return (
@@ -866,6 +1037,7 @@ export default function ChecklistScreen() {
 interface TaskCardProps {
   task: TaskExecutionItem;
   canExecute: boolean;
+  perTaskPhotosEnabled?: boolean;
   isMarking: boolean;
   isUploadingPhoto: boolean;
   selectionMode?: boolean;
@@ -876,10 +1048,13 @@ interface TaskCardProps {
   onAddPhoto: () => void;
 }
 
-function countTaskProgress(items: TaskExecutionItem[]) {
+function countTaskProgress(
+  items: TaskExecutionItem[],
+  perTaskPhotosEnabled = true,
+) {
   return {
     total: items.length,
-    resolved: items.filter(isTaskResolved).length,
+    resolved: items.filter((t) => isTaskResolved(t, perTaskPhotosEnabled)).length,
   };
 }
 
@@ -887,10 +1062,12 @@ function ChecklistFloorStrip({
   floors,
   selectedFloorId,
   onSelect,
+  perTaskPhotosEnabled = true,
 }: {
   floors: LocationFloorGroup<TaskExecutionItem>[];
   selectedFloorId: string | null;
   onSelect: (floorId: string) => void;
+  perTaskPhotosEnabled?: boolean;
 }) {
   return (
     <View style={styles.floorStripWrap}>
@@ -900,7 +1077,7 @@ function ChecklistFloorStrip({
         contentContainerStyle={styles.floorStrip}
       >
         {floors.map((floor) => {
-          const { resolved, total } = countTaskProgress(floor.items);
+          const { resolved, total } = countTaskProgress(floor.items, perTaskPhotosEnabled);
           const isActive = floor.floorId === selectedFloorId;
           const done = resolved === total && total > 0;
           return (
@@ -1095,6 +1272,7 @@ function ChecklistZoneDetail({
   selectionMode,
   selectedIds,
   canExecute,
+  perTaskPhotosEnabled = true,
   bottomPad,
   onBack,
   onSelectSubzone,
@@ -1113,6 +1291,7 @@ function ChecklistZoneDetail({
   selectionMode: boolean;
   selectedIds: Set<string>;
   canExecute: boolean;
+  perTaskPhotosEnabled?: boolean;
   bottomPad: number;
   onBack: () => void;
   onSelectSubzone: (subId: string) => void;
@@ -1123,7 +1302,7 @@ function ChecklistZoneDetail({
   onBulkMarkDone: () => void;
   renderTask: (task: TaskExecutionItem) => ReactNode;
 }) {
-  const { resolved, total } = countTaskProgress(zone.items);
+  const { resolved, total } = countTaskProgress(zone.items, perTaskPhotosEnabled);
   const subzoneTasks = activeSubzone?.items ?? [];
   const pendingInSubzone = subzoneTasks.filter(canMarkTask);
   const bulkSelectablePending = subzoneTasks.filter(isBulkSelectable);
@@ -1177,7 +1356,7 @@ function ChecklistZoneDetail({
         contentContainerStyle={styles.subzoneTabs}
       >
         {zone.subzones.map((sub) => {
-          const subProgress = countTaskProgress(sub.items);
+          const subProgress = countTaskProgress(sub.items, perTaskPhotosEnabled);
           const isActive = sub.subId === selectedSubzoneId;
           return (
             <TouchableOpacity
@@ -1266,6 +1445,7 @@ function ChecklistZoneDetail({
 function TaskCard({
   task,
   canExecute,
+  perTaskPhotosEnabled = true,
   isMarking,
   isUploadingPhoto,
   selectionMode = false,
@@ -1279,14 +1459,14 @@ function TaskCard({
   const wasMarking = useRef(false);
   const status = getTaskStatus(task);
   const photos = getTaskPhotos(task);
-  const iconConfig = getTaskStatusIcon(task);
-  const statusLabel = getTaskStatusLabel(task);
+  const iconConfig = getTaskStatusIcon(task, perTaskPhotosEnabled);
+  const statusLabel = getTaskStatusLabel(task, perTaskPhotosEnabled);
   const isDone = status === 'DONE';
   const isNotDone = status === 'NOT_DONE';
-  const isResolved = isTaskResolved(task);
+  const isResolved = isTaskResolved(task, perTaskPhotosEnabled);
   const canChangeNotDoneReason = isNotDone && task.requiresRejectionReasonSnapshot;
   const disableNotDoneBtn = isEditing && isNotDone && !canChangeNotDoneReason;
-  const needsPhoto = isDoneWithPendingPhoto(task);
+  const needsPhoto = isDoneWithPendingPhoto(task, perTaskPhotosEnabled);
   const showMarkActions = canExecute && (canMarkTask(task) || isEditing) && !selectionMode;
   const requiresIndividualCompletion =
     canMarkTask(task) && task.customFields.length > 0;
@@ -1335,7 +1515,7 @@ function TaskCard({
             {statusLabel}
           </Text>
         </View>
-        {task.requiresPhotoSnapshot && (
+        {perTaskPhotosEnabled && task.requiresPhotoSnapshot && (
           <Ionicons name="camera-outline" size={16} color={COLORS.primary} />
         )}
         {task.requiresRejectionReasonSnapshot && (
@@ -1352,7 +1532,7 @@ function TaskCard({
         )}
       </View>
 
-      {photos.length > 0 && (
+      {perTaskPhotosEnabled && photos.length > 0 && (
         <ScrollView horizontal style={styles.photoRow} showsHorizontalScrollIndicator={false}>
           {photos.map((photo) => (
             <Image key={photo.id} source={{ uri: photo.url }} style={styles.photoThumb} />
@@ -1360,7 +1540,7 @@ function TaskCard({
         </ScrollView>
       )}
 
-      {isUploadingPhoto ? (
+      {perTaskPhotosEnabled && isUploadingPhoto ? (
         <View style={styles.photoUploading}>
           <ActivityIndicator size="small" color={COLORS.primary} />
           <Text style={styles.photoUploadingText}>Subiendo foto...</Text>
@@ -1369,7 +1549,7 @@ function TaskCard({
 
       {isMarking ? (
         <ActivityIndicator color={COLORS.primary} style={styles.taskLoader} />
-      ) : isUploadingPhoto ? (
+      ) : perTaskPhotosEnabled && isUploadingPhoto ? (
         <View style={styles.photoUploadingActions}>
           <ActivityIndicator color={COLORS.primary} size="small" />
           <Text style={styles.photoUploadingText}>Subiendo foto...</Text>
@@ -1436,7 +1616,7 @@ function TaskCard({
               )}
             </View>
           )}
-          {isDone && canExecute && !selectionMode && (
+          {perTaskPhotosEnabled && isDone && canExecute && !selectionMode && (
             <TouchableOpacity style={[styles.taskBtn, styles.taskBtnPhoto]} onPress={onAddPhoto}>
               <Ionicons name="camera-outline" size={16} color={COLORS.primary} />
               <Text style={[styles.taskBtnText, { color: COLORS.primary }]}>Foto</Text>

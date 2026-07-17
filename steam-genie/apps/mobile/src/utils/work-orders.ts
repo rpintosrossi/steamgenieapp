@@ -192,6 +192,7 @@ export function formatChecklistIncompleteMessage(message: string): string {
 const PHOTO_REQUIRED_PATTERNS = [
   /requires at least one photo when marked as done/i,
   /requiere al menos una foto/i,
+  /faltan fotos de evidencia/i,
 ];
 
 export function isPhotoRequiredError(message: string): boolean {
@@ -199,6 +200,13 @@ export function isPhotoRequiredError(message: string): boolean {
 }
 
 export function formatPhotoRequiredMessage(message: string): string {
+  if (/faltan fotos de evidencia/i.test(message)) {
+    return (
+      'Faltan fotos de evidencia (antes, durante y/o después). ' +
+      'Subí al menos una foto en cada fase antes de completar el servicio.'
+    );
+  }
+
   const taskMatch = message.match(/"(.+?)"/);
   const taskName = taskMatch?.[1];
 

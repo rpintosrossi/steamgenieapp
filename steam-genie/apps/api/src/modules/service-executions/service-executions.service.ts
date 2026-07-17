@@ -6,12 +6,17 @@
   UnprocessableEntityException,
   BadRequestException,
 } from '@nestjs/common';
-import { TaskExecutionStatus } from '@prisma/client';
+import { PhotoPhase, TaskExecutionStatus } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StorageService } from '../../infrastructure/storage/storage.service';
 import { MarkTaskDto } from './dto/mark-task.dto';
 import { UploadPhotoDto } from './dto/upload-photo.dto';
-import type { TaskExecutionItem, TaskPhotoSummary } from './dto/task-execution-item';
+import { UploadPhasePhotoDto } from './dto/upload-phase-photo.dto';
+import type {
+  PhasePhotoSummary,
+  TaskExecutionItem,
+  TaskPhotoSummary,
+} from './dto/task-execution-item';
 import type { AuthUser } from '@steam-genie/shared-types';
 import {
   validateTaskFieldValues,
@@ -395,6 +400,86 @@ export class ServiceExecutionsService {
     return photos.map((p) => this.formatPhoto(p));
   }
 
+  // ─── PHASE PHOTOS (BEFORE / DURING / AFTER) ───────────────────────────────
+
+  async uploadPhasePhoto(
+    serviceExecutionId: string,
+    file: Express.Multer.File,
+    dto: UploadPhasePhotoDto,
+    user: AuthUser,
+  ) {
+    if (!file) throw new BadRequestException('Photo file is required (field: photo)');
+
+    if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+      throw new BadRequestException(
+        `Invalid file type "${file.mimetype}". Allowed: ${ALLOWED_MIME_TYPES.join(', ')}`,
+      );
+    }
+
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      throw new BadRequestException(
+        `File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum: 8 MB.`,
+      );
+    }
+
+    if (!Object.values(PhotoPhase).includes(dto.phase)) {
+      throw new BadRequestException(`Invalid phase "${dto.phase}"`);
+    }
+
+    const se = await this.findServiceExecution(serviceExecutionId);
+
+    if (se.status !== 'IN_PROGRESS') {
+      throw new ConflictException('Service execution is not in progress');
+    }
+
+    await this.assertIsParticipantOrManager(se, user);
+
+    if (dto.clientOperationId) {
+      const existing = await this.prisma.serviceExecutionPhoto.findFirst({
+        where: { clientOperationId: dto.clientOperationId },
+      });
+      if (existing) return this.formatPhasePhoto(existing);
+    }
+
+    const key = this.storage.generateKey(file.originalname, file.mimetype);
+    await this.storage.upload(key, file.buffer, file.mimetype);
+
+    const photo = await this.prisma.serviceExecutionPhoto.create({
+      data: {
+        serviceExecutionId,
+        phase: dto.phase,
+        storageKey: key,
+        storageBucket: this.storage.storageBucketName,
+        originalFilename: file.originalname,
+        mimeType: file.mimetype,
+        fileSizeBytes: file.size,
+        capturedAt: dto.capturedAt ? new Date(dto.capturedAt) : null,
+        gpsLat: dto.gpsLat ?? null,
+        gpsLng: dto.gpsLng ?? null,
+        deviceId: dto.deviceId ?? null,
+        clientOperationId: dto.clientOperationId ?? null,
+        uploadedById: user.id,
+      },
+    });
+
+    return this.formatPhasePhoto(photo);
+  }
+
+  async getPhasePhotos(
+    serviceExecutionId: string,
+    user: AuthUser,
+  ): Promise<PhasePhotoSummary[]> {
+    const se = await this.findServiceExecution(serviceExecutionId);
+    await this.assertIsParticipantOrManager(se, user);
+
+    const photos = await this.prisma.serviceExecutionPhoto.findMany({
+      where: { serviceExecutionId, deletedAt: null },
+      orderBy: [{ phase: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    return photos.map((p) => this.formatPhasePhoto(p));
+  }
+
   // ─── PRIVATE HELPERS ──────────────────────────────────────────────────────
 
   private async findServiceExecution(id: string) {
@@ -459,6 +544,24 @@ export class ServiceExecutionsService {
       fileSizeBytes: p.fileSizeBytes ?? null,
       capturedAt: p.capturedAt ?? null,
       uploadedAt: p.uploadedAt,
+    };
+  }
+
+  private formatPhasePhoto(
+    p: {
+      id: string;
+      phase: PhotoPhase;
+      storageKey: string;
+      originalFilename?: string | null;
+      mimeType?: string | null;
+      fileSizeBytes?: number | null;
+      capturedAt?: Date | null;
+      uploadedAt: Date;
+    },
+  ): PhasePhotoSummary {
+    return {
+      ...this.formatPhoto(p),
+      phase: p.phase,
     };
   }
 }

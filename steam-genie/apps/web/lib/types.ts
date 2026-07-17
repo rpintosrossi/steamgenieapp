@@ -6,6 +6,9 @@ export interface Paginated<T> {
   pages: number;
 }
 
+export type PhotoEvidenceMode = 'PER_TASK' | 'BEFORE_DURING_AFTER';
+export type PhotoPhase = 'BEFORE' | 'DURING' | 'AFTER';
+
 export interface Building {
   id: string;
   name: string;
@@ -17,6 +20,8 @@ export interface Building {
   gpsRadiusM?: number;
   /** If true, attendance validates the user is within the building GPS radius. */
   requireGpsValidation?: boolean;
+  /** PER_TASK (default) or BEFORE_DURING_AFTER phase evidence. */
+  photoEvidenceMode?: PhotoEvidenceMode;
   isActive?: boolean;
   createdAt?: string;
 }
@@ -160,6 +165,7 @@ export interface RecurringWorkListItem {
   taskName: string;
   frequency: string;
   requiresPhoto: boolean;
+  photoEvidenceMode?: PhotoEvidenceMode;
   building: { id: string; name: string } | null;
   floor: { id: string; name: string } | null;
   zone: { id: string; name: string } | null;
@@ -171,6 +177,15 @@ export interface RecurringWorkListItem {
   displayStatus: 'COMPLETED' | 'SCHEDULED' | 'OVERDUE';
   instanceStatus: string;
   completedAt: string | null;
+  phasePhotos?: Array<{
+    id: string;
+    phase: PhotoPhase;
+    url: string;
+    originalFilename: string | null;
+    capturedAt: string | null;
+    uploadedAt: string;
+    uploadedBy: { id: string; fullName: string } | null;
+  }>;
   execution: {
     id: string;
     status: string;

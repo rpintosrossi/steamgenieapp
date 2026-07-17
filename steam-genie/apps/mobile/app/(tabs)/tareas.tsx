@@ -14,7 +14,7 @@ import {
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import { takeTaskPhoto } from '../../src/utils/camera';
+import { pickTaskPhoto, type PhotoPhase } from '../../src/utils/camera';
 import { apiService } from '../../src/services/api.service';
 import { syncQueue, generateClientId } from '../../src/sync/sync-queue';
 import { useNetworkStatus } from '../../src/hooks/useNetworkStatus';
@@ -22,8 +22,14 @@ import { useSyncStore } from '../../src/stores/sync.store';
 import { useBuildingStore, RejectionReason } from '../../src/stores/building.store';
 import { SyncStatusBar } from '../../src/components/SyncStatusBar';
 import { BrandedScreenHeader } from '../../src/components/BrandedScreenHeader';
+import {
+  PhasePhotosSection,
+  hasAllPhasePhotos,
+  type PhasePhotoItem,
+} from '../../src/components/PhasePhotosSection';
 import { COLORS } from '../../src/constants/colors';
 import { isNetworkError } from '../../src/utils/network';
+import { sleep } from '../../src/utils/async';
 import {
   CustomFieldPickerModal,
   hasTaskCustomFields,
@@ -47,6 +53,7 @@ interface PeriodicDueItem {
     requiresRejectionReason: boolean;
     customFields?: TaskCustomField[];
   };
+  phasePhotos?: PhasePhotoItem[];
   execution: {
     id: string;
     status: string;
@@ -85,7 +92,11 @@ const STATUS_LABELS: Record<string, string> = {
 
 const DONE_PHOTO_PENDING_LABEL = 'Realizada con foto pendiente';
 
-function isDoneWithPendingPhoto(item: PeriodicDueItem): boolean {
+function isDoneWithPendingPhoto(
+  item: PeriodicDueItem,
+  perTaskPhotosEnabled = true,
+): boolean {
+  if (!perTaskPhotosEnabled) return false;
   return (
     item.execution?.status === 'DONE' &&
     item.task.requiresPhoto &&
@@ -93,23 +104,36 @@ function isDoneWithPendingPhoto(item: PeriodicDueItem): boolean {
   );
 }
 
-function isTaskFullyResolved(item: PeriodicDueItem): boolean {
+function isTaskFullyResolved(
+  item: PeriodicDueItem,
+  perTaskPhotosEnabled = true,
+): boolean {
   const status = item.execution?.status;
   if (!status) return false;
-  if (isDoneWithPendingPhoto(item)) return false;
+  if (isDoneWithPendingPhoto(item, perTaskPhotosEnabled)) return false;
   return true;
 }
 
-function getTaskStatusLabel(item: PeriodicDueItem): string | null {
+function getTaskStatusLabel(
+  item: PeriodicDueItem,
+  perTaskPhotosEnabled = true,
+): string | null {
   const status = item.execution?.status;
   if (!status) return null;
-  if (isDoneWithPendingPhoto(item)) return DONE_PHOTO_PENDING_LABEL;
+  if (isDoneWithPendingPhoto(item, perTaskPhotosEnabled)) {
+    return DONE_PHOTO_PENDING_LABEL;
+  }
   return STATUS_LABELS[status] ?? status;
 }
 
-function countProgress(tasks: PeriodicDueItem[]) {
+function countProgress(
+  tasks: PeriodicDueItem[],
+  perTaskPhotosEnabled = true,
+) {
   const total = tasks.length;
-  const resolved = tasks.filter(isTaskFullyResolved).length;
+  const resolved = tasks.filter((t) =>
+    isTaskFullyResolved(t, perTaskPhotosEnabled),
+  ).length;
   return { total, resolved };
 }
 
@@ -202,12 +226,18 @@ export default function TareasScreen() {
   const { isConnected } = useNetworkStatus();
   const isOnline = isConnected === true;
   const { setStatus } = useSyncStore();
+  const isBdaMode = selectedBuilding?.photoEvidenceMode === 'BEFORE_DURING_AFTER';
+  const perTaskPhotosEnabled = !isBdaMode;
 
   const [items, setItems] = useState<PeriodicDueItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [markingId, setMarkingId] = useState<string | null>(null);
   const [uploadingPhotoForItemId, setUploadingPhotoForItemId] = useState<string | null>(null);
+  const [uploadingPhaseFor, setUploadingPhaseFor] = useState<{
+    itemId: string;
+    phase: PhotoPhase;
+  } | null>(null);
   const [isBulkMarking, setIsBulkMarking] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -330,7 +360,10 @@ export default function TareasScreen() {
     }
   }, [refreshPrefetch, loadDueToday]);
 
-  const progress = useMemo(() => countProgress(items), [items]);
+  const progress = useMemo(
+    () => countProgress(items, perTaskPhotosEnabled),
+    [items, perTaskPhotosEnabled],
+  );
 
   async function reconcileItemMark(
     itemId: string,
@@ -455,6 +488,13 @@ export default function TareasScreen() {
   }
 
   function requestMarkDone(item: PeriodicDueItem) {
+    if (isBdaMode && !hasAllPhasePhotos(item.phasePhotos ?? [])) {
+      Alert.alert(
+        'Fotos incompletas',
+        'Subí al menos una foto en cada fase (antes, durante y después) antes de marcar la tarea como hecha.',
+      );
+      return;
+    }
     if ((item.task.customFields ?? []).length > 0) {
       setFieldPickerItem(item);
       return;
@@ -472,6 +512,17 @@ export default function TareasScreen() {
   async function markSelectedAsDone(tasks: PeriodicDueItem[]) {
     const toMark = tasks.filter((t) => selectedIds.has(t.id) && isBulkSelectable(t));
     if (toMark.length === 0) return;
+
+    if (isBdaMode) {
+      const incomplete = toMark.filter((t) => !hasAllPhasePhotos(t.phasePhotos ?? []));
+      if (incomplete.length > 0) {
+        Alert.alert(
+          'Fotos incompletas',
+          `${incomplete.length} tarea${incomplete.length === 1 ? '' : 's'} sin fotos en las 3 fases. Completá la evidencia antes de marcarlas.`,
+        );
+        return;
+      }
+    }
 
     Alert.alert(
       'Marcar tareas',
@@ -537,7 +588,7 @@ export default function TareasScreen() {
   }
 
   async function handlePhotoUpload(item: PeriodicDueItem): Promise<boolean> {
-    const asset = await takeTaskPhoto();
+    const asset = await pickTaskPhoto();
     if (!asset) return false;
 
     setUploadingPhotoForItemId(item.id);
@@ -576,6 +627,54 @@ export default function TareasScreen() {
       return false;
     } finally {
       setUploadingPhotoForItemId(null);
+    }
+  }
+
+  async function handlePhasePhotoUpload(
+    item: PeriodicDueItem,
+    phase: PhotoPhase,
+  ): Promise<void> {
+    const asset = await pickTaskPhoto();
+    if (!asset) return;
+
+    setUploadingPhaseFor({ itemId: item.id, phase });
+    try {
+      let gpsLat: number | undefined;
+      let gpsLng: number | undefined;
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          gpsLat = loc.coords.latitude;
+          gpsLng = loc.coords.longitude;
+        }
+      } catch {
+        // GPS optional
+      }
+
+      const formData = new FormData();
+      formData.append('photo', {
+        uri: asset.uri,
+        name: asset.fileName ?? `photo_${Date.now()}.jpg`,
+        type: asset.mimeType ?? 'image/jpeg',
+      } as unknown as Blob);
+      formData.append('phase', phase);
+      formData.append('clientOperationId', generateClientId());
+      formData.append('capturedAt', new Date().toISOString());
+      if (gpsLat != null) formData.append('gpsLat', String(gpsLat));
+      if (gpsLng != null) formData.append('gpsLng', String(gpsLng));
+
+      await apiService.postMultipart(
+        `/tasks/instances/${item.id}/phase-photos`,
+        formData,
+      );
+      await loadDueToday('silent');
+    } catch (e) {
+      Alert.alert('Error al subir foto', e instanceof Error ? e.message : 'Error desconocido');
+    } finally {
+      setUploadingPhaseFor(null);
     }
   }
 
@@ -642,10 +741,13 @@ export default function TareasScreen() {
               selectedSubzoneId={selectedSubzoneId}
               markingId={markingId}
               uploadingPhotoForItemId={uploadingPhotoForItemId}
+              uploadingPhaseFor={uploadingPhaseFor}
               isBulkMarking={isBulkMarking}
               selectionMode={selectionMode}
               selectedIds={selectedIds}
               isRefreshing={isRefreshing}
+              perTaskPhotosEnabled={perTaskPhotosEnabled}
+              isBdaMode={isBdaMode}
               onBack={() => {
                 clearSelection();
                 setSelectedZoneId(null);
@@ -670,6 +772,7 @@ export default function TareasScreen() {
               }}
               onNotDone={handleMarkNotDone}
               onAddPhoto={handlePhotoUpload}
+              onAddPhasePhoto={handlePhasePhotoUpload}
             />
           ) : (
             <ZoneCardGrid
@@ -830,10 +933,13 @@ function ZoneDetailView({
   selectedSubzoneId,
   markingId,
   uploadingPhotoForItemId,
+  uploadingPhaseFor,
   isBulkMarking,
   selectionMode,
   selectedIds,
   isRefreshing,
+  perTaskPhotosEnabled = true,
+  isBdaMode = false,
   onBack,
   onSelectSubzone,
   onRefresh,
@@ -845,16 +951,20 @@ function ZoneDetailView({
   onDone,
   onNotDone,
   onAddPhoto,
+  onAddPhasePhoto,
 }: {
   zone: ZoneGroup;
   activeSubzone: SubzoneGroup | null;
   selectedSubzoneId: string | null;
   markingId: string | null;
   uploadingPhotoForItemId: string | null;
+  uploadingPhaseFor: { itemId: string; phase: PhotoPhase } | null;
   isBulkMarking: boolean;
   selectionMode: boolean;
   selectedIds: Set<string>;
   isRefreshing: boolean;
+  perTaskPhotosEnabled?: boolean;
+  isBdaMode?: boolean;
   onBack: () => void;
   onSelectSubzone: (subId: string) => void;
   onRefresh: () => void;
@@ -866,8 +976,9 @@ function ZoneDetailView({
   onDone: (item: PeriodicDueItem) => void;
   onNotDone: (item: PeriodicDueItem) => void;
   onAddPhoto: (item: PeriodicDueItem) => void;
+  onAddPhasePhoto: (item: PeriodicDueItem, phase: PhotoPhase) => void;
 }) {
-  const zoneProgress = countProgress(zone.tasks);
+  const zoneProgress = countProgress(zone.tasks, perTaskPhotosEnabled);
   const subzoneTasks = activeSubzone?.tasks ?? [];
   const pendingInSubzone = subzoneTasks.filter(isTaskPending);
   const bulkSelectablePending = subzoneTasks.filter(isBulkSelectable);
@@ -921,7 +1032,7 @@ function ZoneDetailView({
         contentContainerStyle={styles.subzoneTabs}
       >
         {zone.subzones.map((sub) => {
-          const { resolved, total } = countProgress(sub.tasks);
+          const { resolved, total } = countProgress(sub.tasks, perTaskPhotosEnabled);
           const isActive = sub.subId === selectedSubzoneId;
 
           return (
@@ -987,12 +1098,18 @@ function ZoneDetailView({
             isMarking={markingId === item.id || isBulkMarking}
             isMarkingThisItem={markingId === item.id}
             isUploadingPhoto={uploadingPhotoForItemId === item.id}
+            uploadingPhase={
+              uploadingPhaseFor?.itemId === item.id ? uploadingPhaseFor.phase : null
+            }
             selectionMode={selectionMode}
             isSelected={selectedIds.has(item.id)}
+            perTaskPhotosEnabled={perTaskPhotosEnabled}
+            isBdaMode={isBdaMode}
             onToggleSelect={() => onToggleSelectItem(item)}
             onDone={() => onDone(item)}
             onNotDone={() => onNotDone(item)}
             onAddPhoto={() => onAddPhoto(item)}
+            onAddPhasePhoto={(phase) => onAddPhasePhoto(item, phase)}
           />
         ))}
 
@@ -1030,23 +1147,31 @@ function TaskRow({
   isMarking,
   isMarkingThisItem,
   isUploadingPhoto,
+  uploadingPhase = null,
   selectionMode,
   isSelected,
+  perTaskPhotosEnabled = true,
+  isBdaMode = false,
   onToggleSelect,
   onDone,
   onNotDone,
   onAddPhoto,
+  onAddPhasePhoto,
 }: {
   item: PeriodicDueItem;
   isMarking: boolean;
   isMarkingThisItem: boolean;
   isUploadingPhoto: boolean;
+  uploadingPhase?: PhotoPhase | null;
   selectionMode: boolean;
   isSelected: boolean;
+  perTaskPhotosEnabled?: boolean;
+  isBdaMode?: boolean;
   onToggleSelect: () => void;
   onDone: () => void;
   onNotDone: () => void;
   onAddPhoto: () => void;
+  onAddPhasePhoto?: (phase: PhotoPhase) => void;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const wasMarkingThisItem = useRef(false);
@@ -1056,9 +1181,8 @@ function TaskRow({
   const isNotDone = execStatus === 'NOT_DONE';
   const canChangeNotDoneReason = isNotDone && item.task.requiresRejectionReason;
   const disableNotDoneBtn = isEditing && isNotDone && !canChangeNotDoneReason;
-  const photoCount = item.execution?.photos?.length ?? 0;
-  const needsPhoto = isDoneWithPendingPhoto(item);
-  const statusLabel = getTaskStatusLabel(item);
+  const needsPhoto = isDoneWithPendingPhoto(item, perTaskPhotosEnabled);
+  const statusLabel = getTaskStatusLabel(item, perTaskPhotosEnabled);
   const showMarkActions = !isResolved || isEditing;
   const requiresIndividualCompletion =
     isTaskPending(item) && hasTaskCustomFields(item.task.customFields);
@@ -1181,7 +1305,7 @@ function TaskRow({
             </View>
           ) : (
             <View style={styles.actions}>
-              {needsPhoto && (
+              {perTaskPhotosEnabled && needsPhoto && (
                 <TouchableOpacity
                   style={styles.btnPhoto}
                   onPress={onAddPhoto}
@@ -1204,27 +1328,45 @@ function TaskRow({
     </>
   );
 
+  const phaseSection =
+    isBdaMode && !selectionMode && onAddPhasePhoto ? (
+      <PhasePhotosSection
+        photos={item.phasePhotos ?? []}
+        canEdit={!isResolved || isEditing}
+        uploadingPhase={uploadingPhase}
+        onAddPhoto={onAddPhasePhoto}
+        title="Antes / durante / después"
+        compact
+      />
+    ) : null;
+
   if (canSelect) {
     return (
-      <TouchableOpacity
-        style={[styles.taskRow, isSelected && styles.taskRowSelected]}
-        onPress={onToggleSelect}
-        activeOpacity={0.85}
-      >
-        {rowContent}
-      </TouchableOpacity>
+      <View>
+        <TouchableOpacity
+          style={[styles.taskRow, isSelected && styles.taskRowSelected]}
+          onPress={onToggleSelect}
+          activeOpacity={0.85}
+        >
+          {rowContent}
+        </TouchableOpacity>
+        {phaseSection}
+      </View>
     );
   }
 
   return (
-    <View
-      style={[
-        styles.taskRow,
-        needsPhoto && styles.taskRowPhotoPending,
-        requiresIndividualCompletion && selectionMode && styles.taskRowIndividual,
-      ]}
-    >
-      {rowContent}
+    <View>
+      <View
+        style={[
+          styles.taskRow,
+          needsPhoto && styles.taskRowPhotoPending,
+          requiresIndividualCompletion && selectionMode && styles.taskRowIndividual,
+        ]}
+      >
+        {rowContent}
+      </View>
+      {phaseSection}
     </View>
   );
 }

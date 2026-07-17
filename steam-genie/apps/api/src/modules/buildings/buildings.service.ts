@@ -324,6 +324,9 @@ export class BuildingsService {
         ...(dto.requireGpsValidation !== undefined
           ? { requireGpsValidation: dto.requireGpsValidation }
           : {}),
+        ...(dto.photoEvidenceMode !== undefined
+          ? { photoEvidenceMode: dto.photoEvidenceMode }
+          : {}),
       },
     });
   }
@@ -342,6 +345,9 @@ export class BuildingsService {
         ...(dto.gpsRadiusM !== undefined ? { gpsRadiusM: dto.gpsRadiusM } : {}),
         ...(dto.requireGpsValidation !== undefined
           ? { requireGpsValidation: dto.requireGpsValidation }
+          : {}),
+        ...(dto.photoEvidenceMode !== undefined
+          ? { photoEvidenceMode: dto.photoEvidenceMode }
           : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       },

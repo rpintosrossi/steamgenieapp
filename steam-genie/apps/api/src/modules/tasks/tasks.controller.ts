@@ -34,6 +34,7 @@ import { QueryRecurringWorkGroupsDto } from './dto/query-recurring-work-groups.d
 import { QueryRecurringWorkGroupTasksDto } from './dto/query-recurring-work-group-tasks.dto';
 import { MarkTaskDto } from '../service-executions/dto/mark-task.dto';
 import { UploadPhotoDto } from '../service-executions/dto/upload-photo.dto';
+import { UploadPhasePhotoDto } from '../service-executions/dto/upload-phase-photo.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
 
 const ALLOWED_MIME_TYPES = [
@@ -120,6 +121,44 @@ export class TasksController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.tasksService.uploadPeriodicPhoto(instanceId, file, dto, user);
+  }
+
+  @Post('instances/:instanceId/phase-photos')
+  @RequiredRoles('admin', 'manager', 'cleaner')
+  @UseInterceptors(
+    FileInterceptor('photo', {
+      storage: memoryStorage(),
+      limits: { fileSize: 8 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+          cb(null, true);
+        } else {
+          cb(
+            new BadRequestException(
+              `Invalid file type "${file.mimetype}". Allowed: ${ALLOWED_MIME_TYPES.join(', ')}`,
+            ),
+            false,
+          );
+        }
+      },
+    }),
+  )
+  uploadPeriodicPhasePhoto(
+    @Param('instanceId', ParseUUIDPipe) instanceId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() dto: UploadPhasePhotoDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.tasksService.uploadPeriodicPhasePhoto(instanceId, file, dto, user);
+  }
+
+  @Get('instances/:instanceId/phase-photos')
+  @RequiredRoles('admin', 'manager', 'cleaner', 'client')
+  getPeriodicPhasePhotos(
+    @Param('instanceId', ParseUUIDPipe) instanceId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.tasksService.getPeriodicPhasePhotos(instanceId, user);
   }
 
   @Get()

@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { TaskFrequency } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { TasksService } from '../tasks/tasks.service';
+import { GoogleGeocodingService } from '../geocoding/google-geocoding.service';
 import {
   buildImportTemplateBuffer,
   frequencyLabel,
@@ -34,6 +35,7 @@ export class BulkImportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tasksService: TasksService,
+    private readonly googleGeocoding: GoogleGeocodingService,
   ) {}
 
   async generateTemplateForBuilding(
@@ -648,14 +650,18 @@ export class BulkImportService {
           Number.isFinite(longitude);
 
         if (!options.skipAddressLookup && !hasCoords && address) {
-          const geo = await this.geocodeArgentinaAddress(address, province, city);
-          if (geo) {
-            latitude = geo.lat;
-            longitude = geo.lon;
-            if (!province && geo.province) province = geo.province;
-            if (!city && geo.city) city = geo.city;
-            if (geo.address) address = geo.address;
-            geocoded = true;
+          try {
+            const geo = await this.googleGeocoding.geocodeAddress(address, province, city);
+            if (geo) {
+              latitude = geo.lat;
+              longitude = geo.lon;
+              if (!province && geo.province) province = geo.province;
+              if (!city && geo.city) city = geo.city;
+              if (geo.streetLine) address = geo.streetLine;
+              geocoded = true;
+            }
+          } catch {
+            // Sin API key o error de Google: crear sin coordenadas.
           }
         }
 
@@ -714,63 +720,4 @@ export class BulkImportService {
     };
   }
 
-  private async geocodeArgentinaAddress(
-    address: string,
-    province?: string,
-    city?: string,
-  ): Promise<{
-    lat: number;
-    lon: number;
-    address?: string;
-    city?: string;
-    province?: string;
-  } | null> {
-    const queryParts = [address, city, province].filter(Boolean);
-    const direccion = queryParts.join(', ');
-    if (direccion.trim().length < 3) return null;
-
-    try {
-      const params = new URLSearchParams({
-        direccion,
-        max: '1',
-        campos: 'completo',
-      });
-      if (province) params.set('provincia', province);
-
-      const res = await fetch(
-        `https://apis.datos.gob.ar/georef/api/direcciones?${params.toString()}`,
-      );
-      if (!res.ok) return null;
-
-      const json = (await res.json()) as {
-        direcciones?: Array<{
-          nomenclatura?: string;
-          provincia?: { nombre?: string };
-          localidad_censal?: { nombre?: string | null };
-          departamento?: { nombre?: string | null };
-          ubicacion?: { lat?: number | null; lon?: number | null };
-        }>;
-      };
-
-      const first = json.direcciones?.[0];
-      const lat = first?.ubicacion?.lat;
-      const lon = first?.ubicacion?.lon;
-      if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) {
-        return null;
-      }
-
-      return {
-        lat,
-        lon,
-        address: first?.nomenclatura?.trim() || address,
-        city:
-          first?.localidad_censal?.nombre ||
-          first?.departamento?.nombre ||
-          city,
-        province: first?.provincia?.nombre || province,
-      };
-    } catch {
-      return null;
-    }
-  }
 }

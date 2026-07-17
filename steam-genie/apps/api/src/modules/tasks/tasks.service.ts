@@ -6,11 +6,18 @@ import {
   ConflictException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { TaskFrequency, PeriodicTaskInstanceStatus, TaskExecutionStatus } from '@prisma/client';
+import {
+  TaskFrequency,
+  PeriodicTaskInstanceStatus,
+  TaskExecutionStatus,
+  PhotoEvidenceMode,
+  PhotoPhase,
+} from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StorageService } from '../../infrastructure/storage/storage.service';
 import { MarkTaskDto } from '../service-executions/dto/mark-task.dto';
 import { UploadPhotoDto } from '../service-executions/dto/upload-photo.dto';
+import { UploadPhasePhotoDto } from '../service-executions/dto/upload-phase-photo.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
 import { QueryTasksDto } from './dto/query-tasks.dto';
 import { CreateTaskDto } from './dto/create-task.dto';
@@ -73,7 +80,7 @@ const TASK_SELECT = {
 const TASK_LIST_SELECT = {
   ...TASK_SELECT,
   category: { select: { id: true, name: true } },
-  building: { select: { id: true, name: true } },
+  building: { select: { id: true, name: true, photoEvidenceMode: true } },
   zone: {
     select: {
       id: true,
@@ -82,6 +89,12 @@ const TASK_LIST_SELECT = {
     },
   },
   subzone: { select: { id: true, name: true } },
+};
+
+const PHASE_PHOTO_LABELS: Record<PhotoPhase, string> = {
+  BEFORE: 'antes',
+  DURING: 'durante',
+  AFTER: 'después',
 };
 
 const TASK_CUSTOM_FIELDS_SELECT = {
@@ -783,6 +796,19 @@ export class TasksService {
       where: { periodicTaskInstanceId: instanceId },
     });
 
+    const building = await this.prisma.building.findFirst({
+      where: { id: instance.task.buildingId, deletedAt: null },
+      select: { photoEvidenceMode: true },
+    });
+    const photoEvidenceMode = building?.photoEvidenceMode ?? PhotoEvidenceMode.PER_TASK;
+
+    if (
+      dto.status === TaskExecutionStatus.DONE &&
+      photoEvidenceMode === PhotoEvidenceMode.BEFORE_DURING_AFTER
+    ) {
+      await this.assertPeriodicPhasePhotosComplete(instanceId);
+    }
+
     if (
       dto.status === TaskExecutionStatus.NOT_DONE &&
       instance.task.requiresRejectionReason &&
@@ -971,7 +997,116 @@ export class TasksService {
     return this.formatPhoto(photo);
   }
 
+  async uploadPeriodicPhasePhoto(
+    instanceId: string,
+    file: Express.Multer.File,
+    dto: UploadPhasePhotoDto,
+    user: AuthUser,
+  ) {
+    if (!file) throw new BadRequestException('Photo file is required (field: photo)');
+
+    if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+      throw new BadRequestException(
+        `Invalid file type "${file.mimetype}". Allowed: ${ALLOWED_MIME_TYPES.join(', ')}`,
+      );
+    }
+
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      throw new BadRequestException(
+        `File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum: 8 MB.`,
+      );
+    }
+
+    if (!Object.values(PhotoPhase).includes(dto.phase)) {
+      throw new BadRequestException(`Invalid phase "${dto.phase}"`);
+    }
+
+    const instance = await this.prisma.periodicTaskInstance.findUnique({
+      where: { id: instanceId },
+      include: { task: { select: { buildingId: true, name: true } } },
+    });
+    if (!instance) throw new NotFoundException('Periodic task instance not found');
+
+    await this.assertBuildingAccess(user.id, instance.task.buildingId);
+    await this.assertActiveAttendance(user.id, instance.task.buildingId);
+
+    if (dto.clientOperationId) {
+      const existing = await this.prisma.periodicTaskInstancePhoto.findFirst({
+        where: { clientOperationId: dto.clientOperationId },
+      });
+      if (existing) return this.formatPhasePhoto(existing);
+    }
+
+    const key = this.storage.generateKey(file.originalname, file.mimetype);
+    await this.storage.upload(key, file.buffer, file.mimetype);
+
+    const photo = await this.prisma.periodicTaskInstancePhoto.create({
+      data: {
+        periodicTaskInstanceId: instanceId,
+        phase: dto.phase,
+        storageKey: key,
+        storageBucket: this.storage.storageBucketName,
+        originalFilename: file.originalname,
+        mimeType: file.mimetype,
+        fileSizeBytes: file.size,
+        capturedAt: dto.capturedAt ? new Date(dto.capturedAt) : null,
+        gpsLat: dto.gpsLat ?? null,
+        gpsLng: dto.gpsLng ?? null,
+        deviceId: dto.deviceId ?? null,
+        clientOperationId: dto.clientOperationId ?? null,
+        uploadedById: user.id,
+      },
+    });
+
+    return this.formatPhasePhoto(photo);
+  }
+
+  async getPeriodicPhasePhotos(instanceId: string, user: AuthUser) {
+    const instance = await this.prisma.periodicTaskInstance.findUnique({
+      where: { id: instanceId },
+      include: { task: { select: { buildingId: true } } },
+    });
+    if (!instance) throw new NotFoundException('Periodic task instance not found');
+
+    await this.assertBuildingAccess(user.id, instance.task.buildingId);
+
+    const photos = await this.prisma.periodicTaskInstancePhoto.findMany({
+      where: { periodicTaskInstanceId: instanceId, deletedAt: null },
+      orderBy: [{ phase: 'asc' }, { createdAt: 'asc' }],
+      select: {
+        id: true,
+        phase: true,
+        storageKey: true,
+        originalFilename: true,
+        mimeType: true,
+        fileSizeBytes: true,
+        capturedAt: true,
+        uploadedAt: true,
+        uploadedBy: { select: { id: true, fullName: true } },
+      },
+    });
+
+    return photos.map((p) => this.formatPhasePhoto(p));
+  }
+
   // ─── PRIVATE HELPERS ───────────────────────────────────────────────────────
+
+  private async assertPeriodicPhasePhotosComplete(instanceId: string) {
+    const phasePhotos = await this.prisma.periodicTaskInstancePhoto.findMany({
+      where: { periodicTaskInstanceId: instanceId, deletedAt: null },
+      select: { phase: true },
+    });
+    const phasesPresent = new Set(phasePhotos.map((p) => p.phase));
+    const missingPhases = (
+      [PhotoPhase.BEFORE, PhotoPhase.DURING, PhotoPhase.AFTER] as const
+    ).filter((phase) => !phasesPresent.has(phase));
+    if (missingPhases.length > 0) {
+      throw new ConflictException(
+        `Faltan fotos de evidencia: ${missingPhases.map((p) => PHASE_PHOTO_LABELS[p]).join(', ')}. ` +
+          'Se requiere al menos una foto en cada fase (antes, durante y después).',
+      );
+    }
+  }
 
   private isTaskDueToday(frequency: TaskFrequency, startDate: Date, today: Date): boolean {
     const start = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate()));
@@ -1342,10 +1477,43 @@ export class TasksService {
       executions.map((execution) => [execution.periodicTaskInstanceId!, execution]),
     );
 
+    const phasePhotos =
+      includePhotos && realIds.length > 0
+        ? await this.prisma.periodicTaskInstancePhoto.findMany({
+            where: { periodicTaskInstanceId: { in: realIds }, deletedAt: null },
+            orderBy: [{ phase: 'asc' }, { createdAt: 'asc' }],
+            select: {
+              id: true,
+              periodicTaskInstanceId: true,
+              phase: true,
+              storageKey: true,
+              originalFilename: true,
+              mimeType: true,
+              fileSizeBytes: true,
+              capturedAt: true,
+              uploadedAt: true,
+              uploadedBy: { select: { id: true, fullName: true } },
+            },
+          })
+        : [];
+
+    const phasePhotosByInstanceId = new Map<string, typeof phasePhotos>();
+    for (const photo of phasePhotos) {
+      const list = phasePhotosByInstanceId.get(photo.periodicTaskInstanceId) ?? [];
+      list.push(photo);
+      phasePhotosByInstanceId.set(photo.periodicTaskInstanceId, list);
+    }
+
     return instances.map((instance) => {
       const execution = executionByInstanceId.get(instance.id);
+      const instancePhasePhotos = includePhotos
+        ? (phasePhotosByInstanceId.get(instance.id) ?? []).map((photo) =>
+            this.formatPhasePhoto(photo),
+          )
+        : [];
       return {
         ...instance,
+        phasePhotos: instancePhasePhotos,
         execution: execution
           ? {
               id: execution.id,
@@ -1404,7 +1572,11 @@ export class TasksService {
       name: string;
       frequency: TaskFrequency;
       requiresPhoto: boolean;
-      building: { id: string; name: string } | null;
+      building: {
+        id: string;
+        name: string;
+        photoEvidenceMode?: PhotoEvidenceMode;
+      } | null;
       zone: {
         id: string;
         name: string;
@@ -1419,6 +1591,7 @@ export class TasksService {
       periodEnd: Date;
       status: PeriodicTaskInstanceStatus;
       completedAt: Date | null;
+      phasePhotos?: ReturnType<TasksService['formatPhasePhoto']>[];
       execution: {
         id: string;
         status: TaskExecutionStatus;
@@ -1454,7 +1627,11 @@ export class TasksService {
       taskName: task.name,
       frequency: task.frequency,
       requiresPhoto: task.requiresPhoto,
-      building: task.building,
+      photoEvidenceMode:
+        task.building?.photoEvidenceMode ?? PhotoEvidenceMode.PER_TASK,
+      building: task.building
+        ? { id: task.building.id, name: task.building.name }
+        : null,
       floor,
       zone,
       subzone: task.subzone,
@@ -1465,6 +1642,7 @@ export class TasksService {
       displayStatus,
       instanceStatus: instance.status,
       completedAt: instance.completedAt?.toISOString() ?? null,
+      phasePhotos: instance.phasePhotos ?? [],
       execution: instance.execution,
     };
   }
@@ -1574,6 +1752,25 @@ export class TasksService {
       capturedAt: p.capturedAt?.toISOString() ?? null,
       uploadedAt: p.uploadedAt.toISOString(),
       uploadedBy: p.uploadedBy ?? null,
+    };
+  }
+
+  private formatPhasePhoto(
+    p: {
+      id: string;
+      phase: PhotoPhase;
+      storageKey: string;
+      originalFilename?: string | null;
+      mimeType?: string | null;
+      fileSizeBytes?: number | null;
+      capturedAt?: Date | null;
+      uploadedAt: Date;
+      uploadedBy?: { id: string; fullName: string } | null;
+    },
+  ) {
+    return {
+      ...this.formatPhoto(p),
+      phase: p.phase,
     };
   }
 }

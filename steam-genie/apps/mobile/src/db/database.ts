@@ -9,7 +9,7 @@ export function getDatabase(): SQLite.SQLiteDatabase {
   return db;
 }
 
-const CURRENT_DB_VERSION = 2;
+const CURRENT_DB_VERSION = 3;
 
 export async function initDatabase(): Promise<void> {
   const database = getDatabase();
@@ -46,8 +46,11 @@ export async function initDatabase(): Promise<void> {
       CREATE TABLE photo_queue (
         id                    TEXT PRIMARY KEY,
         client_operation_id   TEXT UNIQUE NOT NULL,
-        service_execution_id  TEXT NOT NULL,
-        work_order_task_id    TEXT NOT NULL,
+        photo_kind            TEXT NOT NULL DEFAULT 'task',
+        service_execution_id  TEXT,
+        work_order_task_id    TEXT,
+        periodic_instance_id  TEXT,
+        phase                 TEXT,
         local_uri             TEXT NOT NULL,
         mime_type             TEXT NOT NULL DEFAULT 'image/jpeg',
         captured_at           TEXT,

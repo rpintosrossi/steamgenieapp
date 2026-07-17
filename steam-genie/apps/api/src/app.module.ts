@@ -19,6 +19,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { TaskPhotosModule } from './modules/task-photos/task-photos.module';
 import { BulkImportModule } from './modules/bulk-import/bulk-import.module';
+import { GeocodingModule } from './modules/geocoding/geocoding.module';
 import { RejectionReasonsModule } from './modules/rejection-reasons/rejection-reasons.module';
 import { StockModule } from './modules/stock/stock.module';
 import { StockLogisticsModule } from './modules/stock-logistics/stock-logistics.module';
@@ -55,6 +56,7 @@ import { TimelineEventsModule } from './common/events/timeline-events.module';
     AuditModule,
     TaskPhotosModule,
     BulkImportModule,
+    GeocodingModule,
     RejectionReasonsModule,
     StockModule,
     StockLogisticsModule,

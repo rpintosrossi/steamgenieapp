@@ -90,6 +90,17 @@ enum PeriodicTaskInstanceStatus {
   EXPIRED
 }
 
+enum PhotoEvidenceMode {
+  PER_TASK
+  BEFORE_DURING_AFTER
+}
+
+enum PhotoPhase {
+  BEFORE
+  DURING
+  AFTER
+}
+
 enum IntegrationLogStatus {
   RECEIVED
   PARSED
@@ -187,6 +198,8 @@ model User {
   serviceExecutionParticipants    ServiceExecutionParticipant[]
   taskExecutions                  TaskExecutionRecord[]
   uploadedPhotos                  TaskPhoto[]
+  uploadedServiceExecutionPhotos  ServiceExecutionPhoto[]
+  uploadedPeriodicInstancePhotos  PeriodicTaskInstancePhoto[]
   correctedAttendances            Attendance[]  @relation("CorrectedBy")
   resolvedConflicts SyncConflict[]  @relation("SyncConflictResolvedBy")
   ownedConflicts    SyncConflict[]  @relation("SyncConflictUser")
@@ -278,6 +291,8 @@ model Building {
   gpsRadiusM           Int      @default(200)
   /// If true, check-in/out must be within the building GPS radius.
   requireGpsValidation Boolean  @default(true)
+  /// PER_TASK = photo per checklist task (default). BEFORE_DURING_AFTER = phase photos on the service/instance.
+  photoEvidenceMode    PhotoEvidenceMode @default(PER_TASK)
   isActive             Boolean  @default(true)
   deletedAt   DateTime?
   createdAt   DateTime @default(now())
@@ -877,11 +892,40 @@ model ServiceExecution {
 
   taskExecutions TaskExecutionRecord[]
   participants   ServiceExecutionParticipant[]
+  phasePhotos    ServiceExecutionPhoto[]
 
   // Enforces one shared ServiceExecution per WorkOrder at the DB level,
   // preventing duplicate creations under concurrent /start requests.
   @@unique([workOrderId])
   @@map("service_executions")
+}
+
+model ServiceExecutionPhoto {
+  id                 String           @id @default(uuid()) @db.Uuid
+  serviceExecution   ServiceExecution @relation(fields: [serviceExecutionId], references: [id])
+  serviceExecutionId String           @db.Uuid
+  phase              PhotoPhase
+  storageKey         String           @db.VarChar(500)
+  storageBucket      String           @db.VarChar(100) @default("local")
+  originalFilename   String?          @db.VarChar(500)
+  mimeType           String?          @db.VarChar(100)
+  fileSizeBytes      Int?
+  widthPx            Int?
+  heightPx           Int?
+  capturedAt         DateTime?
+  uploadedAt         DateTime         @default(now())
+  gpsLat             Decimal?         @db.Decimal(10, 7)
+  gpsLng             Decimal?         @db.Decimal(10, 7)
+  deviceId           String?          @db.VarChar(200)
+  clientOperationId  String?          @unique @db.VarChar(100)
+  uploadedBy         User             @relation(fields: [uploadedById], references: [id])
+  uploadedById       String           @db.Uuid
+  deletedAt          DateTime?
+  deletedBy          String?          @db.Uuid
+  createdAt          DateTime         @default(now())
+
+  @@index([serviceExecutionId, phase, deletedAt])
+  @@map("service_execution_photos")
 }
 
 // One row per worker who participates in a shared ServiceExecution.
@@ -993,9 +1037,38 @@ model PeriodicTaskInstance {
 
   // Executions are accessed via TaskExecutionRecord.periodicTaskInstanceId
   taskExecutions TaskExecutionRecord[]
+  phasePhotos    PeriodicTaskInstancePhoto[]
 
   @@unique([taskId, periodLabel])
   @@map("periodic_task_instances")
+}
+
+model PeriodicTaskInstancePhoto {
+  id                     String               @id @default(uuid()) @db.Uuid
+  periodicTaskInstance   PeriodicTaskInstance @relation(fields: [periodicTaskInstanceId], references: [id])
+  periodicTaskInstanceId String               @db.Uuid
+  phase                  PhotoPhase
+  storageKey             String               @db.VarChar(500)
+  storageBucket          String               @db.VarChar(100) @default("local")
+  originalFilename       String?              @db.VarChar(500)
+  mimeType               String?              @db.VarChar(100)
+  fileSizeBytes          Int?
+  widthPx                Int?
+  heightPx               Int?
+  capturedAt             DateTime?
+  uploadedAt             DateTime             @default(now())
+  gpsLat                 Decimal?             @db.Decimal(10, 7)
+  gpsLng                 Decimal?             @db.Decimal(10, 7)
+  deviceId               String?              @db.VarChar(200)
+  clientOperationId      String?              @unique @db.VarChar(100)
+  uploadedBy             User                 @relation(fields: [uploadedById], references: [id])
+  uploadedById           String               @db.Uuid
+  deletedAt              DateTime?
+  deletedBy              String?              @db.Uuid
+  createdAt              DateTime             @default(now())
+
+  @@index([periodicTaskInstanceId, phase, deletedAt])
+  @@map("periodic_task_instance_photos")
 }
 
 // ─── Sync Operations ──────────────────────────────────────────────────────────

@@ -118,15 +118,24 @@ class SyncManager {
         if (photo.gpsLng != null) formData.append('gpsLng', String(photo.gpsLng));
         if (photo.deviceId) formData.append('deviceId', photo.deviceId);
         formData.append('clientOperationId', photo.clientOperationId);
+        if (photo.phase) formData.append('phase', photo.phase);
 
-        const res = await fetch(
-          `${API_BASE_URL}/service-executions/${photo.serviceExecutionId}/work-order-tasks/${photo.workOrderTaskId}/photos`,
-          {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${accessToken}` },
-            body: formData,
-          },
-        );
+        let url: string;
+        if (photo.photoKind === 'service_phase' && photo.serviceExecutionId) {
+          url = `${API_BASE_URL}/service-executions/${photo.serviceExecutionId}/phase-photos`;
+        } else if (photo.photoKind === 'periodic_phase' && photo.periodicInstanceId) {
+          url = `${API_BASE_URL}/tasks/instances/${photo.periodicInstanceId}/phase-photos`;
+        } else if (photo.serviceExecutionId && photo.workOrderTaskId) {
+          url = `${API_BASE_URL}/service-executions/${photo.serviceExecutionId}/work-order-tasks/${photo.workOrderTaskId}/photos`;
+        } else {
+          throw new Error('Photo queue item missing upload target');
+        }
+
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${accessToken}` },
+          body: formData,
+        });
 
         if (res.ok || res.status === 409) {
           // 409 = conflict (already uploaded via clientOperationId) → treat as success

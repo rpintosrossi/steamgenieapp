@@ -86,6 +86,7 @@ export class SyncService {
         longitude: true,
         gpsRadiusM: true,
         requireGpsValidation: true,
+        photoEvidenceMode: true,
       },
     });
     if (!building) throw new NotFoundException('Building not found or inactive');

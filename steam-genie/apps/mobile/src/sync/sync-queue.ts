@@ -1,4 +1,5 @@
 import { getDatabase } from '../db/database';
+import type { PhotoPhase } from '../utils/camera';
 
 export type SyncOperationType =
   | 'CHECK_IN'
@@ -22,11 +23,16 @@ export interface SyncQueueItem {
   createdAt: string;
 }
 
+export type PhotoQueueKind = 'task' | 'service_phase' | 'periodic_phase';
+
 export interface PhotoQueueItem {
   id: string;
   clientOperationId: string;
-  serviceExecutionId: string;
-  workOrderTaskId: string;
+  photoKind: PhotoQueueKind;
+  serviceExecutionId: string | null;
+  workOrderTaskId: string | null;
+  periodicInstanceId: string | null;
+  phase: PhotoPhase | null;
   localUri: string;
   mimeType: string;
   capturedAt: string | null;
@@ -133,14 +139,17 @@ export class PhotoQueue {
   async enqueue(item: Omit<PhotoQueueItem, 'attempts' | 'lastError' | 'status'>): Promise<void> {
     await this.db.runAsync(
       `INSERT OR IGNORE INTO photo_queue
-         (id, client_operation_id, service_execution_id, work_order_task_id,
-          local_uri, mime_type, captured_at, gps_lat, gps_lng, device_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, client_operation_id, photo_kind, service_execution_id, work_order_task_id,
+          periodic_instance_id, phase, local_uri, mime_type, captured_at, gps_lat, gps_lng, device_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         item.id,
         item.clientOperationId,
-        item.serviceExecutionId,
-        item.workOrderTaskId,
+        item.photoKind,
+        item.serviceExecutionId ?? null,
+        item.workOrderTaskId ?? null,
+        item.periodicInstanceId ?? null,
+        item.phase ?? null,
         item.localUri,
         item.mimeType,
         item.capturedAt ?? null,
@@ -158,8 +167,11 @@ export class PhotoQueue {
     return rows.map((row) => ({
       id: String(row.id),
       clientOperationId: String(row.client_operation_id),
-      serviceExecutionId: String(row.service_execution_id),
-      workOrderTaskId: String(row.work_order_task_id),
+      photoKind: (row.photo_kind ? String(row.photo_kind) : 'task') as PhotoQueueKind,
+      serviceExecutionId: row.service_execution_id ? String(row.service_execution_id) : null,
+      workOrderTaskId: row.work_order_task_id ? String(row.work_order_task_id) : null,
+      periodicInstanceId: row.periodic_instance_id ? String(row.periodic_instance_id) : null,
+      phase: row.phase ? (String(row.phase) as PhotoPhase) : null,
       localUri: String(row.local_uri),
       mimeType: String(row.mime_type),
       capturedAt: row.captured_at ? String(row.captured_at) : null,

@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from 'react';
 import { api } from '../lib/api-client';
-import type { BuildingDetail } from '../lib/types';
+import type { BuildingDetail, PhotoEvidenceMode } from '../lib/types';
 import {
   BuildingLocationFields,
   type BuildingLocationFieldsValue,
@@ -44,6 +44,9 @@ export function BuildingSettingsCard({
     requireGpsValidation: building.requireGpsValidation !== false,
   });
   const [isActive, setIsActive] = useState(building.isActive !== false);
+  const [photoEvidenceMode, setPhotoEvidenceMode] = useState<PhotoEvidenceMode>(
+    building.photoEvidenceMode ?? 'PER_TASK',
+  );
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
@@ -68,6 +71,7 @@ export function BuildingSettingsCard({
         city: location.city.trim() || null,
         province: location.province.trim() || null,
         requireGpsValidation: location.requireGpsValidation,
+        photoEvidenceMode,
         latitude: lat ?? null,
         longitude: lng ?? null,
         gpsRadiusM: radius,
@@ -88,13 +92,29 @@ export function BuildingSettingsCard({
         Configuración
       </h2>
       <p className="muted" style={{ marginTop: 0 }}>
-        Datos del edificio, provincia/ciudad y ubicación para validación GPS.
+        Datos del edificio, provincia/ciudad, ubicación GPS y modo de evidencia fotográfica.
       </p>
 
       <form onSubmit={handleSubmit} className="stack">
         <div className="form-field">
           <label>Nombre *</label>
           <input value={name} onChange={(e) => setName(e.target.value)} required />
+        </div>
+
+        <div className="form-field">
+          <label>Modo de evidencia fotográfica</label>
+          <select
+            value={photoEvidenceMode}
+            onChange={(e) => setPhotoEvidenceMode(e.target.value as PhotoEvidenceMode)}
+          >
+            <option value="PER_TASK">Por tarea (foto en cada tarea que lo requiera)</option>
+            <option value="BEFORE_DURING_AFTER">
+              Antes, durante y después (fotos generales del servicio / instancia)
+            </option>
+          </select>
+          <p className="muted" style={{ margin: '6px 0 0', fontSize: 13 }}>
+            En el modo por fases se exige al menos una foto en cada etapa para completar.
+          </p>
         </div>
 
         <BuildingLocationFields

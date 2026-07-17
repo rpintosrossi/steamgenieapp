@@ -185,101 +185,85 @@ export async function fetchArgentinaLocalities(
   }
 }
 
-export type ArgentinaAddressSuggestion = {
-  id: string;
-  label: string;
-  streetLine: string;
-  provinceId: string;
-  provinceName: string;
-  cityName: string;
-  lat: number;
-  lon: number;
-};
-
-type GeorefDireccion = {
-  nomenclatura?: string;
-  calle?: { nombre?: string | null };
-  altura?: { valor?: number | string | null };
-  provincia?: { id?: string; nombre?: string };
-  localidad_censal?: { nombre?: string | null };
-  departamento?: { nombre?: string | null };
-  ubicacion?: { lat?: number | null; lon?: number | null };
-};
-
-/** Busca direcciones en Argentina (Georef). Mínimo ~3 caracteres recomendado. */
-export async function searchArgentinaAddresses(
-  query: string,
-  options?: { provinceId?: string; max?: number },
-): Promise<ArgentinaAddressSuggestion[]> {
-  const trimmed = query.trim();
-  if (trimmed.length < 3) return [];
-
-  const params = new URLSearchParams({
-    direccion: trimmed,
-    max: String(options?.max ?? 8),
-    campos: 'completo',
-  });
-  if (options?.provinceId) {
-    params.set('provincia', options.provinceId);
-  }
-
-  try {
-    const res = await fetch(`${GEOREF_BASE}/direcciones?${params.toString()}`);
-    if (!res.ok) return [];
-    const json = (await res.json()) as { direcciones?: GeorefDireccion[] };
-
-    return (json.direcciones ?? [])
-      .map((d, index) => {
-        const lat = d.ubicacion?.lat;
-        const lon = d.ubicacion?.lon;
-        if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) {
-          return null;
-        }
-        const provinceId = d.provincia?.id ?? '';
-        const provinceName = d.provincia?.nombre ?? '';
-        const cityName =
-          d.localidad_censal?.nombre ||
-          d.departamento?.nombre ||
-          '';
-        const streetName = d.calle?.nombre?.trim() || '';
-        const height =
-          d.altura?.valor != null && String(d.altura.valor).trim() !== ''
-            ? String(d.altura.valor)
-            : '';
-        const streetLine = [streetName, height].filter(Boolean).join(' ').trim();
-        const label = d.nomenclatura?.trim() || streetLine || trimmed;
-
-        return {
-          id: `${provinceId}-${streetName}-${height}-${index}`,
-          label,
-          streetLine: streetLine || label,
-          provinceId,
-          provinceName,
-          cityName,
-          lat,
-          lon,
-        } satisfies ArgentinaAddressSuggestion;
-      })
-      .filter((item): item is ArgentinaAddressSuggestion => item != null);
-  } catch {
-    return [];
-  }
-}
-
 const PROVINCE_ALIASES: Record<string, string> = {
   caba: 'Ciudad Autónoma de Buenos Aires',
   'capital federal': 'Ciudad Autónoma de Buenos Aires',
   'ciudad de buenos aires': 'Ciudad Autónoma de Buenos Aires',
+  'ciudad autonoma de buenos aires': 'Ciudad Autónoma de Buenos Aires',
+  'autonomous city of buenos aires': 'Ciudad Autónoma de Buenos Aires',
+  'buenos aires caba': 'Ciudad Autónoma de Buenos Aires',
+  'buenos aires province': 'Buenos Aires',
+  'provincia de buenos aires': 'Buenos Aires',
   'tierra del fuego': 'Tierra del Fuego, Antártida e Islas del Atlántico Sur',
 };
+
+function normalizeProvinceKey(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/\b(province|provincia|de la|de)\b/g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 export function findProvinceByName(
   provinces: ArgentinaProvince[],
   name: string | null | undefined,
 ): ArgentinaProvince | undefined {
   if (!name?.trim()) return undefined;
-  const normalized = name.trim().toLowerCase();
-  const aliased = PROVINCE_ALIASES[normalized] ?? name.trim();
-  const aliasedLower = aliased.toLowerCase();
-  return provinces.find((p) => p.name.toLowerCase() === aliasedLower);
+
+  const raw = name.trim();
+  const rawLower = raw.toLowerCase();
+  const key = normalizeProvinceKey(raw);
+  const aliased =
+    PROVINCE_ALIASES[rawLower] ??
+    PROVINCE_ALIASES[key] ??
+    raw;
+  const aliasedKey = normalizeProvinceKey(aliased);
+
+  const exact =
+    provinces.find((p) => p.name.toLowerCase() === aliased.toLowerCase()) ??
+    provinces.find((p) => normalizeProvinceKey(p.name) === aliasedKey);
+  if (exact) return exact;
+
+  const partial = provinces.filter((p) => {
+    const pKey = normalizeProvinceKey(p.name);
+    return pKey.includes(aliasedKey) || aliasedKey.includes(pKey);
+  });
+  if (partial.length === 1) return partial[0];
+
+  // "Buenos Aires" ambiguo: preferir provincia (no CABA) si Google no dijo CABA.
+  if (aliasedKey === 'buenos aires') {
+    return provinces.find((p) => normalizeProvinceKey(p.name) === 'buenos aires');
+  }
+
+  return undefined;
+}
+
+/** Busca ciudad/municipio en el listado Georef a partir del nombre de Google. */
+export function findLocalityByName(
+  localities: ArgentinaLocality[],
+  name: string | null | undefined,
+): ArgentinaLocality | undefined {
+  if (!name?.trim() || localities.length === 0) return undefined;
+  const key = normalizeProvinceKey(name);
+  if (!key) return undefined;
+
+  const exact = localities.find((l) => normalizeProvinceKey(l.name) === key);
+  if (exact) return exact;
+
+  const partial = localities.filter((l) => {
+    const lKey = normalizeProvinceKey(l.name);
+    return lKey.includes(key) || key.includes(lKey);
+  });
+  if (partial.length === 1) return partial[0];
+
+  // Preferir el match más corto (menos genérico) cuando hay varios.
+  if (partial.length > 1) {
+    return [...partial].sort((a, b) => a.name.length - b.name.length)[0];
+  }
+
+  return undefined;
 }

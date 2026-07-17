@@ -6,7 +6,7 @@ import {
   UnprocessableEntityException,
   BadRequestException,
 } from '@nestjs/common';
-import { WorkOrderStatus, WorkOrderType } from '@prisma/client';
+import { PhotoEvidenceMode, PhotoPhase, WorkOrderStatus, WorkOrderType } from '@prisma/client';
 import { calendarDateFromInstant, endOfStoredCalendarDateInBusinessTz, TASK_CATEGORY_UNCATEGORIZED } from '@steam-genie/shared-constants';
 import { snapshotEventualTasks } from '../../common/work-order-snapshot';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
@@ -753,6 +753,12 @@ export class WorkOrdersService {
       );
     }
 
+    const building = await this.prisma.building.findFirst({
+      where: { id: wo.buildingId, deletedAt: null },
+      select: { photoEvidenceMode: true },
+    });
+    const photoEvidenceMode = building?.photoEvidenceMode ?? PhotoEvidenceMode.PER_TASK;
+
     for (const wot of workOrderTasks) {
       const exec = wot.taskExecutions[0];
 
@@ -767,12 +773,35 @@ export class WorkOrdersService {
       }
 
       if (
+        photoEvidenceMode === PhotoEvidenceMode.PER_TASK &&
         wot.requiresPhotoSnapshot &&
         exec.status === 'DONE' &&
         exec._count.photos === 0
       ) {
         throw new ConflictException(
           `La tarea "${wot.nameSnapshot}" requiere al menos una foto para marcarse como hecha.`,
+        );
+      }
+    }
+
+    if (photoEvidenceMode === PhotoEvidenceMode.BEFORE_DURING_AFTER) {
+      const phasePhotos = await this.prisma.serviceExecutionPhoto.findMany({
+        where: { serviceExecutionId: serviceExecution.id, deletedAt: null },
+        select: { phase: true },
+      });
+      const phasesPresent = new Set(phasePhotos.map((p) => p.phase));
+      const missingPhases = (
+        [PhotoPhase.BEFORE, PhotoPhase.DURING, PhotoPhase.AFTER] as const
+      ).filter((phase) => !phasesPresent.has(phase));
+      if (missingPhases.length > 0) {
+        const labels: Record<PhotoPhase, string> = {
+          BEFORE: 'antes',
+          DURING: 'durante',
+          AFTER: 'después',
+        };
+        throw new ConflictException(
+          `Faltan fotos de evidencia: ${missingPhases.map((p) => labels[p]).join(', ')}. ` +
+            'Se requiere al menos una foto en cada fase (antes, durante y después).',
         );
       }
     }
