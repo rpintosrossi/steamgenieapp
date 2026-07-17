@@ -161,6 +161,16 @@ export class TasksController {
     return this.tasksService.getPeriodicPhasePhotos(instanceId, user);
   }
 
+  @Delete('instances/:instanceId/phase-photos/:photoId')
+  @RequiredRoles('admin', 'manager', 'cleaner')
+  deletePeriodicPhasePhoto(
+    @Param('instanceId', ParseUUIDPipe) instanceId: string,
+    @Param('photoId', ParseUUIDPipe) photoId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.tasksService.deletePeriodicPhasePhoto(instanceId, photoId, user);
+  }
+
   @Get()
   @RequiredRoles('admin', 'manager', 'client')
   findAll(@Query() query: QueryTasksDto, @CurrentUser() user: AuthUser) {

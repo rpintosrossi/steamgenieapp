@@ -480,6 +480,47 @@ export class ServiceExecutionsService {
     return photos.map((p) => this.formatPhasePhoto(p));
   }
 
+  async deletePhasePhoto(
+    serviceExecutionId: string,
+    photoId: string,
+    user: AuthUser,
+  ) {
+    const se = await this.findServiceExecution(serviceExecutionId);
+
+    if (se.status !== 'IN_PROGRESS') {
+      throw new ConflictException(
+        'Solo se pueden eliminar fotos mientras el servicio está en progreso',
+      );
+    }
+
+    await this.assertIsParticipantOrManager(se, user);
+
+    const photo = await this.prisma.serviceExecutionPhoto.findFirst({
+      where: {
+        id: photoId,
+        serviceExecutionId,
+        deletedAt: null,
+      },
+    });
+    if (!photo) throw new NotFoundException('Foto no encontrada');
+
+    await this.prisma.serviceExecutionPhoto.update({
+      where: { id: photo.id },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: user.id,
+      },
+    });
+
+    try {
+      await this.storage.delete(photo.storageKey);
+    } catch {
+      // Soft delete ya aplicado; el archivo puede limpiarse después.
+    }
+
+    return { ok: true as const, id: photo.id };
+  }
+
   // ─── PRIVATE HELPERS ──────────────────────────────────────────────────────
 
   private async findServiceExecution(id: string) {

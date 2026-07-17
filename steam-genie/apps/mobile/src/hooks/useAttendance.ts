@@ -1,20 +1,23 @@
 import { useState, useCallback, useRef } from 'react';
 import { apiService, ApiRequestError } from '../services/api.service';
 import { syncQueue, generateClientId } from '../sync/sync-queue';
-import { useBuildingStore, AttendanceCached } from '../stores/building.store';
+import { useBuildingStore } from '../stores/building.store';
 import { useSyncStore } from '../stores/sync.store';
 import {
   mapActiveAttendance,
   type ActiveAttendanceResponse,
 } from '../utils/attendance';
-import { isNetworkError } from '../utils/network';
+import { isNetworkError, formatAttendanceError } from '../utils/network';
+import { checkApiHealth } from '../config/network';
 import { getRequiredGpsPosition } from '../utils/location';
 import { sleep } from '../utils/async';
 
 export type AttendanceAction = 'check-in' | 'check-out';
 
+/** Reintentos del POST de fichaje (mismo clientOperationId → idempotente en API). */
+const CHECK_IN_POST_RETRY_DELAYS_MS = [800, 1600, 2800] as const;
 /** Esperas entre reintentos cuando el POST falla pero el servidor pudo haber procesado. */
-const RECONCILE_DELAYS_MS = [0, 500, 1200, 2500] as const;
+const RECONCILE_DELAYS_MS = [0, 500, 1200, 2500, 4000, 6000] as const;
 /** Salida suele tardar más en propagarse; más ventana + prefetch como fallback. */
 const RECONCILE_CHECKOUT_DELAYS_MS = [0, 500, 1200, 2500, 4000, 6000] as const;
 
@@ -112,48 +115,90 @@ export function useAttendance(isOnline: boolean) {
     try {
       const { gpsLat, gpsLng } = await getRequiredGpsPosition();
       const occurredAt = new Date().toISOString();
+      const clientOperationId = generateClientId();
 
       if (isOnline) {
-        const clientOperationId = generateClientId();
-        const attendance = await apiService.post<ActiveAttendanceResponse>(
-          '/attendance/check-in',
-          {
-            buildingId: selectedBuilding.id,
-            gpsLat,
-            gpsLng,
-            occurredAt,
-            clientOperationId,
-            deviceId: 'mobile',
-          },
-        );
-        updateActiveAttendance(mapActiveAttendance(attendance));
-      } else {
-        const clientOperationId = generateClientId();
-        await syncQueue.enqueue({
-          id: generateClientId(),
-          clientOperationId,
-          operationType: 'CHECK_IN',
-          entityType: 'ATTENDANCE',
-          entityId: null,
-          payload: {
-            buildingId: selectedBuilding.id,
-            gpsLat,
-            gpsLng,
-            deviceId: 'mobile',
-          },
-          occurredAt,
-        });
-        // Optimistic update
-        updateActiveAttendance({
-          id: clientOperationId,
+        // Tras el GPS (puede tardar 20–40s) la conexión suele quedar fría: despertar API.
+        await checkApiHealth(8_000);
+
+        const payload = {
           buildingId: selectedBuilding.id,
-          checkInAt: occurredAt,
-          checkInGpsLat: String(gpsLat),
-          checkInGpsLng: String(gpsLng),
-          version: 1,
-        });
-        setStatus('pending');
+          gpsLat,
+          gpsLng,
+          occurredAt,
+          clientOperationId,
+          deviceId: 'mobile',
+        };
+
+        let postSucceeded = false;
+        let lastError: unknown;
+
+        for (let attempt = 0; attempt <= CHECK_IN_POST_RETRY_DELAYS_MS.length; attempt += 1) {
+          if (attempt > 0) {
+            await sleep(CHECK_IN_POST_RETRY_DELAYS_MS[attempt - 1]!);
+          }
+          try {
+            // postOk: no exige parsear el body (evita falsos "Network request failed").
+            await apiService.postOk('/attendance/check-in', payload);
+            postSucceeded = true;
+            break;
+          } catch (e) {
+            lastError = e;
+            if (isAlreadyCheckedInError(e)) {
+              postSucceeded = true;
+              break;
+            }
+            if (!isNetworkError(e)) throw e;
+          }
+        }
+
+        const reconciled = await reconcileCheckIn(selectedBuilding.id);
+        if (reconciled) {
+          setError(null);
+          return true;
+        }
+
+        if (postSucceeded) {
+          updateActiveAttendance({
+            id: clientOperationId,
+            buildingId: selectedBuilding.id,
+            checkInAt: occurredAt,
+            checkInGpsLat: String(gpsLat),
+            checkInGpsLng: String(gpsLng),
+            version: 1,
+          });
+          setError(null);
+          return true;
+        }
+
+        throw lastError instanceof Error
+          ? lastError
+          : new Error('Network request failed');
       }
+
+      await syncQueue.enqueue({
+        id: generateClientId(),
+        clientOperationId,
+        operationType: 'CHECK_IN',
+        entityType: 'ATTENDANCE',
+        entityId: null,
+        payload: {
+          buildingId: selectedBuilding.id,
+          gpsLat,
+          gpsLng,
+          deviceId: 'mobile',
+        },
+        occurredAt,
+      });
+      updateActiveAttendance({
+        id: clientOperationId,
+        buildingId: selectedBuilding.id,
+        checkInAt: occurredAt,
+        checkInGpsLat: String(gpsLat),
+        checkInGpsLng: String(gpsLng),
+        version: 1,
+      });
+      setStatus('pending');
       return true;
     } catch (e) {
       if (isOnline && selectedBuilding) {
@@ -167,7 +212,7 @@ export function useAttendance(isOnline: boolean) {
           }
         }
       }
-      setError(e instanceof Error ? e.message : 'Error al fichar entrada');
+      setError(formatAttendanceError(e, 'Error al fichar entrada'));
       return false;
     } finally {
       actionInFlight.current = false;
@@ -224,7 +269,7 @@ export function useAttendance(isOnline: boolean) {
           }
         }
       }
-      setError(e instanceof Error ? e.message : 'Error al fichar salida');
+      setError(formatAttendanceError(e, 'Error al fichar salida'));
       return false;
     } finally {
       actionInFlight.current = false;

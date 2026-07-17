@@ -89,7 +89,17 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     throw new ApiRequestError(message, res.status);
   }
 
-  return res.json() as Promise<T>;
+  // Leer como texto primero: en RN res.json() a veces tira "Network request failed"
+  // si el body se corta, aunque el status ya haya sido 2xx.
+  try {
+    const text = await res.text();
+    if (!text.trim()) return undefined as T;
+    return JSON.parse(text) as T;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Network request failed';
+    throw new Error(message);
+  }
 }
 
 /** PUT que solo exige HTTP 2xx; no parsea JSON (evita fallos al leer body). */

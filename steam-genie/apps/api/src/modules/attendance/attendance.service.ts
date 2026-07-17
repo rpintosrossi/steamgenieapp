@@ -459,7 +459,7 @@ export class AttendanceService {
       },
     });
 
-    if (!building) throw new NotFoundException('Building not found');
+    if (!building) throw new NotFoundException('Edificio no encontrado');
 
     if (!building.requireGpsValidation) {
       return;
@@ -467,7 +467,7 @@ export class AttendanceService {
 
     if (building.latitude == null || building.longitude == null) {
       throw new BadRequestException(
-        'This building does not have GPS coordinates configured. Contact an administrator.',
+        'Este edificio no tiene coordenadas GPS configuradas. Contactá a un administrador.',
       );
     }
 
@@ -480,8 +480,8 @@ export class AttendanceService {
 
     if (distanceM > building.gpsRadiusM) {
       throw new ForbiddenException(
-        `You are ${Math.round(distanceM)}m away from "${building.name}". ` +
-        `Maximum allowed radius: ${building.gpsRadiusM}m.`,
+        `Estás a ${Math.round(distanceM)} m de "${building.name}". ` +
+          `El radio permitido es de ${building.gpsRadiusM} m. Acercate al edificio e intentá de nuevo.`,
       );
     }
   }

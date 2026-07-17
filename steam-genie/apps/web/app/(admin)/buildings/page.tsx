@@ -281,7 +281,10 @@ export default function BuildingsPage() {
                       </td>
                       <td>
                         <div className="table-row-actions">
-                          <Link href={`/buildings/${item.id}`} className="btn btn-secondary btn-sm">
+                          <Link
+                            href={`/buildings/${item.id}/configuracion`}
+                            className="btn btn-secondary btn-sm"
+                          >
                             Gestionar
                           </Link>
                           {item.isActive !== false ? (

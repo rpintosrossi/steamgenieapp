@@ -206,6 +206,14 @@ export class PhotoQueue {
       [error, clientOperationId],
     );
   }
+
+  /** Cancela una foto pendiente (p. ej. el usuario la eliminó antes de sincronizar). */
+  async removePending(clientOperationId: string): Promise<void> {
+    await this.db.runAsync(
+      `DELETE FROM photo_queue WHERE client_operation_id = ? AND status = 'PENDING'`,
+      [clientOperationId],
+    );
+  }
 }
 
 // ─── Singletons ────────────────────────────────────────────────────────────────

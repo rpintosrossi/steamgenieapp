@@ -1089,6 +1089,46 @@ export class TasksService {
     return photos.map((p) => this.formatPhasePhoto(p));
   }
 
+  async deletePeriodicPhasePhoto(
+    instanceId: string,
+    photoId: string,
+    user: AuthUser,
+  ) {
+    const instance = await this.prisma.periodicTaskInstance.findUnique({
+      where: { id: instanceId },
+      include: { task: { select: { buildingId: true } } },
+    });
+    if (!instance) throw new NotFoundException('Periodic task instance not found');
+
+    await this.assertBuildingAccess(user.id, instance.task.buildingId);
+    await this.assertActiveAttendance(user.id, instance.task.buildingId);
+
+    const photo = await this.prisma.periodicTaskInstancePhoto.findFirst({
+      where: {
+        id: photoId,
+        periodicTaskInstanceId: instanceId,
+        deletedAt: null,
+      },
+    });
+    if (!photo) throw new NotFoundException('Foto no encontrada');
+
+    await this.prisma.periodicTaskInstancePhoto.update({
+      where: { id: photo.id },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: user.id,
+      },
+    });
+
+    try {
+      await this.storage.delete(photo.storageKey);
+    } catch {
+      // Soft delete ya aplicado; el archivo puede limpiarse después.
+    }
+
+    return { ok: true as const, id: photo.id };
+  }
+
   // ─── PRIVATE HELPERS ───────────────────────────────────────────────────────
 
   private async assertPeriodicPhasePhotosComplete(instanceId: string) {

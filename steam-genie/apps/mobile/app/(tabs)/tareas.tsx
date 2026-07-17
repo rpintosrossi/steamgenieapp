@@ -14,7 +14,7 @@ import {
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import { pickTaskPhoto, type PhotoPhase } from '../../src/utils/camera';
+import { pickTaskPhoto, pickTaskPhotos, type PhotoPhase } from '../../src/utils/camera';
 import { apiService } from '../../src/services/api.service';
 import { syncQueue, generateClientId } from '../../src/sync/sync-queue';
 import { useNetworkStatus } from '../../src/hooks/useNetworkStatus';
@@ -237,7 +237,9 @@ export default function TareasScreen() {
   const [uploadingPhaseFor, setUploadingPhaseFor] = useState<{
     itemId: string;
     phase: PhotoPhase;
+    progress?: string | null;
   } | null>(null);
+  const [deletingPhasePhotoId, setDeletingPhasePhotoId] = useState<string | null>(null);
   const [isBulkMarking, setIsBulkMarking] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -630,49 +632,129 @@ export default function TareasScreen() {
     }
   }
 
+  function isServerPhotoId(id: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      id,
+    );
+  }
+
+  function handlePhasePhotoDelete(item: PeriodicDueItem, photo: PhasePhotoItem) {
+    Alert.alert('Eliminar foto', '¿Querés eliminar esta foto?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Eliminar',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            setDeletingPhasePhotoId(photo.id);
+            try {
+              if (isServerPhotoId(photo.id)) {
+                await apiService.delete(
+                  `/tasks/instances/${item.id}/phase-photos/${photo.id}`,
+                );
+                await loadDueToday('silent');
+              } else {
+                setItems((prev) =>
+                  prev.map((row) =>
+                    row.id === item.id
+                      ? {
+                          ...row,
+                          phasePhotos: (row.phasePhotos ?? []).filter(
+                            (p) => p.id !== photo.id,
+                          ),
+                        }
+                      : row,
+                  ),
+                );
+              }
+            } catch (e) {
+              Alert.alert(
+                'Error al eliminar',
+                e instanceof Error ? e.message : 'No se pudo eliminar la foto',
+              );
+            } finally {
+              setDeletingPhasePhotoId(null);
+            }
+          })();
+        },
+      },
+    ]);
+  }
+
   async function handlePhasePhotoUpload(
     item: PeriodicDueItem,
     phase: PhotoPhase,
   ): Promise<void> {
-    const asset = await pickTaskPhoto();
-    if (!asset) return;
+    const assets = await pickTaskPhotos();
+    if (assets.length === 0) return;
 
-    setUploadingPhaseFor({ itemId: item.id, phase });
+    setUploadingPhaseFor({
+      itemId: item.id,
+      phase,
+      progress: assets.length > 1 ? `0/${assets.length}` : null,
+    });
+
+    let gpsLat: number | undefined;
+    let gpsLng: number | undefined;
     try {
-      let gpsLat: number | undefined;
-      let gpsLng: number | undefined;
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status === 'granted') {
-          const loc = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        gpsLat = loc.coords.latitude;
+        gpsLng = loc.coords.longitude;
+      }
+    } catch {
+      // GPS optional
+    }
+
+    let uploaded = 0;
+    let failed = 0;
+    try {
+      for (let i = 0; i < assets.length; i += 1) {
+        const asset = assets[i]!;
+        if (assets.length > 1) {
+          setUploadingPhaseFor({
+            itemId: item.id,
+            phase,
+            progress: `${i + 1}/${assets.length}`,
           });
-          gpsLat = loc.coords.latitude;
-          gpsLng = loc.coords.longitude;
         }
-      } catch {
-        // GPS optional
+        try {
+          const formData = new FormData();
+          formData.append('photo', {
+            uri: asset.uri,
+            name: asset.fileName ?? `photo_${Date.now()}.jpg`,
+            type: asset.mimeType ?? 'image/jpeg',
+          } as unknown as Blob);
+          formData.append('phase', phase);
+          formData.append('clientOperationId', generateClientId());
+          formData.append('capturedAt', new Date().toISOString());
+          if (gpsLat != null) formData.append('gpsLat', String(gpsLat));
+          if (gpsLng != null) formData.append('gpsLng', String(gpsLng));
+
+          await apiService.postMultipart(
+            `/tasks/instances/${item.id}/phase-photos`,
+            formData,
+          );
+          uploaded += 1;
+        } catch {
+          failed += 1;
+        }
       }
 
-      const formData = new FormData();
-      formData.append('photo', {
-        uri: asset.uri,
-        name: asset.fileName ?? `photo_${Date.now()}.jpg`,
-        type: asset.mimeType ?? 'image/jpeg',
-      } as unknown as Blob);
-      formData.append('phase', phase);
-      formData.append('clientOperationId', generateClientId());
-      formData.append('capturedAt', new Date().toISOString());
-      if (gpsLat != null) formData.append('gpsLat', String(gpsLat));
-      if (gpsLng != null) formData.append('gpsLng', String(gpsLng));
-
-      await apiService.postMultipart(
-        `/tasks/instances/${item.id}/phase-photos`,
-        formData,
-      );
-      await loadDueToday('silent');
-    } catch (e) {
-      Alert.alert('Error al subir foto', e instanceof Error ? e.message : 'Error desconocido');
+      if (uploaded > 0) {
+        await loadDueToday('silent');
+      }
+      if (failed > 0 && uploaded === 0) {
+        Alert.alert('Error al subir foto', 'No se pudo subir ninguna foto. Intentá de nuevo.');
+      } else if (failed > 0) {
+        Alert.alert(
+          'Subida parcial',
+          `Se subieron ${uploaded} de ${assets.length} fotos. Revisá la conexión e intentá de nuevo con las que faltan.`,
+        );
+      }
     } finally {
       setUploadingPhaseFor(null);
     }
@@ -773,6 +855,8 @@ export default function TareasScreen() {
               onNotDone={handleMarkNotDone}
               onAddPhoto={handlePhotoUpload}
               onAddPhasePhoto={handlePhasePhotoUpload}
+              onDeletePhasePhoto={handlePhasePhotoDelete}
+              deletingPhasePhotoId={deletingPhasePhotoId}
             />
           ) : (
             <ZoneCardGrid
@@ -934,6 +1018,7 @@ function ZoneDetailView({
   markingId,
   uploadingPhotoForItemId,
   uploadingPhaseFor,
+  deletingPhasePhotoId = null,
   isBulkMarking,
   selectionMode,
   selectedIds,
@@ -952,13 +1037,15 @@ function ZoneDetailView({
   onNotDone,
   onAddPhoto,
   onAddPhasePhoto,
+  onDeletePhasePhoto,
 }: {
   zone: ZoneGroup;
   activeSubzone: SubzoneGroup | null;
   selectedSubzoneId: string | null;
   markingId: string | null;
   uploadingPhotoForItemId: string | null;
-  uploadingPhaseFor: { itemId: string; phase: PhotoPhase } | null;
+  uploadingPhaseFor: { itemId: string; phase: PhotoPhase; progress?: string | null } | null;
+  deletingPhasePhotoId?: string | null;
   isBulkMarking: boolean;
   selectionMode: boolean;
   selectedIds: Set<string>;
@@ -977,6 +1064,7 @@ function ZoneDetailView({
   onNotDone: (item: PeriodicDueItem) => void;
   onAddPhoto: (item: PeriodicDueItem) => void;
   onAddPhasePhoto: (item: PeriodicDueItem, phase: PhotoPhase) => void;
+  onDeletePhasePhoto: (item: PeriodicDueItem, photo: PhasePhotoItem) => void;
 }) {
   const zoneProgress = countProgress(zone.tasks, perTaskPhotosEnabled);
   const subzoneTasks = activeSubzone?.tasks ?? [];
@@ -1101,6 +1189,12 @@ function ZoneDetailView({
             uploadingPhase={
               uploadingPhaseFor?.itemId === item.id ? uploadingPhaseFor.phase : null
             }
+            uploadingPhaseProgress={
+              uploadingPhaseFor?.itemId === item.id
+                ? (uploadingPhaseFor.progress ?? null)
+                : null
+            }
+            deletingPhasePhotoId={deletingPhasePhotoId}
             selectionMode={selectionMode}
             isSelected={selectedIds.has(item.id)}
             perTaskPhotosEnabled={perTaskPhotosEnabled}
@@ -1110,6 +1204,7 @@ function ZoneDetailView({
             onNotDone={() => onNotDone(item)}
             onAddPhoto={() => onAddPhoto(item)}
             onAddPhasePhoto={(phase) => onAddPhasePhoto(item, phase)}
+            onDeletePhasePhoto={(photo) => onDeletePhasePhoto(item, photo)}
           />
         ))}
 
@@ -1148,6 +1243,8 @@ function TaskRow({
   isMarkingThisItem,
   isUploadingPhoto,
   uploadingPhase = null,
+  uploadingPhaseProgress = null,
+  deletingPhasePhotoId = null,
   selectionMode,
   isSelected,
   perTaskPhotosEnabled = true,
@@ -1157,12 +1254,15 @@ function TaskRow({
   onNotDone,
   onAddPhoto,
   onAddPhasePhoto,
+  onDeletePhasePhoto,
 }: {
   item: PeriodicDueItem;
   isMarking: boolean;
   isMarkingThisItem: boolean;
   isUploadingPhoto: boolean;
   uploadingPhase?: PhotoPhase | null;
+  uploadingPhaseProgress?: string | null;
+  deletingPhasePhotoId?: string | null;
   selectionMode: boolean;
   isSelected: boolean;
   perTaskPhotosEnabled?: boolean;
@@ -1172,6 +1272,7 @@ function TaskRow({
   onNotDone: () => void;
   onAddPhoto: () => void;
   onAddPhasePhoto?: (phase: PhotoPhase) => void;
+  onDeletePhasePhoto?: (photo: PhasePhotoItem) => void;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const wasMarkingThisItem = useRef(false);
@@ -1334,7 +1435,10 @@ function TaskRow({
         photos={item.phasePhotos ?? []}
         canEdit={!isResolved || isEditing}
         uploadingPhase={uploadingPhase}
+        uploadingProgress={uploadingPhaseProgress}
         onAddPhoto={onAddPhasePhoto}
+        onDeletePhoto={onDeletePhasePhoto}
+        deletingPhotoId={deletingPhasePhotoId}
         title="Antes / durante / después"
         compact
       />

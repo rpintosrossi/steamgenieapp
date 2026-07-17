@@ -3,6 +3,7 @@
   Get,
   Put,
   Post,
+  Delete,
   Body,
   Param,
   UseGuards,
@@ -126,5 +127,14 @@ export class ServiceExecutionsController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.serviceExecutionsService.getPhasePhotos(id, user);
+  }
+
+  @Delete(':id/phase-photos/:photoId')
+  deletePhasePhoto(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('photoId', ParseUUIDPipe) photoId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.serviceExecutionsService.deletePhasePhoto(id, photoId, user);
   }
 }

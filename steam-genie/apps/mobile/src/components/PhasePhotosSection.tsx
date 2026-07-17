@@ -26,7 +26,11 @@ type PhasePhotosSectionProps = {
   photos: PhasePhotoItem[];
   canEdit: boolean;
   uploadingPhase: PhotoPhase | null;
+  /** Progreso opcional al subir varias fotos, ej. "2/5". */
+  uploadingProgress?: string | null;
   onAddPhoto: (phase: PhotoPhase) => void;
+  onDeletePhoto?: (photo: PhasePhotoItem) => void;
+  deletingPhotoId?: string | null;
   title?: string;
   compact?: boolean;
 };
@@ -35,7 +39,10 @@ export function PhasePhotosSection({
   photos,
   canEdit,
   uploadingPhase,
+  uploadingProgress = null,
   onAddPhoto,
+  onDeletePhoto,
+  deletingPhotoId = null,
   title = 'Evidencia fotográfica',
   compact = false,
 }: PhasePhotosSectionProps) {
@@ -84,13 +91,32 @@ export function PhasePhotosSection({
                     showsHorizontalScrollIndicator={false}
                     style={styles.photoRow}
                   >
-                    {phasePhotos.map((photo) => (
-                      <Image
-                        key={photo.id}
-                        source={{ uri: photo.url }}
-                        style={styles.thumb}
-                      />
-                    ))}
+                    {phasePhotos.map((photo) => {
+                      const isDeleting = deletingPhotoId === photo.id;
+                      return (
+                        <View key={photo.id} style={styles.thumbWrap}>
+                          <Image
+                            source={{ uri: photo.url }}
+                            style={[styles.thumb, isDeleting && styles.thumbDeleting]}
+                          />
+                          {canEdit && onDeletePhoto && !isUploading ? (
+                            <TouchableOpacity
+                              style={styles.deleteBtn}
+                              onPress={() => onDeletePhoto(photo)}
+                              disabled={isDeleting}
+                              hitSlop={{ top: 6, right: 6, bottom: 6, left: 6 }}
+                              accessibilityLabel="Eliminar foto"
+                            >
+                              {isDeleting ? (
+                                <ActivityIndicator size="small" color="#fff" />
+                              ) : (
+                                <Ionicons name="close" size={10} color="#fff" />
+                              )}
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
+                      );
+                    })}
                   </ScrollView>
                 ) : null}
 
@@ -98,15 +124,19 @@ export function PhasePhotosSection({
                   isUploading ? (
                     <View style={styles.uploadingRow}>
                       <ActivityIndicator size="small" color={COLORS.primary} />
-                      <Text style={styles.uploadingText}>Subiendo…</Text>
+                      <Text style={styles.uploadingText}>
+                        {uploadingProgress
+                          ? `Subiendo ${uploadingProgress}…`
+                          : 'Subiendo…'}
+                      </Text>
                     </View>
                   ) : (
                     <TouchableOpacity
                       style={styles.addBtn}
                       onPress={() => onAddPhoto(phase)}
                     >
-                      <Ionicons name="camera-outline" size={16} color={COLORS.primary} />
-                      <Text style={styles.addBtnText}>Agregar foto</Text>
+                      <Ionicons name="images-outline" size={16} color={COLORS.primary} />
+                      <Text style={styles.addBtnText}>Agregar fotos</Text>
                     </TouchableOpacity>
                   )
                 ) : null}
@@ -190,12 +220,31 @@ const styles = StyleSheet.create({
   photoRow: {
     flexGrow: 0,
   },
+  thumbWrap: {
+    position: 'relative',
+    marginRight: 8,
+    width: 64,
+    height: 64,
+  },
   thumb: {
     width: 64,
     height: 64,
     borderRadius: 8,
-    marginRight: 8,
     backgroundColor: COLORS.border,
+  },
+  thumbDeleting: {
+    opacity: 0.5,
+  },
+  deleteBtn: {
+    position: 'absolute',
+    top: 3,
+    right: 3,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(220, 38, 38, 0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   addBtn: {
     flexDirection: 'row',

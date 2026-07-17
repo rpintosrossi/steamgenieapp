@@ -15,7 +15,8 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { pickTaskPhoto, type PhotoPhase } from '../../../src/utils/camera';
+import { pickTaskPhoto, pickTaskPhotos, type PhotoPhase } from '../../../src/utils/camera';
+import type { ImagePickerAsset } from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { apiService } from '../../../src/services/api.service';
 import { syncQueue, photoQueue, generateClientId } from '../../../src/sync/sync-queue';
@@ -191,6 +192,8 @@ export default function ChecklistScreen() {
   const [markingTaskId, setMarkingTaskId] = useState<string | null>(null);
   const [uploadingPhotoForWotId, setUploadingPhotoForWotId] = useState<string | null>(null);
   const [uploadingPhase, setUploadingPhase] = useState<PhotoPhase | null>(null);
+  const [uploadingPhaseProgress, setUploadingPhaseProgress] = useState<string | null>(null);
+  const [deletingPhasePhotoId, setDeletingPhasePhotoId] = useState<string | null>(null);
   const [reasonPickerTask, setReasonPickerTask] = useState<TaskExecutionItem | null>(null);
   const [fieldPickerTask, setFieldPickerTask] = useState<TaskExecutionItem | null>(null);
   const [pendingMarkStatus, setPendingMarkStatus] = useState<'DONE' | null>(null);
@@ -537,22 +540,30 @@ export default function ChecklistScreen() {
   async function uploadPhasePhotoAsset(
     phase: PhotoPhase,
     seIdParam: string,
-    asset: NonNullable<Awaited<ReturnType<typeof pickTaskPhoto>>>,
+    asset: ImagePickerAsset,
+    options?: {
+      gpsLat?: number;
+      gpsLng?: number;
+      reload?: boolean;
+      silent?: boolean;
+    },
   ): Promise<boolean> {
     try {
-      let gpsLat: number | undefined;
-      let gpsLng: number | undefined;
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status === 'granted') {
-          const loc = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
-          });
-          gpsLat = loc.coords.latitude;
-          gpsLng = loc.coords.longitude;
+      let gpsLat = options?.gpsLat;
+      let gpsLng = options?.gpsLng;
+      if (gpsLat == null || gpsLng == null) {
+        try {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status === 'granted') {
+            const loc = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Balanced,
+            });
+            gpsLat = loc.coords.latitude;
+            gpsLng = loc.coords.longitude;
+          }
+        } catch {
+          // GPS optional
         }
-      } catch {
-        // GPS optional
       }
 
       const formData = new FormData();
@@ -571,10 +582,14 @@ export default function ChecklistScreen() {
         `/service-executions/${seIdParam}/phase-photos`,
         formData,
       );
-      await loadPhasePhotos();
+      if (options?.reload !== false) {
+        await loadPhasePhotos();
+      }
       return true;
     } catch (e) {
-      Alert.alert('Error al subir foto', e instanceof Error ? e.message : 'Error desconocido');
+      if (!options?.silent) {
+        Alert.alert('Error al subir foto', e instanceof Error ? e.message : 'Error desconocido');
+      }
       return false;
     }
   }
@@ -582,22 +597,28 @@ export default function ChecklistScreen() {
   async function queuePhasePhotoAsset(
     phase: PhotoPhase,
     seIdParam: string,
-    asset: NonNullable<Awaited<ReturnType<typeof pickTaskPhoto>>>,
+    asset: ImagePickerAsset,
+    options?: {
+      gpsLat?: number;
+      gpsLng?: number;
+    },
   ) {
     const clientOperationId = generateClientId();
-    let gpsLat: number | undefined;
-    let gpsLng: number | undefined;
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') {
-        const loc = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-        gpsLat = loc.coords.latitude;
-        gpsLng = loc.coords.longitude;
+    let gpsLat = options?.gpsLat;
+    let gpsLng = options?.gpsLng;
+    if (gpsLat == null || gpsLng == null) {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          gpsLat = loc.coords.latitude;
+          gpsLng = loc.coords.longitude;
+        }
+      } catch {
+        // GPS optional
       }
-    } catch {
-      // GPS optional
     }
 
     await photoQueue.enqueue({
@@ -624,6 +645,51 @@ export default function ChecklistScreen() {
     await syncManager.refreshPendingCount();
   }
 
+  function isServerPhotoId(id: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      id,
+    );
+  }
+
+  async function deletePhasePhoto(photo: PhasePhotoItem) {
+    if (!canExecute) {
+      Alert.alert('Fichaje requerido', ATTENDANCE_REQUIRED_MESSAGE);
+      return;
+    }
+
+    Alert.alert('Eliminar foto', '¿Querés eliminar esta foto?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Eliminar',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            setDeletingPhasePhotoId(photo.id);
+            try {
+              if (isServerPhotoId(photo.id) && seId && isOnline) {
+                await apiService.delete(
+                  `/service-executions/${seId}/phase-photos/${photo.id}`,
+                );
+                await loadPhasePhotos();
+              } else {
+                await photoQueue.removePending(photo.id);
+                setPhasePhotos((prev) => prev.filter((p) => p.id !== photo.id));
+                await syncManager.refreshPendingCount();
+              }
+            } catch (e) {
+              Alert.alert(
+                'Error al eliminar',
+                e instanceof Error ? e.message : 'No se pudo eliminar la foto',
+              );
+            } finally {
+              setDeletingPhasePhotoId(null);
+            }
+          })();
+        },
+      },
+    ]);
+  }
+
   async function addPhasePhoto(phase: PhotoPhase) {
     if (!seId) return;
     if (!canExecute) {
@@ -631,18 +697,63 @@ export default function ChecklistScreen() {
       return;
     }
 
-    const asset = await pickTaskPhoto();
-    if (!asset) return;
+    const assets = await pickTaskPhotos();
+    if (assets.length === 0) return;
 
     setUploadingPhase(phase);
+    setUploadingPhaseProgress(assets.length > 1 ? `0/${assets.length}` : null);
+
+    let gpsLat: number | undefined;
+    let gpsLng: number | undefined;
     try {
-      if (isOnline) {
-        await uploadPhasePhotoAsset(phase, seId, asset);
-      } else {
-        await queuePhasePhotoAsset(phase, seId, asset);
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        gpsLat = loc.coords.latitude;
+        gpsLng = loc.coords.longitude;
+      }
+    } catch {
+      // GPS optional
+    }
+
+    try {
+      let uploaded = 0;
+      let failed = 0;
+      for (let i = 0; i < assets.length; i += 1) {
+        const asset = assets[i]!;
+        if (assets.length > 1) {
+          setUploadingPhaseProgress(`${i + 1}/${assets.length}`);
+        }
+        if (isOnline) {
+          const ok = await uploadPhasePhotoAsset(phase, seId, asset, {
+            gpsLat,
+            gpsLng,
+            reload: false,
+            silent: assets.length > 1,
+          });
+          if (ok) uploaded += 1;
+          else failed += 1;
+        } else {
+          await queuePhasePhotoAsset(phase, seId, asset, { gpsLat, gpsLng });
+          uploaded += 1;
+        }
+      }
+      if (isOnline && uploaded > 0) {
+        await loadPhasePhotos();
+      }
+      if (failed > 0 && uploaded === 0) {
+        Alert.alert('Error al subir foto', 'No se pudo subir ninguna foto. Intentá de nuevo.');
+      } else if (failed > 0 && uploaded > 0) {
+        Alert.alert(
+          'Subida parcial',
+          `Se subieron ${uploaded} de ${assets.length} fotos. Revisá la conexión e intentá de nuevo con las que faltan.`,
+        );
       }
     } finally {
       setUploadingPhase(null);
+      setUploadingPhaseProgress(null);
     }
   }
 
@@ -833,7 +944,10 @@ export default function ChecklistScreen() {
           photos={phasePhotos}
           canEdit={canExecute}
           uploadingPhase={uploadingPhase}
+          uploadingProgress={uploadingPhaseProgress}
           onAddPhoto={addPhasePhoto}
+          onDeletePhoto={deletePhasePhoto}
+          deletingPhotoId={deletingPhasePhotoId}
           title="Fotos del servicio (antes / durante / después)"
         />
       ) : null}
