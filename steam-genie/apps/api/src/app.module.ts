@@ -21,6 +21,8 @@ import { TaskPhotosModule } from './modules/task-photos/task-photos.module';
 import { BulkImportModule } from './modules/bulk-import/bulk-import.module';
 import { GeocodingModule } from './modules/geocoding/geocoding.module';
 import { RejectionReasonsModule } from './modules/rejection-reasons/rejection-reasons.module';
+import { ParticularClientsModule } from './modules/particular-clients/particular-clients.module';
+import { QuotesModule } from './modules/quotes/quotes.module';
 import { StockModule } from './modules/stock/stock.module';
 import { StockLogisticsModule } from './modules/stock-logistics/stock-logistics.module';
 import { ReportsModule } from './modules/reports/reports.module';
@@ -58,6 +60,8 @@ import { TimelineEventsModule } from './common/events/timeline-events.module';
     BulkImportModule,
     GeocodingModule,
     RejectionReasonsModule,
+    ParticularClientsModule,
+    QuotesModule,
     StockModule,
     StockLogisticsModule,
     ReportsModule,

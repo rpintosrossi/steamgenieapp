@@ -18,7 +18,9 @@ export async function fetchBuildingsList(): Promise<Array<{ id: string; name: st
     return buildingsListCache.data;
   }
 
-  const res = await api.get<{ data: Array<{ id: string; name: string }> }>('/buildings?limit=100');
+  const res = await api.get<{ data: Array<{ id: string; name: string }> }>(
+    '/buildings?limit=100&includeParticularSites=true',
+  );
   buildingsListCache = { data: res.data, fetchedAt: now };
   return res.data;
 }

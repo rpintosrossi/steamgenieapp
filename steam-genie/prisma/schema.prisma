@@ -101,6 +101,14 @@ enum PhotoPhase {
   AFTER
 }
 
+enum QuoteStatus {
+  COTIZADO
+  EN_ESPERA
+  ACEPTADO
+  RECHAZADO
+  TERMINADO
+}
+
 enum IntegrationLogStatus {
   RECEIVED
   PARSED
@@ -216,6 +224,7 @@ model User {
   commissionSettlements      CommissionSettlement[]   @relation("CommissionBeneficiary")
   commissionsCreated         CommissionSettlement[]   @relation("CommissionCreator")
   commissionPdfVersions      CommissionSettlementPdfVersion[] @relation("CommissionPdfCreator")
+  createdQuotes              Quote[]                          @relation("QuoteCreator")
 
   @@index([deletedAt, fullName])
   @@map("users")
@@ -311,9 +320,111 @@ model Building {
   stockShipmentDestinations StockShipmentDestination[]
   stockMovements            StockMovement[]
   fixedExpenses             FixedExpense[]
+  quotes                    Quote[]
+  /// Si existe, este "edificio" es el sitio operativo de un cliente particular.
+  particularClient  ParticularClient?
 
   @@index([deletedAt])
   @@map("buildings")
+}
+
+/// Cliente particular o empresa suelta. Tiene un Building vinculado para GPS/zonas/subzonas/WOs.
+model ParticularClient {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String    @db.VarChar(200)
+  taxId       String?   @db.VarChar(20)
+  address     String?   @db.VarChar(300)
+  contactName String?   @db.VarChar(200)
+  email       String?   @db.VarChar(200)
+  phone       String?   @db.VarChar(50)
+  notes       String?   @db.VarChar(1000)
+  isActive    Boolean   @default(true)
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  building    Building  @relation(fields: [buildingId], references: [id])
+  buildingId  String    @unique @db.Uuid
+  quotes      Quote[]
+
+  @@index([deletedAt])
+  @@index([name])
+  @@map("particular_clients")
+}
+
+// ─── Presupuestos ─────────────────────────────────────────────────────────────
+
+/// Contador correlativo de presupuestos (una sola fila).
+model QuoteCounter {
+  id         String @id @default("default") @db.VarChar(20)
+  nextNumber Int    @default(1)
+
+  @@map("quote_counters")
+}
+
+model Quote {
+  id     String      @id @default(uuid()) @db.Uuid
+  number Int         @unique
+  status QuoteStatus @default(COTIZADO)
+
+  /// Cliente: particular XOR edificio (uno obligatorio).
+  particularClient   ParticularClient? @relation(fields: [particularClientId], references: [id])
+  particularClientId String?           @db.Uuid
+  building           Building?         @relation(fields: [buildingId], references: [id])
+  buildingId         String?           @db.Uuid
+
+  requestDate        DateTime  @db.Date
+  serviceType        String?   @db.VarChar(500)
+  clientDetails      String?   @db.VarChar(2000)
+  /// Contacto para envío (WhatsApp / correo). Se precarga del cliente particular.
+  contactPhone       String?   @db.VarChar(50)
+  contactEmail       String?   @db.VarChar(200)
+  sellerName         String?   @db.VarChar(200)
+  paymentCondition   String?   @db.VarChar(100)
+  paymentTerms       String?   @db.VarChar(500)
+  observations       String?   @db.VarChar(1000)
+  validUntil         DateTime? @db.Date
+
+  subtotal         Decimal  @db.Decimal(14, 2)
+  discountPercent  Decimal? @db.Decimal(5, 2)
+  vatRate          Decimal  @default(21) @db.Decimal(5, 2)
+  vatAmount        Decimal  @db.Decimal(14, 2)
+  total            Decimal  @db.Decimal(14, 2)
+
+  workOrder   WorkOrder? @relation(fields: [workOrderId], references: [id])
+  workOrderId String?    @unique @db.Uuid
+
+  createdBy   User   @relation("QuoteCreator", fields: [createdById], references: [id])
+  createdById String @db.Uuid
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  items QuoteItem[]
+
+  @@index([status, requestDate])
+  @@index([particularClientId])
+  @@index([buildingId])
+  @@index([deletedAt, requestDate])
+  @@map("quotes")
+}
+
+model QuoteItem {
+  id              String   @id @default(uuid()) @db.Uuid
+  quote           Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  quoteId         String   @db.Uuid
+  quantity        Decimal  @db.Decimal(12, 3)
+  description     String   @db.VarChar(1000)
+  unitPrice       Decimal  @db.Decimal(14, 2)
+  discountPercent Decimal? @db.Decimal(5, 2)
+  lineTotal       Decimal  @db.Decimal(14, 2)
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([quoteId, sortOrder])
+  @@map("quote_items")
 }
 
 model Floor {
@@ -688,12 +799,18 @@ model Attendance {
   checkInGpsLng        Decimal? @db.Decimal(10, 7)
   checkInDeviceId      String?  @db.VarChar(200)
   checkInIp            String?  @db.VarChar(45)
+  /// Entrada fuera del radio GPS del edificio (advertencia; no bloquea).
+  checkInOutOfRange    Boolean  @default(false)
+  checkInDistanceM     Int?
   checkOutAt           DateTime?
   checkOutOccurredAt   DateTime?
   checkOutGpsLat       Decimal? @db.Decimal(10, 7)
   checkOutGpsLng       Decimal? @db.Decimal(10, 7)
   checkOutDeviceId     String?  @db.VarChar(200)
   checkOutIp           String?  @db.VarChar(45)
+  /// Salida fuera del radio GPS del edificio (advertencia; no bloquea).
+  checkOutOutOfRange   Boolean  @default(false)
+  checkOutDistanceM    Int?
   forgotCheckout       Boolean  @default(false)
   isOfflineSynced      Boolean  @default(false)
   clientOperationId    String?  @unique @db.VarChar(100)
@@ -787,6 +904,7 @@ model WorkOrder {
   integrationLogs    IntegrationInboundLog[]
   expenses           WorkOrderExpense[]
   commissionItems    CommissionSettlementItem[]
+  quote              Quote?
 
   @@index([buildingId, status, scheduledDate])
   @@index([type, buildingId, status, scheduledDate])

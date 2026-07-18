@@ -96,10 +96,29 @@ const NAV_ITEMS: NavItem[] = [
     ),
     children: [
       { href: '/buildings', label: 'Edificios', module: APP_MODULES.BUILDINGS },
+      {
+        href: '/clientes-particulares',
+        label: 'Clientes particulares',
+        module: APP_MODULES.CLIENTES_PARTICULARES,
+      },
       { href: '/users', label: 'Usuarios', module: APP_MODULES.USERS },
       { href: '/roles', label: 'Roles', module: APP_MODULES.ROLES },
       { href: '/tasks', label: 'Tareas', module: APP_MODULES.TASKS },
     ],
+  },
+  {
+    href: '/presupuestos',
+    label: 'Presupuestos',
+    module: APP_MODULES.PRESUPUESTOS,
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+        <line x1="10" y1="9" x2="8" y2="9" />
+      </svg>
+    ),
   },
   {
     href: '/trabajos-eventuales',

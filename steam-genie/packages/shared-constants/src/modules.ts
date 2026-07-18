@@ -2,6 +2,8 @@
 export const APP_MODULES = {
   DASHBOARD: 'dashboard',
   BUILDINGS: 'buildings',
+  CLIENTES_PARTICULARES: 'clientes_particulares',
+  PRESUPUESTOS: 'presupuestos',
   USERS: 'users',
   TASKS: 'tasks',
   ROLES: 'roles',
@@ -32,6 +34,8 @@ export const SYSTEM_ROLE_MODULES: Record<string, AppModuleKey[]> = {
   manager: [
     APP_MODULES.DASHBOARD,
     APP_MODULES.BUILDINGS,
+    APP_MODULES.CLIENTES_PARTICULARES,
+    APP_MODULES.PRESUPUESTOS,
     APP_MODULES.TASKS,
     APP_MODULES.RESERVAS,
     APP_MODULES.SERVICIOS_EVENTUALES,
@@ -61,6 +65,8 @@ export const SYSTEM_ROLE_MODULES: Record<string, AppModuleKey[]> = {
 export const APP_MODULE_LABELS: Record<AppModuleKey, string> = {
   [APP_MODULES.DASHBOARD]: 'Inicio',
   [APP_MODULES.BUILDINGS]: 'Edificios',
+  [APP_MODULES.CLIENTES_PARTICULARES]: 'Clientes particulares',
+  [APP_MODULES.PRESUPUESTOS]: 'Presupuestos',
   [APP_MODULES.USERS]: 'Usuarios',
   [APP_MODULES.TASKS]: 'Tareas',
   [APP_MODULES.ROLES]: 'Roles y permisos',
@@ -93,10 +99,15 @@ export const APP_MODULE_GROUPS: Array<{
     label: 'Configuración',
     modules: [
       APP_MODULES.BUILDINGS,
+      APP_MODULES.CLIENTES_PARTICULARES,
       APP_MODULES.USERS,
       APP_MODULES.TASKS,
       APP_MODULES.ROLES,
     ],
+  },
+  {
+    label: 'Comercial',
+    modules: [APP_MODULES.PRESUPUESTOS, APP_MODULES.CLIENTES_PARTICULARES],
   },
   {
     label: 'Trabajos eventuales',

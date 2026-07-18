@@ -275,8 +275,12 @@ export interface AttendanceTimelineItem {
   id: string;
   checkInAt: string;
   checkOutAt: string | null;
+  checkInOutOfRange?: boolean;
+  checkInDistanceM?: number | null;
+  checkOutOutOfRange?: boolean;
+  checkOutDistanceM?: number | null;
   user: { id: string; fullName: string; dni: string };
-  building: { id: string; name: string };
+  building: { id: string; name: string; gpsRadiusM?: number };
   taskProgress: { total: number; completed: number } | undefined;
 }
 
@@ -461,6 +465,85 @@ export interface StockSupplierItem {
   createdAt: string;
   updatedAt: string;
   _count?: { products: number };
+}
+
+export interface ParticularClientItem {
+  id: string;
+  name: string;
+  taxId?: string | null;
+  address?: string | null;
+  contactName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  notes?: string | null;
+  isActive: boolean;
+  buildingId: string;
+  building: Building;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type QuoteStatus =
+  | 'COTIZADO'
+  | 'EN_ESPERA'
+  | 'ACEPTADO'
+  | 'RECHAZADO'
+  | 'TERMINADO';
+
+export interface QuoteItem {
+  id: string;
+  quantity: string | number;
+  description: string;
+  unitPrice: string | number;
+  discountPercent?: string | number | null;
+  lineTotal: string | number;
+  sortOrder: number;
+}
+
+export interface QuoteItemInput {
+  quantity: number;
+  description: string;
+  unitPrice: number;
+  discountPercent?: number;
+}
+
+export interface Quote {
+  id: string;
+  number: number;
+  status: QuoteStatus;
+  particularClientId?: string | null;
+  buildingId?: string | null;
+  requestDate: string;
+  serviceType?: string | null;
+  clientDetails?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  sellerName?: string | null;
+  paymentCondition?: string | null;
+  paymentTerms?: string | null;
+  observations?: string | null;
+  validUntil?: string | null;
+  subtotal: string | number;
+  discountPercent?: string | number | null;
+  vatRate: string | number;
+  vatAmount: string | number;
+  total: string | number;
+  workOrderId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  items: QuoteItem[];
+  particularClient?: Pick<
+    ParticularClientItem,
+    'id' | 'name' | 'taxId' | 'address' | 'contactName' | 'email' | 'phone' | 'buildingId'
+  > | null;
+  building?: Pick<Building, 'id' | 'name' | 'address' | 'city' | 'province'> | null;
+  workOrder?: {
+    id: string;
+    title: string;
+    status: string;
+    scheduledDate?: string | null;
+  } | null;
+  createdBy?: { id: string; fullName: string };
 }
 
 export interface StockProductItem {

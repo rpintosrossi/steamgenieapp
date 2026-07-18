@@ -31,13 +31,17 @@ export class BuildingsService {
   // ─── Buildings ─────────────────────────────────────────────────────────────
 
   async findAll(query: QueryBuildingsDto, user?: AuthUser) {
-    const { page = 1, limit = 20, search, includeInactive } = query;
+    const { page = 1, limit = 20, search, includeInactive, includeParticularSites } = query;
     const skip = (page - 1) * limit;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = { deletedAt: null };
     if (!includeInactive) {
       where.isActive = true;
+    }
+    // Por defecto ocultamos sitios de clientes particulares del listado de edificios.
+    if (!includeParticularSites) {
+      where.particularClient = null;
     }
     if (search) {
       where.OR = [
@@ -333,7 +337,7 @@ export class BuildingsService {
 
   async update(id: string, dto: UpdateBuildingDto) {
     await this.assertBuildingExists(id);
-    return this.prisma.building.update({
+    const building = await this.prisma.building.update({
       where: { id },
       data: {
         ...(dto.name !== undefined ? { name: dto.name } : {}),
@@ -352,6 +356,23 @@ export class BuildingsService {
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       },
     });
+
+    if (
+      dto.name !== undefined ||
+      dto.address !== undefined ||
+      dto.isActive !== undefined
+    ) {
+      await this.prisma.particularClient.updateMany({
+        where: { buildingId: id, deletedAt: null },
+        data: {
+          ...(dto.name !== undefined ? { name: dto.name } : {}),
+          ...(dto.address !== undefined ? { address: dto.address } : {}),
+          ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+        },
+      });
+    }
+
+    return building;
   }
 
   async remove(id: string, cascade = false) {
@@ -368,9 +389,16 @@ export class BuildingsService {
       );
     }
 
-    await this.prisma.building.update({
-      where: { id },
-      data: { deletedAt: new Date(), isActive: false },
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.particularClient.updateMany({
+        where: { buildingId: id, deletedAt: null },
+        data: { deletedAt: now, isActive: false },
+      });
+      await tx.building.update({
+        where: { id },
+        data: { deletedAt: now, isActive: false },
+      });
     });
     return { message: 'Building deleted' };
   }

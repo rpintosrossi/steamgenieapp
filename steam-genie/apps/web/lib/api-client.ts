@@ -312,7 +312,7 @@ export const api = {
 
     return send(Boolean(_retried));
   },
-  download: async (path: string, filename: string, opts?: FetchOptions): Promise<void> => {
+  fetchBlob: async (path: string, opts?: FetchOptions): Promise<Blob> => {
     const { skipAuth, _retried, ...fetchOptions } = opts ?? {};
     const headers: HeadersInit = { ...(fetchOptions.headers ?? {}) };
 
@@ -333,7 +333,7 @@ export const api = {
     if (res.status === 401 && !skipAuth && !_retried) {
       const newToken = await refreshAccessToken();
       if (newToken) {
-        return api.download(path, filename, { ...opts, _retried: true });
+        return api.fetchBlob(path, { ...opts, _retried: true });
       }
       throw new Error('Sesión expirada. Volvé a iniciar sesión.');
     }
@@ -343,7 +343,10 @@ export const api = {
       throw new Error(extractErrorMessage(errBody, res.status, res.statusText));
     }
 
-    const blob = await res.blob();
+    return res.blob();
+  },
+  download: async (path: string, filename: string, opts?: FetchOptions): Promise<void> => {
+    const blob = await api.fetchBlob(path, opts);
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;

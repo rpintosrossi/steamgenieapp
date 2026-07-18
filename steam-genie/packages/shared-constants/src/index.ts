@@ -9,3 +9,4 @@ export * from './stock';
 export * from './stock-logistics';
 export * from './stock-movements';
 export * from './task-categories';
+export * from './quotes';

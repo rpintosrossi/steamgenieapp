@@ -16,4 +16,17 @@ export class QueryBuildingsDto extends PaginationDto {
   })
   @IsBoolean()
   includeInactive?: boolean;
+
+  /**
+   * Si es true, incluye sitios de clientes particulares.
+   * Por defecto se excluyen del listado de edificios del admin.
+   */
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true' || value === true) return true;
+    if (value === 'false' || value === false) return false;
+    return undefined;
+  })
+  @IsBoolean()
+  includeParticularSites?: boolean;
 }
