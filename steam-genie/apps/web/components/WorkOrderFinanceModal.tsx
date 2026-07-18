@@ -14,6 +14,37 @@ function money(value: number | null | undefined): string {
   return value.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
 }
 
+/** Formatea un número para el input (puntos de miles, coma decimal). */
+function formatAmountFromNumber(value: number): string {
+  return value.toLocaleString('es-AR', {
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+/** Formatea lo que escribe el usuario: 1220000 → 1.220.000 */
+function formatAmountInput(raw: string): string {
+  const cleaned = raw.replace(/[^\d,]/g, '');
+  if (cleaned === '') return '';
+
+  const commaIndex = cleaned.indexOf(',');
+  const hasComma = commaIndex !== -1;
+  const intDigits = (hasComma ? cleaned.slice(0, commaIndex) : cleaned).replace(/\D/g, '');
+  const decDigits = hasComma ? cleaned.slice(commaIndex + 1).replace(/\D/g, '').slice(0, 2) : '';
+
+  const withDots = intDigits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  if (hasComma) return `${withDots},${decDigits}`;
+  return withDots;
+}
+
+function parseAmountInput(formatted: string): number | null {
+  const trimmed = formatted.trim();
+  if (trimmed === '') return null;
+  const normalized = trimmed.replace(/\./g, '').replace(',', '.');
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
 export function WorkOrderFinanceModal({ workOrderId, onClose }: Props) {
   const [data, setData] = useState<WorkOrderFinance | null>(null);
   const [loading, setLoading] = useState(true);
@@ -36,7 +67,9 @@ export function WorkOrderFinanceModal({ workOrderId, onClose }: Props) {
       const finance = await api.get<WorkOrderFinance>(`/work-orders/${workOrderId}/finance`);
       setData(finance);
       setClientAmount(
-        finance.clientAmountCharged == null ? '' : String(finance.clientAmountCharged),
+        finance.clientAmountCharged == null
+          ? ''
+          : formatAmountFromNumber(finance.clientAmountCharged),
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo cargar la información');
@@ -55,9 +88,8 @@ export function WorkOrderFinanceModal({ workOrderId, onClose }: Props) {
     setError(null);
     setSuccess(null);
     try {
-      const trimmed = clientAmount.trim();
       await api.patch(`/work-orders/${workOrderId}/client-amount`, {
-        clientAmountCharged: trimmed === '' ? null : Number(trimmed),
+        clientAmountCharged: parseAmountInput(clientAmount),
       });
       setSuccess('Monto cobrado actualizado.');
       await load();
@@ -161,12 +193,11 @@ export function WorkOrderFinanceModal({ workOrderId, onClose }: Props) {
                 <label htmlFor="client-amount">Monto cobrado al cliente</label>
                 <input
                   id="client-amount"
-                  type="number"
-                  min="0"
-                  step="0.01"
+                  type="text"
+                  inputMode="decimal"
                   value={clientAmount}
-                  onChange={(e) => setClientAmount(e.target.value)}
-                  placeholder="Opcional"
+                  onChange={(e) => setClientAmount(formatAmountInput(e.target.value))}
+                  placeholder="Ej. 1.220.000"
                 />
               </div>
               <button type="submit" className="btn btn-primary" disabled={savingAmount}>
