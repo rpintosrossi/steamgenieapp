@@ -35,24 +35,24 @@ export class WorkOrderAssignmentGuard implements CanActivate {
     }>();
 
     const user = request.user;
-    if (!user) throw new ForbiddenException('Not authenticated');
+    if (!user) throw new ForbiddenException('No autenticado');
 
     const workOrderId = request.params['id'];
-    if (!workOrderId) throw new NotFoundException('Work order not found');
+    if (!workOrderId) throw new NotFoundException('Servicio no encontrado');
 
     const workOrder = await this.prisma.workOrder.findFirst({
       where: { id: workOrderId, deletedAt: null },
       select: { id: true, status: true },
     });
 
-    if (!workOrder) throw new NotFoundException('Work order not found');
+    if (!workOrder) throw new NotFoundException('Servicio no encontrado');
 
     // Only ASSIGNED status is compatible with a pending acceptance/rejection.
     // ACCEPTED is also allowed in case of re-confirmation edge cases.
     const compatibleStatuses = ['ASSIGNED', 'ACCEPTED'];
     if (!compatibleStatuses.includes(workOrder.status)) {
       throw new ForbiddenException(
-        `Work order cannot be accepted or rejected in its current state (${workOrder.status})`,
+        `No se puede aceptar ni rechazar este servicio en su estado actual (${workOrder.status})`,
       );
     }
 
@@ -66,7 +66,7 @@ export class WorkOrderAssignmentGuard implements CanActivate {
 
     if (!assignment) {
       throw new ForbiddenException(
-        'You do not have a pending assignment for this work order',
+        'No tenés una asignación pendiente para este servicio. Ya respondiste esta asignación o no te corresponde.',
       );
     }
 

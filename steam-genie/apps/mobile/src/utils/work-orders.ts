@@ -215,3 +215,91 @@ export function formatPhotoRequiredMessage(message: string): string {
   }
   return 'Hay tareas marcadas como hechas que requieren foto. Revisá el checklist antes de completar el servicio.';
 }
+
+/** 403/Conflict típicos de doble tap o UI desactualizada tras accept/reject. */
+export function isAlreadyRespondedAssignmentError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('no pending assignment') ||
+    message.includes('do not have a pending assignment') ||
+    message.includes('no tenés una asignación pendiente') ||
+    message.includes('no tenes una asignacion pendiente') ||
+    message.includes('ya respondiste esta asignación') ||
+    message.includes('ya respondiste esta asignacion')
+  );
+}
+
+/** Conflict de start cuando la ejecución ya existe y el usuario ya participa. */
+export function isAlreadyStartedWorkOrderError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('already a participant') ||
+    message.includes('ya sos participante') ||
+    message.includes('ya eres participante') ||
+    message.includes('already started') ||
+    message.includes('ya fue iniciado')
+  );
+}
+
+/** Traduce errores comunes de mutaciones de work order (EN legacy + ES). */
+export function formatWorkOrderActionError(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  const message = error.message.trim();
+  const lower = message.toLowerCase();
+
+  if (
+    lower.includes('network request failed') ||
+    lower.includes('failed to fetch') ||
+    lower.includes('network error') ||
+    lower.includes('unexpected end of json') ||
+    lower.includes('unexpected end of input')
+  ) {
+    return 'No se pudo confirmar la respuesta del servidor. Si la acción ya se aplicó, actualizá la pantalla.';
+  }
+
+  if (isAlreadyRespondedAssignmentError(error)) {
+    return 'Ya respondiste esta asignación. Actualizá la pantalla para ver el estado actual.';
+  }
+
+  if (isAlreadyStartedWorkOrderError(error)) {
+    return 'Este servicio ya fue iniciado. Actualizá la pantalla o abrí el checklist.';
+  }
+
+  if (
+    lower.includes('active attendance') ||
+    lower.includes('attendance record required') ||
+    lower.includes('fichaje')
+  ) {
+    return 'Tenés que fichar entrada en este edificio antes de iniciar el servicio.';
+  }
+
+  if (
+    lower.includes('must have an accepted assignment') ||
+    lower.includes('asignación aceptada') ||
+    lower.includes('asignacion aceptada')
+  ) {
+    return 'Tenés que aceptar el servicio antes de iniciarlo.';
+  }
+
+  if (
+    lower.includes('cannot be accepted or rejected') ||
+    lower.includes('no se puede aceptar ni rechazar')
+  ) {
+    return 'Este servicio ya no se puede aceptar ni rechazar en su estado actual.';
+  }
+
+  if (lower.includes('already completed') || lower.includes('ya está completado')) {
+    return 'Este servicio ya está completado.';
+  }
+
+  if (
+    lower.includes('cannot be completed from status') ||
+    lower.includes('no se puede completar')
+  ) {
+    return 'Este servicio no se puede completar en su estado actual.';
+  }
+
+  return message || fallback;
+}

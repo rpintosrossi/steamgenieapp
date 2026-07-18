@@ -524,7 +524,9 @@ export class WorkOrdersService {
       where: { workOrderId: id, userId: user.id, status: 'PENDING' },
     });
     if (!assignment) {
-      throw new ForbiddenException('No pending assignment found for this user');
+      throw new ForbiddenException(
+        'No tenés una asignación pendiente para este servicio. Ya respondiste esta asignación o no te corresponde.',
+      );
     }
 
     await this.prisma.$transaction([
@@ -550,7 +552,9 @@ export class WorkOrdersService {
       where: { workOrderId: id, userId: user.id, status: 'PENDING' },
     });
     if (!assignment) {
-      throw new ForbiddenException('No pending assignment found for this user');
+      throw new ForbiddenException(
+        'No tenés una asignación pendiente para este servicio. Ya respondiste esta asignación o no te corresponde.',
+      );
     }
 
     // Validate rejectionReasonId if provided
@@ -558,7 +562,9 @@ export class WorkOrdersService {
       const reason = await this.prisma.rejectionReason.findFirst({
         where: { id: dto.rejectionReasonId, type: 'SERVICE_REJECTION', isActive: true },
       });
-      if (!reason) throw new NotFoundException('Rejection reason not found or invalid type');
+      if (!reason) {
+        throw new NotFoundException('Motivo de rechazo no encontrado o inválido');
+      }
     }
 
     await this.prisma.workOrderAssignment.update({
@@ -603,7 +609,7 @@ export class WorkOrdersService {
     });
     if (!hasAccepted && !hasManagerRole) {
       throw new ForbiddenException(
-        'You must have an ACCEPTED assignment or a manager/admin role in this building',
+        'Tenés que tener una asignación aceptada o un rol de encargado/admin en este edificio para iniciar el servicio.',
       );
     }
 
@@ -620,12 +626,12 @@ export class WorkOrdersService {
     });
     if (!attendance) {
       throw new ForbiddenException(
-        'Active attendance record required in this building to start a work order',
+        'Tenés que fichar entrada en este edificio antes de iniciar el servicio.',
       );
     }
 
     if (wo.status === WorkOrderStatus.COMPLETED) {
-      throw new ConflictException('Work order is already completed');
+      throw new ConflictException('Este servicio ya está completado.');
     }
 
     if (
@@ -645,7 +651,9 @@ export class WorkOrdersService {
         where: { serviceExecutionId: existing.id, userId: user.id },
       });
       if (alreadyParticipant) {
-        throw new ConflictException('You are already a participant in this service execution');
+        throw new ConflictException(
+          'Ya sos participante de la ejecución de este servicio. Ya fue iniciado.',
+        );
       }
       await this.prisma.serviceExecutionParticipant.create({
         data: {
@@ -693,7 +701,7 @@ export class WorkOrdersService {
 
     if (wo.status !== WorkOrderStatus.IN_PROGRESS) {
       throw new ConflictException(
-        `Work order cannot be completed from status ${wo.status}`,
+        `No se puede completar este servicio desde el estado ${wo.status}`,
       );
     }
 
@@ -702,7 +710,9 @@ export class WorkOrdersService {
       include: { participants: { select: { userId: true } } },
     });
     if (!serviceExecution) {
-      throw new ConflictException('No active service execution found for this work order');
+      throw new ConflictException(
+        'No hay una ejecución activa para este servicio.',
+      );
     }
 
     // User must be a participant OR have manager/admin role for the building

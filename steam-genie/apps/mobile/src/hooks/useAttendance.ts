@@ -4,6 +4,7 @@ import { syncQueue, generateClientId } from '../sync/sync-queue';
 import { useBuildingStore } from '../stores/building.store';
 import { useSyncStore } from '../stores/sync.store';
 import {
+  getGpsOutOfRangeWarning,
   mapActiveAttendance,
   type ActiveAttendanceResponse,
 } from '../utils/attendance';
@@ -24,6 +25,7 @@ const RECONCILE_CHECKOUT_DELAYS_MS = [0, 500, 1200, 2500, 4000, 6000] as const;
 export function useAttendance(isOnline: boolean) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const actionInFlight = useRef(false);
 
   const { selectedBuilding, prefetchData, updateActiveAttendance, syncActiveAttendance } =
@@ -111,11 +113,18 @@ export function useAttendance(isOnline: boolean) {
     actionInFlight.current = true;
     setIsLoading(true);
     setError(null);
+    setWarning(null);
 
     try {
       const { gpsLat, gpsLng } = await getRequiredGpsPosition();
       const occurredAt = new Date().toISOString();
       const clientOperationId = generateClientId();
+      const outOfRangeWarning = getGpsOutOfRangeWarning(
+        selectedBuilding,
+        gpsLat,
+        gpsLng,
+        'entrada',
+      );
 
       if (isOnline) {
         // Tras el GPS (puede tardar 20–40s) la conexión suele quedar fría: despertar API.
@@ -155,6 +164,7 @@ export function useAttendance(isOnline: boolean) {
         const reconciled = await reconcileCheckIn(selectedBuilding.id);
         if (reconciled) {
           setError(null);
+          setWarning(outOfRangeWarning);
           return true;
         }
 
@@ -168,6 +178,7 @@ export function useAttendance(isOnline: boolean) {
             version: 1,
           });
           setError(null);
+          setWarning(outOfRangeWarning);
           return true;
         }
 
@@ -199,6 +210,7 @@ export function useAttendance(isOnline: boolean) {
         version: 1,
       });
       setStatus('pending');
+      setWarning(outOfRangeWarning);
       return true;
     } catch (e) {
       if (isOnline && selectedBuilding) {
@@ -225,10 +237,23 @@ export function useAttendance(isOnline: boolean) {
     actionInFlight.current = true;
     setIsLoading(true);
     setError(null);
+    setWarning(null);
+
+    const buildingForWarning =
+      selectedBuilding ??
+      useBuildingStore.getState().selectedBuilding ??
+      useBuildingStore.getState().prefetchData?.building ??
+      null;
 
     try {
       const { gpsLat, gpsLng } = await getRequiredGpsPosition();
       const occurredAt = new Date().toISOString();
+      const outOfRangeWarning = getGpsOutOfRangeWarning(
+        buildingForWarning,
+        gpsLat,
+        gpsLng,
+        'salida',
+      );
 
       if (isOnline) {
         await apiService.postOk('/attendance/check-out', {
@@ -256,6 +281,7 @@ export function useAttendance(isOnline: boolean) {
         updateActiveAttendance(null);
         setStatus('pending');
       }
+      setWarning(outOfRangeWarning);
       return true;
     } catch (e) {
       if (isOnline) {
@@ -275,15 +301,17 @@ export function useAttendance(isOnline: boolean) {
       actionInFlight.current = false;
       setIsLoading(false);
     }
-  }, [isOnline, updateActiveAttendance, syncActiveAttendance, setStatus]);
+  }, [isOnline, selectedBuilding, updateActiveAttendance, syncActiveAttendance, setStatus]);
 
   return {
     activeAttendance,
     isLoading,
     error,
+    warning,
     checkIn,
     checkOut,
     syncAttendance: syncActiveAttendance,
     clearError: () => setError(null),
+    clearWarning: () => setWarning(null),
   };
 }

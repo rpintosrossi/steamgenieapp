@@ -73,7 +73,16 @@ export default function FichajeScreen() {
   const { isConnected } = useNetworkStatus();
   const isOnline = isConnected ?? true;
 
-  const { activeAttendance, isLoading, error, checkIn, checkOut, clearError } = useAttendance(isOnline);
+  const {
+    activeAttendance,
+    isLoading,
+    error,
+    warning,
+    checkIn,
+    checkOut,
+    clearError,
+    clearWarning,
+  } = useAttendance(isOnline);
 
   const [devGps, setDevGps] = useState<{ lat: number; lng: number } | null>(null);
   const [workOrders, setWorkOrders] = useState<WorkOrderCached[]>([]);
@@ -309,6 +318,13 @@ export default function FichajeScreen() {
           </TouchableOpacity>
         )}
 
+        {warning && (
+          <TouchableOpacity style={styles.warningBox} onPress={clearWarning}>
+            <Ionicons name="warning" size={18} color={COLORS.warning} />
+            <Text style={styles.warningText}>{warning}</Text>
+          </TouchableOpacity>
+        )}
+
         {__DEV__ && devGps && (
           <View style={styles.infoBox}>
             <Ionicons name="navigate-outline" size={14} color={COLORS.textMuted} />
@@ -328,7 +344,7 @@ export default function FichajeScreen() {
           <View style={styles.infoBox}>
             <Ionicons name="location-outline" size={14} color={COLORS.textMuted} />
             <Text style={styles.infoText}>
-              Radio GPS: {selectedBuilding.gpsRadiusM}m — Tu ubicación se validará al fichar
+              Radio GPS: {selectedBuilding.gpsRadiusM}m — Si fichás fuera del radio, se registra una advertencia
             </Text>
           </View>
         ) : (
@@ -586,6 +602,19 @@ const styles = StyleSheet.create({
     borderColor: '#fecaca',
   },
   errorText: { flex: 1, color: COLORS.error, fontSize: 13 },
+  warningBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    backgroundColor: '#fffbeb',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+  },
+  warningText: { flex: 1, color: COLORS.warning, fontSize: 13 },
   infoBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',

@@ -265,7 +265,7 @@ export default function StockScreen() {
               setConfirmingDeliveryId(delivery.id);
               setError(null);
               try {
-                await apiService.post(
+                await apiService.postOk(
                   `/stock-logistics/shipments/destinations/${delivery.id}/deliver`,
                   {},
                 );

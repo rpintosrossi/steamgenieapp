@@ -536,6 +536,28 @@ export default function AttendanceTimelinePage() {
                         <span className="badge badge-info">En curso</span>
                       )}
                     </div>
+                    {(item.checkInOutOfRange || item.checkOutOutOfRange) && (
+                      <div className="attendance-timeline-gps-warnings">
+                        {item.checkInOutOfRange && (
+                          <span className="badge badge-warning" title="Entrada fuera del radio GPS del edificio">
+                            Entrada fuera de radio
+                            {item.checkInDistanceM != null ? ` · ${item.checkInDistanceM} m` : ''}
+                            {item.building.gpsRadiusM != null
+                              ? ` (máx. ${item.building.gpsRadiusM} m)`
+                              : ''}
+                          </span>
+                        )}
+                        {item.checkOutOutOfRange && (
+                          <span className="badge badge-warning" title="Salida fuera del radio GPS del edificio">
+                            Salida fuera de radio
+                            {item.checkOutDistanceM != null ? ` · ${item.checkOutDistanceM} m` : ''}
+                            {item.building.gpsRadiusM != null
+                              ? ` (máx. ${item.building.gpsRadiusM} m)`
+                              : ''}
+                          </span>
+                        )}
+                      </div>
+                    )}
                     <div className="attendance-timeline-body">
                       <div className="attendance-timeline-worker">
                         <span className="attendance-timeline-label">Trabajador</span>

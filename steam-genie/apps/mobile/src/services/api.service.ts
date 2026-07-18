@@ -196,6 +196,59 @@ async function postOk(
   }
 }
 
+/**
+ * POST que exige HTTP 2xx. Parsea JSON si puede; si el body se corta en RN
+ * (falso "Network request failed"), retorna undefined en vez de tirar error.
+ * Útil cuando el body ayuda (p. ej. seId) pero el éxito ya quedó en el servidor.
+ */
+async function postMaybeJson<T>(
+  path: string,
+  body: unknown,
+  options: RequestOptions = {},
+): Promise<T | undefined> {
+  const { _retried, skipAuth, ...fetchOptions } = options;
+  const headers = await buildAuthHeaders(skipAuth);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      ...fetchOptions,
+      headers: {
+        ...headers,
+        ...(fetchOptions.headers ?? {}),
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Network request failed';
+    throw new Error(message);
+  }
+
+  if (res.status === 401 && !skipAuth && !_retried) {
+    const newToken = await useAuthStore.getState().refreshTokens();
+    if (newToken) {
+      return postMaybeJson<T>(path, body, { ...options, _retried: true });
+    }
+    throw new Error('Sesión expirada. Volvé a iniciar sesión.');
+  }
+
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({ message: res.statusText }));
+    const message = extractErrorMessage(errBody, res.statusText || 'Error desconocido');
+    throw new ApiRequestError(message, res.status);
+  }
+
+  try {
+    const text = await res.text();
+    if (!text.trim()) return undefined;
+    return JSON.parse(text) as T;
+  } catch {
+    return undefined;
+  }
+}
+
 // ─── Multipart upload ─────────────────────────────────────────────────────────
 
 async function requestMultipart<T>(
@@ -240,6 +293,7 @@ export const apiService = {
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
   postOk: (path: string, body: unknown) => postOk(path, body),
+  postMaybeJson: <T>(path: string, body: unknown) => postMaybeJson<T>(path, body),
   put: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   putOk: (path: string, body: unknown) => putOk(path, body),

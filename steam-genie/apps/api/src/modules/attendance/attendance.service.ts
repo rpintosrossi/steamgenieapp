@@ -1,7 +1,6 @@
 import {
   Injectable,
   NotFoundException,
-  ConflictException,
   ForbiddenException,
   BadRequestException,
 } from '@nestjs/common';
@@ -19,9 +18,20 @@ const TIMELINE_SELECT = {
   id: true,
   checkInAt: true,
   checkOutAt: true,
+  checkInOutOfRange: true,
+  checkInDistanceM: true,
+  checkOutOutOfRange: true,
+  checkOutDistanceM: true,
   user: { select: { id: true, fullName: true, dni: true } },
-  building: { select: { id: true, name: true } },
+  building: { select: { id: true, name: true, gpsRadiusM: true } },
 } as const;
+
+export type GpsProximityResult = {
+  outOfRange: boolean;
+  distanceM: number | null;
+  allowedRadiusM: number | null;
+  buildingName: string;
+};
 
 const TIMELINE_MAX_ROWS = 2000;
 
@@ -34,8 +44,12 @@ export class AttendanceService {
   async checkIn(user: AuthUser, dto: CheckInDto, ip?: string) {
     const now = new Date();
 
-    // GPS validation — must be inside building radius
-    await this.assertInsideBuilding(dto.buildingId, dto.gpsLat, dto.gpsLng);
+    // GPS: fuera de radio → advertencia (no bloquea el fichaje).
+    const gps = await this.evaluateGpsProximity(
+      dto.buildingId,
+      dto.gpsLat,
+      dto.gpsLng,
+    );
 
     // Idempotency for offline sync
     if (dto.clientOperationId) {
@@ -73,6 +87,8 @@ export class AttendanceService {
         checkInGpsLng: dto.gpsLng,
         checkInDeviceId: dto.deviceId ?? null,
         checkInIp: ip ?? null,
+        checkInOutOfRange: gps.outOfRange,
+        checkInDistanceM: gps.distanceM,
         clientOperationId: dto.clientOperationId ?? null,
       },
     });
@@ -100,8 +116,12 @@ export class AttendanceService {
       throw new NotFoundException('No active check-in found for this user');
     }
 
-    // GPS validation — must be inside the building where the open check-in was recorded
-    await this.assertInsideBuilding(attendance.buildingId, dto.gpsLat, dto.gpsLng);
+    // GPS: fuera de radio → advertencia (no bloquea el fichaje).
+    const gps = await this.evaluateGpsProximity(
+      attendance.buildingId,
+      dto.gpsLat,
+      dto.gpsLng,
+    );
 
     await this.prisma.attendance.update({
       where: { id: attendance.id },
@@ -112,10 +132,19 @@ export class AttendanceService {
         checkOutGpsLng: dto.gpsLng,
         checkOutDeviceId: dto.deviceId ?? null,
         checkOutIp: ip ?? null,
+        checkOutOutOfRange: gps.outOfRange,
+        checkOutDistanceM: gps.distanceM,
       },
     });
 
-    return { ok: true as const, attendanceId: attendance.id };
+    return {
+      ok: true as const,
+      attendanceId: attendance.id,
+      checkOutOutOfRange: gps.outOfRange,
+      checkOutDistanceM: gps.distanceM,
+      allowedRadiusM: gps.allowedRadiusM,
+      buildingName: gps.buildingName,
+    };
   }
 
   // ─── FIND ACTIVE ──────────────────────────────────────────────────────────
@@ -432,21 +461,17 @@ export class AttendanceService {
     return this.findById(id);
   }
 
-  // ─── PRIVATE: GPS validation ──────────────────────────────────────────────
+  // ─── PRIVATE: GPS proximity (warning, no hard block) ──────────────────────
 
   /**
-   * Loads the building's GPS center and radius, then validates that the given
-   * coordinates are within the configured radius.
-   * Throws if:
-   *   - Building not found / inactive.
-   *   - Building has no GPS coordinates configured.
-   *   - User is outside the allowed radius.
+   * Evalúa distancia al edificio. Fuera de radio → outOfRange=true (advertencia).
+   * Solo bloquea si el edificio no existe o, con validación activa, no tiene GPS.
    */
-  private async assertInsideBuilding(
+  private async evaluateGpsProximity(
     buildingId: string,
     gpsLat: number,
     gpsLng: number,
-  ) {
+  ): Promise<GpsProximityResult> {
     const building = await this.prisma.building.findFirst({
       where: { id: buildingId, isActive: true, deletedAt: null },
       select: {
@@ -462,7 +487,12 @@ export class AttendanceService {
     if (!building) throw new NotFoundException('Edificio no encontrado');
 
     if (!building.requireGpsValidation) {
-      return;
+      return {
+        outOfRange: false,
+        distanceM: null,
+        allowedRadiusM: null,
+        buildingName: building.name,
+      };
     }
 
     if (building.latitude == null || building.longitude == null) {
@@ -471,19 +501,21 @@ export class AttendanceService {
       );
     }
 
-    const distanceM = this.haversineDistanceM(
-      Number(building.latitude),
-      Number(building.longitude),
-      gpsLat,
-      gpsLng,
+    const distanceM = Math.round(
+      this.haversineDistanceM(
+        Number(building.latitude),
+        Number(building.longitude),
+        gpsLat,
+        gpsLng,
+      ),
     );
 
-    if (distanceM > building.gpsRadiusM) {
-      throw new ForbiddenException(
-        `Estás a ${Math.round(distanceM)} m de "${building.name}". ` +
-          `El radio permitido es de ${building.gpsRadiusM} m. Acercate al edificio e intentá de nuevo.`,
-      );
-    }
+    return {
+      outOfRange: distanceM > building.gpsRadiusM,
+      distanceM,
+      allowedRadiusM: building.gpsRadiusM,
+      buildingName: building.name,
+    };
   }
 
   /** Haversine great-circle distance between two WGS-84 coordinates, in metres. */

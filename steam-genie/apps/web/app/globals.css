@@ -2146,6 +2146,13 @@ textarea {
   margin: 0 2px;
 }
 
+.attendance-timeline-gps-warnings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
 .attendance-timeline-body {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

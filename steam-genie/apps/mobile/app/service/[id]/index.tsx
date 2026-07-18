@@ -30,12 +30,16 @@ import {
 import {
   formatChecklistIncompleteMessage,
   formatPhotoRequiredMessage,
+  formatWorkOrderActionError,
   getActiveServiceExecutionId,
   getUserAssignment,
+  isAlreadyRespondedAssignmentError,
+  isAlreadyStartedWorkOrderError,
   isChecklistIncompleteError,
   isPhotoRequiredError,
   isWorkOrderExpired,
 } from '../../../src/utils/work-orders';
+import { isNetworkError } from '../../../src/utils/network';
 import { formatStoredCalendarDate } from '@steam-genie/shared-constants';
 import type { ReservationSnapshot } from '../../../src/stores/building.store';
 
@@ -109,6 +113,7 @@ export default function ServiceDetailScreen() {
   const [actionLoading, setActionLoading] = useState(false);
   const [showRejectReasonPicker, setShowRejectReasonPicker] = useState(false);
   const hasLoadedRef = useRef(false);
+  const actionInFlightRef = useRef(false);
 
   const serviceRejectionReasons = (prefetchData?.rejectionReasons ?? []).filter(
     (reason) => reason.type === 'SERVICE_REJECTION',
@@ -164,26 +169,76 @@ export default function ServiceDetailScreen() {
 
   // ── Actions ──────────────────────────────────────────────────────────────────
 
+  function applyLocalAccept(current: WorkOrderDetail): WorkOrderDetail {
+    const userId = user?.id;
+    const nextAssignments = current.assignments.map((a) =>
+      userId && a.userId === userId ? { ...a, status: 'ACCEPTED' } : a,
+    );
+    return { ...current, status: 'ACCEPTED', assignments: nextAssignments };
+  }
+
+  async function reconcileWorkOrder(): Promise<WorkOrderDetail | null> {
+    if (!workOrder) return null;
+    try {
+      return await apiService.get<WorkOrderDetail>(`/work-orders/${workOrder.id}`);
+    } catch {
+      return null;
+    }
+  }
+
   async function handleAccept() {
-    if (!workOrder) return;
+    if (!workOrder || actionInFlightRef.current) return;
+    if (!isOnline) {
+      Alert.alert('Sin conexión', 'No es posible aceptar servicios sin conexión.');
+      return;
+    }
+
+    actionInFlightRef.current = true;
     setActionLoading(true);
     try {
-      if (isOnline) {
-        await apiService.post(`/work-orders/${workOrder.id}/accept`, {});
-        await refreshPrefetch();
-        await loadWorkOrder('silent');
-      } else {
-        Alert.alert('Sin conexión', 'No es posible aceptar servicios sin conexión.');
+      try {
+        // postOk: no exige parsear el body (evita falsos "Network request failed").
+        await apiService.postOk(`/work-orders/${workOrder.id}/accept`, {});
+        setWorkOrder((prev) => (prev ? applyLocalAccept(prev) : prev));
+        patchWorkOrder(workOrder.id, { status: 'ACCEPTED' });
+      } catch (e) {
+        if (!isAlreadyRespondedAssignmentError(e)) throw e;
+
+        const reconciled = await reconcileWorkOrder();
+        const assignment =
+          reconciled && user?.id ? getUserAssignment(reconciled, user.id) : undefined;
+        if (
+          !reconciled ||
+          !(
+            assignment?.status === 'ACCEPTED' ||
+            reconciled.status === 'ACCEPTED' ||
+            reconciled.status === 'IN_PROGRESS' ||
+            reconciled.status === 'COMPLETED'
+          )
+        ) {
+          throw e;
+        }
+
+        setWorkOrder(reconciled);
+        patchWorkOrder(reconciled.id, {
+          status: reconciled.status,
+          title: reconciled.title,
+        });
       }
+
+      // Refresh best-effort: no mostrar error si el accept ya quedó aplicado.
+      void refreshPrefetch();
+      void loadWorkOrder('silent');
     } catch (e) {
-      Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo aceptar');
+      Alert.alert('Error', formatWorkOrderActionError(e, 'No se pudo aceptar'));
     } finally {
+      actionInFlightRef.current = false;
       setActionLoading(false);
     }
   }
 
   function requestReject() {
-    if (!workOrder) return;
+    if (!workOrder || actionInFlightRef.current) return;
     if (!isOnline) {
       Alert.alert('Sin conexión', 'No es posible rechazar servicios sin conexión.');
       return;
@@ -209,24 +264,50 @@ export default function ServiceDetailScreen() {
   }
 
   async function submitReject(rejectionReasonId?: string) {
-    if (!workOrder) return;
+    if (!workOrder || actionInFlightRef.current) return;
     setShowRejectReasonPicker(false);
+    actionInFlightRef.current = true;
     setActionLoading(true);
     try {
-      await apiService.post<WorkOrderDetail>(
-        `/work-orders/${workOrder.id}/reject`,
-        rejectionReasonId ? { rejectionReasonId } : {},
-      );
-      removeWorkOrderFromPrefetch(workOrder.id);
-      void refreshPrefetch();
-      Alert.alert(
-        'Servicio rechazado',
-        'El encargado podrá reasignar este servicio a otro limpiador.',
-        [{ text: 'OK', onPress: () => router.back() }],
-      );
+      let rejectedOk = false;
+      try {
+        await apiService.postOk(
+          `/work-orders/${workOrder.id}/reject`,
+          rejectionReasonId ? { rejectionReasonId } : {},
+        );
+        rejectedOk = true;
+      } catch (e) {
+        if (isAlreadyRespondedAssignmentError(e)) {
+          const reconciled = await reconcileWorkOrder();
+          const assignment = reconciled && user?.id
+            ? getUserAssignment(reconciled, user.id)
+            : undefined;
+          if (assignment?.status === 'REJECTED' || !assignment) {
+            rejectedOk = true;
+          } else {
+            throw e;
+          }
+        } else {
+          throw e;
+        }
+      }
+
+      if (rejectedOk) {
+        removeWorkOrderFromPrefetch(workOrder.id);
+        void refreshPrefetch();
+        Alert.alert(
+          'Servicio rechazado',
+          'El encargado podrá reasignar este servicio a otro limpiador.',
+          [{ text: 'OK', onPress: () => router.back() }],
+        );
+      }
     } catch (e) {
-      Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo rechazar el servicio');
+      Alert.alert(
+        'Error',
+        formatWorkOrderActionError(e, 'No se pudo rechazar el servicio'),
+      );
     } finally {
+      actionInFlightRef.current = false;
       setActionLoading(false);
     }
   }
@@ -248,24 +329,46 @@ export default function ServiceDetailScreen() {
   }
 
   async function handleStart() {
-    if (!workOrder) return;
+    if (!workOrder || actionInFlightRef.current) return;
     if (!canExecute) {
       Alert.alert('Fichaje requerido', ATTENDANCE_REQUIRED_MESSAGE);
       return;
     }
+    actionInFlightRef.current = true;
     setActionLoading(true);
     try {
       const occurredAt = new Date().toISOString();
       if (isOnline) {
-        const updated = await apiService.post<WorkOrderDetail>(
-          `/work-orders/${workOrder.id}/start`,
-          { clientOperationId: generateClientId() },
-        );
-        const seId = getActiveServiceExecutionId(updated);
-        if (!seId) {
-          Alert.alert('Error', 'No se pudo obtener la ejecución del servicio. Intentá de nuevo.');
+        let updated: WorkOrderDetail | undefined;
+        try {
+          updated = await apiService.postMaybeJson<WorkOrderDetail>(
+            `/work-orders/${workOrder.id}/start`,
+            { clientOperationId: generateClientId() },
+          );
+        } catch (e) {
+          if (isAlreadyStartedWorkOrderError(e) || isNetworkError(e)) {
+            updated = (await reconcileWorkOrder()) ?? undefined;
+            if (!updated || !getActiveServiceExecutionId(updated)) {
+              throw e;
+            }
+          } else {
+            throw e;
+          }
+        }
+
+        if (!updated || !getActiveServiceExecutionId(updated)) {
+          updated = (await reconcileWorkOrder()) ?? undefined;
+        }
+
+        const seId = updated ? getActiveServiceExecutionId(updated) : null;
+        if (!updated || !seId) {
+          Alert.alert(
+            'Error',
+            'No se pudo obtener la ejecución del servicio. Si el servicio ya inició, actualizá la pantalla.',
+          );
           return;
         }
+
         setWorkOrder(updated);
         patchWorkOrder(updated.id, { status: updated.status, title: updated.title });
         router.push(`/service/${workOrder.id}/checklist?seId=${seId}`);
@@ -287,14 +390,15 @@ export default function ServiceDetailScreen() {
         );
       }
     } catch (e) {
-      Alert.alert('Error', e instanceof Error ? e.message : 'No se pudo iniciar');
+      Alert.alert('Error', formatWorkOrderActionError(e, 'No se pudo iniciar'));
     } finally {
+      actionInFlightRef.current = false;
       setActionLoading(false);
     }
   }
 
   async function handleComplete() {
-    if (!workOrder) return;
+    if (!workOrder || actionInFlightRef.current) return;
     if (!canExecute) {
       Alert.alert('Fichaje requerido', ATTENDANCE_REQUIRED_MESSAGE);
       return;
@@ -307,16 +411,46 @@ export default function ServiceDetailScreen() {
         {
           text: 'Completar',
           onPress: async () => {
+            if (actionInFlightRef.current) return;
+            actionInFlightRef.current = true;
             setActionLoading(true);
             try {
               if (isOnline) {
-                const updated = await apiService.post<WorkOrderDetail>(
-                  `/work-orders/${workOrder.id}/complete`,
-                  {},
-                );
+                let updated: WorkOrderDetail | undefined;
+                try {
+                  updated = await apiService.postMaybeJson<WorkOrderDetail>(
+                    `/work-orders/${workOrder.id}/complete`,
+                    {},
+                  );
+                } catch (e) {
+                  const message = e instanceof Error ? e.message : '';
+                  if (
+                    isNetworkError(e) ||
+                    /already completed|ya está completado|ya esta completado/i.test(message)
+                  ) {
+                    updated = (await reconcileWorkOrder()) ?? undefined;
+                    if (updated?.status !== 'COMPLETED') throw e;
+                  } else {
+                    throw e;
+                  }
+                }
+
+                if (!updated || updated.status !== 'COMPLETED') {
+                  const reconciled = await reconcileWorkOrder();
+                  if (reconciled?.status === 'COMPLETED') {
+                    updated = reconciled;
+                  } else if (!updated) {
+                    // 2xx sin body: marcar localmente; el refresh confirma.
+                    updated = { ...workOrder, status: 'COMPLETED' };
+                  }
+                }
+
                 setWorkOrder(updated);
-                patchWorkOrder(updated.id, { status: updated.status, title: updated.title });
-                await refreshPrefetch();
+                patchWorkOrder(updated.id, {
+                  status: updated.status,
+                  title: updated.title,
+                });
+                void refreshPrefetch();
                 Alert.alert('Servicio completado', 'El servicio fue marcado como completado.');
               } else {
                 const clientOperationId = generateClientId();
@@ -353,9 +487,10 @@ export default function ServiceDetailScreen() {
                   ],
                 );
               } else {
-                Alert.alert('Error', message);
+                Alert.alert('Error', formatWorkOrderActionError(e, message));
               }
             } finally {
+              actionInFlightRef.current = false;
               setActionLoading(false);
             }
           },
