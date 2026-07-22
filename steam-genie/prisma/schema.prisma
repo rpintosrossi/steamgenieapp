@@ -54,6 +54,8 @@ enum WorkOrderType {
 
 enum WorkOrderStatus {
   UNASSIGNED
+  /// Servicio creado desde presupuesto (cliente eventual); aguarda checklist + asignación.
+  QUOTE_ACCEPTED
   ASSIGNED
   ACCEPTED
   IN_PROGRESS
@@ -88,6 +90,13 @@ enum PeriodicTaskInstanceStatus {
   PENDING
   COMPLETED
   EXPIRED
+}
+
+/// High-level building operation mode. SIMPLE groups simpler workflows
+/// (phase photo evidence, etc.). DETAILED keeps the richer per-task flows.
+enum BuildingMode {
+  SIMPLE
+  DETAILED
 }
 
 enum PhotoEvidenceMode {
@@ -300,6 +309,9 @@ model Building {
   gpsRadiusM           Int      @default(200)
   /// If true, check-in/out must be within the building GPS radius.
   requireGpsValidation Boolean  @default(true)
+  /// SIMPLE = simpler workflows (phase photos, etc.). DETAILED = richer per-task flows.
+  buildingMode         BuildingMode      @default(DETAILED)
+  /// Only meaningful when buildingMode = SIMPLE.
   /// PER_TASK = photo per checklist task (default). BEFORE_DURING_AFTER = phase photos on the service/instance.
   photoEvidenceMode    PhotoEvidenceMode @default(PER_TASK)
   isActive             Boolean  @default(true)
@@ -352,6 +364,22 @@ model ParticularClient {
   @@map("particular_clients")
 }
 
+/// Cliente eventual: solo nombre y dirección (sin sitio operativo).
+model EventualClient {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String    @db.VarChar(200)
+  address   String?   @db.VarChar(300)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  quotes Quote[]
+
+  @@index([deletedAt])
+  @@index([name])
+  @@map("eventual_clients")
+}
+
 // ─── Presupuestos ─────────────────────────────────────────────────────────────
 
 /// Contador correlativo de presupuestos (una sola fila).
@@ -367,11 +395,13 @@ model Quote {
   number Int         @unique
   status QuoteStatus @default(COTIZADO)
 
-  /// Cliente: particular XOR edificio (uno obligatorio).
+  /// Cliente: particular XOR edificio XOR cliente eventual (uno obligatorio).
   particularClient   ParticularClient? @relation(fields: [particularClientId], references: [id])
   particularClientId String?           @db.Uuid
   building           Building?         @relation(fields: [buildingId], references: [id])
   buildingId         String?           @db.Uuid
+  eventualClient     EventualClient?   @relation(fields: [eventualClientId], references: [id])
+  eventualClientId   String?           @db.Uuid
 
   requestDate        DateTime  @db.Date
   serviceType        String?   @db.VarChar(500)
@@ -406,6 +436,7 @@ model Quote {
   @@index([status, requestDate])
   @@index([particularClientId])
   @@index([buildingId])
+  @@index([eventualClientId])
   @@index([deletedAt, requestDate])
   @@map("quotes")
 }
@@ -940,8 +971,9 @@ model WorkOrderTask {
   id                               String    @id @default(uuid()) @db.Uuid
   workOrder                        WorkOrder @relation(fields: [workOrderId], references: [id])
   workOrderId                      String    @db.Uuid
-  task                             Task      @relation(fields: [taskId], references: [id])
-  taskId                           String    @db.Uuid // Traceability only — do not use for execution
+  /// Null for custom checklist tasks (e.g. quote-sourced services without master EVENTUAL tasks).
+  task                             Task?     @relation(fields: [taskId], references: [id])
+  taskId                           String?   @db.Uuid
   nameSnapshot                     String    @db.VarChar(300)
   requiresPhotoSnapshot            Boolean
   allowsObservationSnapshot        Boolean

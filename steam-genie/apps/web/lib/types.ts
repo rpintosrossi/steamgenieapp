@@ -6,6 +6,7 @@ export interface Paginated<T> {
   pages: number;
 }
 
+export type BuildingMode = 'SIMPLE' | 'DETAILED';
 export type PhotoEvidenceMode = 'PER_TASK' | 'BEFORE_DURING_AFTER';
 export type PhotoPhase = 'BEFORE' | 'DURING' | 'AFTER';
 
@@ -20,7 +21,9 @@ export interface Building {
   gpsRadiusM?: number;
   /** If true, attendance validates the user is within the building GPS radius. */
   requireGpsValidation?: boolean;
-  /** PER_TASK (default) or BEFORE_DURING_AFTER phase evidence. */
+  /** SIMPLE = simpler workflows; DETAILED = richer per-task flows. */
+  buildingMode?: BuildingMode;
+  /** Only meaningful when buildingMode = SIMPLE. PER_TASK or BEFORE_DURING_AFTER. */
   photoEvidenceMode?: PhotoEvidenceMode;
   isActive?: boolean;
   createdAt?: string;
@@ -345,6 +348,11 @@ export interface WorkOrderListItem {
   building?: { id: string; name: string };
   zone?: { id: string; name: string } | null;
   assignments: WorkOrderAssignmentItem[];
+  quote?: {
+    id: string;
+    number: number;
+    items: Array<{ description: string; quantity: string | number }>;
+  } | null;
   _count: { workOrderTasks: number; assignments: number };
 }
 
@@ -483,6 +491,14 @@ export interface ParticularClientItem {
   updatedAt: string;
 }
 
+export interface EventualClientItem {
+  id: string;
+  name: string;
+  address?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export type QuoteStatus =
   | 'COTIZADO'
   | 'EN_ESPERA'
@@ -513,6 +529,7 @@ export interface Quote {
   status: QuoteStatus;
   particularClientId?: string | null;
   buildingId?: string | null;
+  eventualClientId?: string | null;
   requestDate: string;
   serviceType?: string | null;
   clientDetails?: string | null;
@@ -537,6 +554,7 @@ export interface Quote {
     'id' | 'name' | 'taxId' | 'address' | 'contactName' | 'email' | 'phone' | 'buildingId'
   > | null;
   building?: Pick<Building, 'id' | 'name' | 'address' | 'city' | 'province'> | null;
+  eventualClient?: Pick<EventualClientItem, 'id' | 'name' | 'address'> | null;
   workOrder?: {
     id: string;
     title: string;

@@ -10,7 +10,7 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { PhotoEvidenceMode } from '@prisma/client';
+import { BuildingMode, PhotoEvidenceMode } from '@prisma/client';
 
 export class CreateBuildingDto {
   @IsString()
@@ -54,7 +54,12 @@ export class CreateBuildingDto {
   @IsBoolean()
   requireGpsValidation?: boolean;
 
-  /** PER_TASK (default) or BEFORE_DURING_AFTER phase evidence. */
+  /** SIMPLE groups simpler workflows; DETAILED keeps richer per-task flows. */
+  @IsOptional()
+  @IsEnum(BuildingMode)
+  buildingMode?: BuildingMode;
+
+  /** Only meaningful when buildingMode = SIMPLE. PER_TASK or BEFORE_DURING_AFTER. */
   @IsOptional()
   @IsEnum(PhotoEvidenceMode)
   photoEvidenceMode?: PhotoEvidenceMode;

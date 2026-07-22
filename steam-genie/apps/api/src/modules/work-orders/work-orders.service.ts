@@ -9,6 +9,7 @@ import {
 import { PhotoEvidenceMode, PhotoPhase, WorkOrderStatus, WorkOrderType } from '@prisma/client';
 import { calendarDateFromInstant, endOfStoredCalendarDateInBusinessTz, TASK_CATEGORY_UNCATEGORIZED } from '@steam-genie/shared-constants';
 import { snapshotEventualTasks } from '../../common/work-order-snapshot';
+import { resolvePhotoEvidenceMode } from '../../common/building-mode';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { QueryWorkOrdersDto } from './dto/query-work-orders.dto';
 import { AssignWorkOrderDto } from './dto/assign-work-order.dto';
@@ -269,6 +270,53 @@ export class WorkOrdersService {
     };
   }
 
+  /**
+   * Servicio desde presupuesto de cliente eventual:
+   * estado QUOTE_ACCEPTED, sin snapshot de tareas EVENTUAL (checklist se define al asignar).
+   */
+  async createQuoteAcceptedService(
+    dto: {
+      buildingId: string;
+      floorId: string;
+      zoneId: string;
+      scheduledAt: string;
+      title: string;
+      description?: string | null;
+      clientAmountCharged?: number | string | null;
+    },
+    createdById: string,
+  ) {
+    const scheduledAt = new Date(dto.scheduledAt);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      throw new BadRequestException('scheduledAt is invalid');
+    }
+
+    await this.validateHierarchy(dto.buildingId, dto.floorId, dto.zoneId);
+
+    const scheduledDate = calendarDateFromInstant(scheduledAt);
+
+    const workOrder = await this.prisma.workOrder.create({
+      data: {
+        type: WorkOrderType.CHECKOUT_CLEANING,
+        reservationId: null,
+        buildingId: dto.buildingId,
+        floorId: dto.floorId,
+        zoneId: dto.zoneId,
+        subzoneId: null,
+        title: dto.title.trim(),
+        description: dto.description?.trim() || null,
+        scheduledDate,
+        scheduledTime: scheduledAt,
+        deadlineAt: null,
+        status: WorkOrderStatus.QUOTE_ACCEPTED,
+        clientAmountCharged: dto.clientAmountCharged ?? null,
+        createdById,
+      },
+    });
+
+    return { workOrder, taskCount: 0 };
+  }
+
   // ─── CREATE ADDITIONAL REQUEST (cliente) ──────────────────────────────────
 
   async createAdditionalRequest(dto: CreateAdditionalRequestDto, createdById: string) {
@@ -411,11 +459,26 @@ export class WorkOrdersService {
 
   // ─── ASSIGN ───────────────────────────────────────────────────────────────
 
-  async assign(id: string, dto: AssignWorkOrderDto) {
+  async assign(id: string, dto: AssignWorkOrderDto, grantedById: string) {
     const wo = await this.assertWorkOrderExists(id);
 
-    if (wo.status === WorkOrderStatus.IN_PROGRESS || wo.status === WorkOrderStatus.COMPLETED) {
+    if (
+      wo.status === WorkOrderStatus.IN_PROGRESS ||
+      wo.status === WorkOrderStatus.COMPLETED
+    ) {
       throw new ConflictException(`Cannot assign a work order with status ${wo.status}`);
+    }
+
+    const existingTaskCount = await this.prisma.workOrderTask.count({
+      where: { workOrderId: id },
+    });
+
+    if (wo.status === WorkOrderStatus.QUOTE_ACCEPTED && existingTaskCount === 0) {
+      if (!dto.checklistTasks || dto.checklistTasks.length === 0) {
+        throw new BadRequestException(
+          'Este servicio viene de un presupuesto aceptado. Definí el checklist de tareas antes de asignar al limpiador.',
+        );
+      }
     }
 
     // Validate all users exist
@@ -427,9 +490,61 @@ export class WorkOrdersService {
       throw new NotFoundException('One or more users not found');
     }
 
+    const cleanerRole = await this.prisma.role.findFirst({
+      where: { name: 'cleaner' },
+      select: { id: true },
+    });
+    if (!cleanerRole) {
+      throw new BadRequestException('Rol limpiador no configurado en el sistema.');
+    }
+
     const notifiedUserIds: string[] = [];
 
     await this.prisma.$transaction(async (tx) => {
+      // Otorga rol cleaner en el edificio del servicio (si aún no lo tiene ahí).
+      // Aunque tenga cleaner global, hace falta el vínculo al edificio para que
+      // aparezca en el listado móvil.
+      const existingOnBuilding = await tx.userBuildingRole.findMany({
+        where: {
+          userId: { in: dto.userIds },
+          roleId: cleanerRole.id,
+          buildingId: wo.buildingId,
+        },
+        select: { userId: true },
+      });
+      const usersWithBuildingRole = new Set(existingOnBuilding.map((r) => r.userId));
+      const missingRoleUserIds = dto.userIds.filter(
+        (userId) => !usersWithBuildingRole.has(userId),
+      );
+      if (missingRoleUserIds.length > 0) {
+        await tx.userBuildingRole.createMany({
+          data: missingRoleUserIds.map((userId) => ({
+            userId,
+            roleId: cleanerRole.id,
+            buildingId: wo.buildingId,
+            grantedById,
+          })),
+        });
+      }
+
+      if (
+        wo.status === WorkOrderStatus.QUOTE_ACCEPTED &&
+        existingTaskCount === 0 &&
+        dto.checklistTasks?.length
+      ) {
+        await tx.workOrderTask.createMany({
+          data: dto.checklistTasks.map((task, index) => ({
+            workOrderId: id,
+            taskId: null,
+            nameSnapshot: task.name.trim(),
+            requiresPhotoSnapshot: task.requiresPhoto === true,
+            allowsObservationSnapshot: true,
+            requiresRejectionReasonSnapshot: false,
+            sortOrder: index,
+          })),
+        });
+      }
+
       const existing = await tx.workOrderAssignment.findMany({
         where: {
           workOrderId: id,
@@ -482,7 +597,10 @@ export class WorkOrdersService {
         notifiedUserIds.push(...toCreate);
       }
 
-      if (wo.status === WorkOrderStatus.UNASSIGNED) {
+      if (
+        wo.status === WorkOrderStatus.UNASSIGNED ||
+        wo.status === WorkOrderStatus.QUOTE_ACCEPTED
+      ) {
         await tx.workOrder.update({
           where: { id },
           data: { status: WorkOrderStatus.ASSIGNED },
@@ -577,14 +695,22 @@ export class WorkOrdersService {
       },
     });
 
-    // If no more PENDING/ACCEPTED assignments → revert WO to UNASSIGNED
+    // If no more PENDING/ACCEPTED assignments → revert WO to unassigned / quote-accepted
     const remaining = await this.prisma.workOrderAssignment.count({
       where: { workOrderId: id, status: { in: ['PENDING', 'ACCEPTED'] } },
     });
     if (remaining === 0) {
+      const linkedQuote = await this.prisma.quote.findFirst({
+        where: { workOrderId: id, deletedAt: null },
+        select: { id: true },
+      });
       await this.prisma.workOrder.update({
         where: { id },
-        data: { status: WorkOrderStatus.UNASSIGNED },
+        data: {
+          status: linkedQuote
+            ? WorkOrderStatus.QUOTE_ACCEPTED
+            : WorkOrderStatus.UNASSIGNED,
+        },
       });
     }
 
@@ -765,9 +891,9 @@ export class WorkOrdersService {
 
     const building = await this.prisma.building.findFirst({
       where: { id: wo.buildingId, deletedAt: null },
-      select: { photoEvidenceMode: true },
+      select: { buildingMode: true, photoEvidenceMode: true },
     });
-    const photoEvidenceMode = building?.photoEvidenceMode ?? PhotoEvidenceMode.PER_TASK;
+    const photoEvidenceMode = resolvePhotoEvidenceMode(building);
 
     for (const wot of workOrderTasks) {
       const exec = wot.taskExecutions[0];

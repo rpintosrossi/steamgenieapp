@@ -8,6 +8,7 @@ import {
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
+export type BuildingMode = 'SIMPLE' | 'DETAILED';
 export type PhotoEvidenceMode = 'PER_TASK' | 'BEFORE_DURING_AFTER';
 
 export interface Building {
@@ -18,8 +19,20 @@ export interface Building {
   longitude: string | null;
   gpsRadiusM: number;
   requireGpsValidation?: boolean;
-  /** Default PER_TASK when absent (older servers / cache). */
+  /** Default DETAILED when absent (older servers / cache). */
+  buildingMode?: BuildingMode;
+  /** Only meaningful in SIMPLE mode. Default PER_TASK when absent. */
   photoEvidenceMode?: PhotoEvidenceMode;
+}
+
+/** Phase photo evidence only applies when the building is in SIMPLE mode. */
+export function isBeforeDuringAfterMode(
+  building?: Pick<Building, 'buildingMode' | 'photoEvidenceMode'> | null,
+): boolean {
+  return (
+    building?.buildingMode === 'SIMPLE' &&
+    building?.photoEvidenceMode === 'BEFORE_DURING_AFTER'
+  );
 }
 
 export interface RejectionReason {

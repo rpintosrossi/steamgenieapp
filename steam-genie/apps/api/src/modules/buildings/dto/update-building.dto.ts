@@ -10,7 +10,7 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { PhotoEvidenceMode } from '@prisma/client';
+import { BuildingMode, PhotoEvidenceMode } from '@prisma/client';
 
 export class UpdateBuildingDto {
   @IsOptional()
@@ -54,6 +54,11 @@ export class UpdateBuildingDto {
   @IsBoolean()
   requireGpsValidation?: boolean;
 
+  @IsOptional()
+  @IsEnum(BuildingMode)
+  buildingMode?: BuildingMode;
+
+  /** Only meaningful when buildingMode = SIMPLE. */
   @IsOptional()
   @IsEnum(PhotoEvidenceMode)
   photoEvidenceMode?: PhotoEvidenceMode;

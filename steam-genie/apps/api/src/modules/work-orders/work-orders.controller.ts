@@ -69,8 +69,9 @@ export class WorkOrdersController {
   assign(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AssignWorkOrderDto,
+    @CurrentUser() user: AuthUser,
   ) {
-    return this.workOrdersService.assign(id, dto);
+    return this.workOrdersService.assign(id, dto, user.id);
   }
 
   @Post(':id/accept')

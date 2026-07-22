@@ -8,9 +8,22 @@ import {
   IsString,
   IsUUID,
   MaxLength,
+  MinLength,
   ValidateNested,
 } from 'class-validator';
 import { QuoteItemDto } from './quote-item.dto';
+
+export class EventualClientInputDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  address?: string;
+}
 
 export class CreateQuoteDto {
   @IsOptional()
@@ -20,6 +33,17 @@ export class CreateQuoteDto {
   @IsOptional()
   @IsUUID()
   buildingId?: string;
+
+  /** Cliente eventual ya existente. */
+  @IsOptional()
+  @IsUUID()
+  eventualClientId?: string;
+
+  /** Alta inline de cliente eventual (nombre + dirección). */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => EventualClientInputDto)
+  eventualClient?: EventualClientInputDto;
 
   @IsDateString()
   requestDate!: string;

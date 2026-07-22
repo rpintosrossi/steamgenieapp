@@ -40,6 +40,12 @@ export class QuotesController {
     return this.quotesService.findOne(id);
   }
 
+  @Get(':id/particular-client-matches')
+  @RequiredRoles('admin', 'manager')
+  particularClientMatches(@Param('id', ParseUUIDPipe) id: string) {
+    return this.quotesService.findParticularClientMatches(id);
+  }
+
   @Get(':id/pdf')
   @RequiredRoles('admin', 'manager')
   async pdf(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response) {

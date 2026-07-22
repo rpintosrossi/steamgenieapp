@@ -31,6 +31,11 @@ export class UpdateQuoteDto {
   buildingId?: string | null;
 
   @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsUUID()
+  eventualClientId?: string | null;
+
+  @IsOptional()
   @IsDateString()
   requestDate?: string;
 

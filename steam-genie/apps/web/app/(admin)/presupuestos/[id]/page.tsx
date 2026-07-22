@@ -29,6 +29,14 @@ function formatDate(value?: string | null) {
 function clientLabel(quote: Quote) {
   if (quote.particularClient) return quote.particularClient.name;
   if (quote.building) return quote.building.name;
+  if (quote.eventualClient) return quote.eventualClient.name;
+  return '—';
+}
+
+function clientKindLabel(quote: Quote) {
+  if (quote.particularClient) return 'Particular';
+  if (quote.building) return 'Edificio';
+  if (quote.eventualClient) return 'Eventual';
   return '—';
 }
 
@@ -47,6 +55,21 @@ export default function QuoteDetailPage() {
   const [convertOpen, setConvertOpen] = useState(false);
   const [scheduledAt, setScheduledAt] = useState('');
   const [converting, setConverting] = useState(false);
+  const [clientMatches, setClientMatches] = useState<
+    Array<{
+      id: string;
+      name: string;
+      address: string | null;
+      buildingId: string;
+      phone: string | null;
+      email: string | null;
+    }>
+  >([]);
+  const [loadingMatches, setLoadingMatches] = useState(false);
+  const [particularAction, setParticularAction] = useState<'CREATE_NEW' | 'USE_EXISTING'>(
+    'CREATE_NEW',
+  );
+  const [selectedParticularId, setSelectedParticularId] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -191,16 +214,34 @@ export default function QuoteDetailPage() {
   async function handleConvert(e: FormEvent) {
     e.preventDefault();
     if (!quote || !scheduledAt) return;
+    if (
+      quote.eventualClient &&
+      clientMatches.length > 0 &&
+      particularAction === 'USE_EXISTING' &&
+      !selectedParticularId
+    ) {
+      setError('Seleccioná el cliente particular a reutilizar.');
+      return;
+    }
+
     setConverting(true);
     setError(null);
     setSuccess(null);
     try {
       const iso = new Date(scheduledAt).toISOString();
+      const body: Record<string, string> = { scheduledAt: iso };
+      if (quote.eventualClient && clientMatches.length > 0) {
+        body.particularClientAction = particularAction;
+        if (particularAction === 'USE_EXISTING') {
+          body.particularClientId = selectedParticularId;
+        }
+      }
+
       const result = await api.post<{
         quote: Quote;
         workOrder: { id: string };
         warning?: string;
-      }>(`/quotes/${quote.id}/convert-to-work-order`, { scheduledAt: iso });
+      }>(`/quotes/${quote.id}/convert-to-work-order`, body);
       setQuote(result.quote);
       setConvertOpen(false);
       setSuccess(
@@ -212,6 +253,39 @@ export default function QuoteDetailPage() {
       setError(err instanceof Error ? err.message : 'No se pudo crear el servicio');
     } finally {
       setConverting(false);
+    }
+  }
+
+  async function openConvertModal() {
+    if (!quote) return;
+    setConvertOpen(true);
+    setError(null);
+    setClientMatches([]);
+    setParticularAction('CREATE_NEW');
+    setSelectedParticularId('');
+    if (!quote.eventualClient) return;
+
+    setLoadingMatches(true);
+    try {
+      const res = await api.get<{
+        matches: Array<{
+          id: string;
+          name: string;
+          address: string | null;
+          buildingId: string;
+          phone: string | null;
+          email: string | null;
+        }>;
+      }>(`/quotes/${quote.id}/particular-client-matches`);
+      setClientMatches(res.matches);
+      if (res.matches.length > 0) {
+        setParticularAction('USE_EXISTING');
+        setSelectedParticularId(res.matches[0].id);
+      }
+    } catch {
+      setClientMatches([]);
+    } finally {
+      setLoadingMatches(false);
     }
   }
 
@@ -270,7 +344,7 @@ export default function QuoteDetailPage() {
             {sharing === 'email' ? 'Abriendo…' : 'Correo'}
           </button>
           {canConvert ? (
-            <button type="button" className="btn btn-primary" onClick={() => setConvertOpen(true)}>
+            <button type="button" className="btn btn-primary" onClick={() => void openConvertModal()}>
               Crear servicio eventual
             </button>
           ) : null}
@@ -386,7 +460,10 @@ export default function QuoteDetailPage() {
             <div className="muted">Cliente</div>
             <div>{clientLabel(quote)}</div>
             <div className="muted" style={{ fontSize: 12 }}>
-              {quote.particularClient ? 'Particular' : 'Edificio'}
+              {clientKindLabel(quote)}
+              {quote.eventualClient?.address
+                ? ` · ${quote.eventualClient.address}`
+                : ''}
             </div>
           </div>
           <div>
@@ -461,8 +538,9 @@ export default function QuoteDetailPage() {
               </button>
             </div>
             <p className="muted">
-              Se crea un trabajo eventual en el sitio del cliente/edificio, con monto y descripción
-              del presupuesto.
+              {quote.eventualClient
+                ? 'Se crea un cliente particular (si corresponde) y un servicio en estado Presupuesto aceptado. El checklist se define al asignar el limpiador.'
+                : 'Se crea un trabajo eventual en el sitio del cliente/edificio, con monto y descripción del presupuesto.'}
             </p>
             <form onSubmit={handleConvert} className="stack">
               <div className="form-field">
@@ -476,6 +554,79 @@ export default function QuoteDetailPage() {
                   required
                 />
               </div>
+
+              {quote.eventualClient ? (
+                <div className="stack" style={{ gap: 8 }}>
+                  <div>
+                    <strong>Cliente eventual:</strong> {quote.eventualClient.name}
+                    {quote.eventualClient.address
+                      ? ` · ${quote.eventualClient.address}`
+                      : ''}
+                  </div>
+                  {loadingMatches ? (
+                    <p className="muted">Buscando clientes con la misma dirección…</p>
+                  ) : clientMatches.length > 0 ? (
+                    <div
+                      className="stack"
+                      style={{
+                        padding: 12,
+                        border: '1px solid var(--border, #e5e7eb)',
+                        borderRadius: 8,
+                        background: 'var(--surface-muted, #f9fafb)',
+                      }}
+                    >
+                      <p style={{ margin: 0 }}>
+                        Hay {clientMatches.length} cliente
+                        {clientMatches.length === 1 ? '' : 's'} particular
+                        {clientMatches.length === 1 ? '' : 'es'} con la misma dirección.
+                        ¿Qué querés hacer?
+                      </p>
+                      <label className="checkbox-label">
+                        <input
+                          type="radio"
+                          name="particularAction"
+                          checked={particularAction === 'USE_EXISTING'}
+                          onChange={() => setParticularAction('USE_EXISTING')}
+                        />
+                        Usar un cliente ya creado
+                      </label>
+                      {particularAction === 'USE_EXISTING' ? (
+                        <div className="form-field" style={{ margin: 0 }}>
+                          <label htmlFor="q-match">Cliente *</label>
+                          <select
+                            id="q-match"
+                            className="input"
+                            value={selectedParticularId}
+                            onChange={(e) => setSelectedParticularId(e.target.value)}
+                            required
+                          >
+                            {clientMatches.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.name}
+                                {m.address ? ` — ${m.address}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : null}
+                      <label className="checkbox-label">
+                        <input
+                          type="radio"
+                          name="particularAction"
+                          checked={particularAction === 'CREATE_NEW'}
+                          onChange={() => setParticularAction('CREATE_NEW')}
+                        />
+                        Crear uno nuevo igualmente
+                      </label>
+                    </div>
+                  ) : (
+                    <p className="muted" style={{ margin: 0 }}>
+                      Se creará un cliente particular nuevo con este nombre y dirección.
+                    </p>
+                  )}
+                </div>
+              ) : null}
+
               <div className="modal-actions">
                 <button
                   type="button"
@@ -485,7 +636,11 @@ export default function QuoteDetailPage() {
                 >
                   Cancelar
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={converting}>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={converting || loadingMatches}
+                >
                   {converting ? 'Creando…' : 'Crear servicio'}
                 </button>
               </div>

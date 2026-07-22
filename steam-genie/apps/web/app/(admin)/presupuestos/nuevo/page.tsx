@@ -14,7 +14,7 @@ import type {
   UserItem,
 } from '../../../../lib/types';
 
-type ClientKind = 'particular' | 'building';
+type ClientKind = 'particular' | 'building' | 'eventual';
 
 type DraftItem = {
   quantity: string;
@@ -51,6 +51,8 @@ export default function NewQuotePage() {
   const [clientKind, setClientKind] = useState<ClientKind>('particular');
   const [particularClientId, setParticularClientId] = useState('');
   const [buildingId, setBuildingId] = useState('');
+  const [eventualName, setEventualName] = useState('');
+  const [eventualAddress, setEventualAddress] = useState('');
   const [particulars, setParticulars] = useState<ParticularClientItem[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [requestDate, setRequestDate] = useState(todayIso());
@@ -115,6 +117,10 @@ export default function NewQuotePage() {
       setError('Seleccioná un edificio.');
       return;
     }
+    if (clientKind === 'eventual' && !eventualName.trim()) {
+      setError('Ingresá el nombre del cliente eventual.');
+      return;
+    }
 
     const payloadItems: QuoteItemInput[] = [];
     for (const item of items) {
@@ -143,10 +149,20 @@ export default function NewQuotePage() {
 
     setCreating(true);
     try {
-      const quote = await api.post<Quote>('/quotes', {
-        ...(clientKind === 'particular'
+      const clientPayload =
+        clientKind === 'particular'
           ? { particularClientId }
-          : { buildingId }),
+          : clientKind === 'building'
+            ? { buildingId }
+            : {
+                eventualClient: {
+                  name: eventualName.trim(),
+                  address: eventualAddress.trim() || undefined,
+                },
+              };
+
+      const quote = await api.post<Quote>('/quotes', {
+        ...clientPayload,
         requestDate,
         serviceType: serviceType.trim() || undefined,
         clientDetails: clientDetails.trim() || undefined,
@@ -175,7 +191,8 @@ export default function NewQuotePage() {
           </Link>
           <h1 className="page-title">Nuevo presupuesto</h1>
           <p className="page-subtitle">
-            Asociá un cliente particular o un edificio e ingresá los ítems del servicio.
+            Asociá un cliente particular, un edificio o un cliente eventual e ingresá los ítems
+            del servicio.
           </p>
         </div>
       </div>
@@ -206,6 +223,15 @@ export default function NewQuotePage() {
               />
               Edificio
             </label>
+            <label className="checkbox-label">
+              <input
+                type="radio"
+                name="clientKind"
+                checked={clientKind === 'eventual'}
+                onChange={() => setClientKind('eventual')}
+              />
+              Cliente eventual
+            </label>
           </div>
 
           {clientKind === 'particular' ? (
@@ -226,7 +252,9 @@ export default function NewQuotePage() {
                 ))}
               </select>
             </div>
-          ) : (
+          ) : null}
+
+          {clientKind === 'building' ? (
             <div className="form-field">
               <label htmlFor="q-building">Edificio *</label>
               <select
@@ -244,7 +272,39 @@ export default function NewQuotePage() {
                 ))}
               </select>
             </div>
-          )}
+          ) : null}
+
+          {clientKind === 'eventual' ? (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                gap: 12,
+              }}
+            >
+              <div className="form-field" style={{ margin: 0 }}>
+                <label htmlFor="q-eventual-name">Nombre *</label>
+                <input
+                  id="q-eventual-name"
+                  className="input"
+                  value={eventualName}
+                  onChange={(e) => setEventualName(e.target.value)}
+                  placeholder="Nombre del cliente"
+                  required
+                />
+              </div>
+              <div className="form-field" style={{ margin: 0 }}>
+                <label htmlFor="q-eventual-address">Dirección</label>
+                <input
+                  id="q-eventual-address"
+                  className="input"
+                  value={eventualAddress}
+                  onChange={(e) => setEventualAddress(e.target.value)}
+                  placeholder="Dirección del servicio"
+                />
+              </div>
+            </div>
+          ) : null}
 
           <div
             style={{

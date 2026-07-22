@@ -39,6 +39,7 @@ export const WORK_ORDER_TYPE_LABELS: Record<string, string> = {
 
 export const WORK_ORDER_STATUS_LABELS: Record<string, string> = {
   UNASSIGNED: 'Sin asignar',
+  QUOTE_ACCEPTED: 'Presupuesto aceptado',
   ASSIGNED: 'Asignado (pendiente aceptación)',
   ACCEPTED: 'Aceptado',
   IN_PROGRESS: 'En curso',

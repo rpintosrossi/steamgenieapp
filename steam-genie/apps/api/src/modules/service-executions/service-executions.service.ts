@@ -123,8 +123,8 @@ export class ServiceExecutionsService {
         requiresPhotoSnapshot: wot.requiresPhotoSnapshot,
         allowsObservationSnapshot: wot.allowsObservationSnapshot,
         requiresRejectionReasonSnapshot: wot.requiresRejectionReasonSnapshot,
-        zoneId: wot.task.zoneId ?? workOrder?.zoneId ?? null,
-        subzoneId: wot.task.subzoneId ?? workOrder?.subzoneId ?? null,
+        zoneId: wot.task?.zoneId ?? workOrder?.zoneId ?? null,
+        subzoneId: wot.task?.subzoneId ?? workOrder?.subzoneId ?? null,
         customFields: wot.customFieldSnapshots.map((field) => ({
           id: field.id,
           label: field.labelSnapshot,

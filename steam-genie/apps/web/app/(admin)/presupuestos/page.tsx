@@ -19,12 +19,14 @@ function money(value: string | number) {
 function clientLabel(quote: Quote) {
   if (quote.particularClient) return quote.particularClient.name;
   if (quote.building) return quote.building.name;
+  if (quote.eventualClient) return quote.eventualClient.name;
   return '—';
 }
 
 function clientKind(quote: Quote) {
   if (quote.particularClient) return 'Particular';
   if (quote.building) return 'Edificio';
+  if (quote.eventualClient) return 'Eventual';
   return '—';
 }
 

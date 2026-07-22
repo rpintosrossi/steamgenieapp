@@ -19,7 +19,7 @@ import { apiService } from '../../src/services/api.service';
 import { syncQueue, generateClientId } from '../../src/sync/sync-queue';
 import { useNetworkStatus } from '../../src/hooks/useNetworkStatus';
 import { useSyncStore } from '../../src/stores/sync.store';
-import { useBuildingStore, RejectionReason } from '../../src/stores/building.store';
+import { useBuildingStore, RejectionReason, isBeforeDuringAfterMode } from '../../src/stores/building.store';
 import { SyncStatusBar } from '../../src/components/SyncStatusBar';
 import { BrandedScreenHeader } from '../../src/components/BrandedScreenHeader';
 import {
@@ -226,7 +226,7 @@ export default function TareasScreen() {
   const { isConnected } = useNetworkStatus();
   const isOnline = isConnected === true;
   const { setStatus } = useSyncStore();
-  const isBdaMode = selectedBuilding?.photoEvidenceMode === 'BEFORE_DURING_AFTER';
+  const isBdaMode = isBeforeDuringAfterMode(selectedBuilding);
   const perTaskPhotosEnabled = !isBdaMode;
 
   const [items, setItems] = useState<PeriodicDueItem[]>([]);

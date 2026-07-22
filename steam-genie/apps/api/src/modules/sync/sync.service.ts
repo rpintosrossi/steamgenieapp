@@ -86,6 +86,7 @@ export class SyncService {
         longitude: true,
         gpsRadiusM: true,
         requireGpsValidation: true,
+        buildingMode: true,
         photoEvidenceMode: true,
       },
     });

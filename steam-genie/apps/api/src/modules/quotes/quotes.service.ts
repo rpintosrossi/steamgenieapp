@@ -4,14 +4,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, QuoteStatus } from '@prisma/client';
+import { BuildingMode, Prisma, QuoteStatus } from '@prisma/client';
 import { QUOTE_STATUS_LABELS, QUOTE_VAT_RATE } from '@steam-genie/shared-constants';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { WorkOrdersService } from '../work-orders/work-orders.service';
 import { CreateQuoteDto } from './dto/create-quote.dto';
 import { UpdateQuoteDto } from './dto/update-quote.dto';
 import { QueryQuotesDto } from './dto/query-quotes.dto';
-import { ConvertQuoteDto } from './dto/convert-quote.dto';
+import { ConvertQuoteDto, ParticularClientAction } from './dto/convert-quote.dto';
 import { QuoteItemDto } from './dto/quote-item.dto';
 import { QuotePdfService } from './quote-pdf.service';
 
@@ -36,6 +36,13 @@ const QUOTE_INCLUDE = {
       address: true,
       city: true,
       province: true,
+    },
+  },
+  eventualClient: {
+    select: {
+      id: true,
+      name: true,
+      address: true,
     },
   },
   workOrder: {
@@ -94,7 +101,12 @@ export class QuotesService {
   }
 
   async create(dto: CreateQuoteDto, createdById: string) {
-    await this.assertClientXor(dto.particularClientId, dto.buildingId);
+    await this.assertClientXor({
+      particularClientId: dto.particularClientId,
+      buildingId: dto.buildingId,
+      eventualClientId: dto.eventualClientId,
+      eventualClient: dto.eventualClient,
+    });
 
     const creator = await this.prisma.user.findFirst({
       where: { id: createdById, deletedAt: null },
@@ -121,6 +133,18 @@ export class QuotesService {
       : addMonths(requestDate, 1);
 
     return this.prisma.$transaction(async (tx) => {
+      let eventualClientId = dto.eventualClientId ?? null;
+      if (dto.eventualClient) {
+        const created = await tx.eventualClient.create({
+          data: {
+            name: dto.eventualClient.name.trim(),
+            address: emptyToNull(dto.eventualClient.address),
+          },
+          select: { id: true },
+        });
+        eventualClientId = created.id;
+      }
+
       const number = await allocateQuoteNumber(tx);
 
       const quote = await tx.quote.create({
@@ -129,6 +153,7 @@ export class QuotesService {
           status: QuoteStatus.COTIZADO,
           particularClientId: dto.particularClientId ?? null,
           buildingId: dto.buildingId ?? null,
+          eventualClientId,
           requestDate,
           serviceType: emptyToNull(dto.serviceType),
           clientDetails: emptyToNull(dto.clientDetails),
@@ -187,9 +212,21 @@ export class QuotesService {
         : existing.particularClientId;
     const nextBuilding =
       dto.buildingId !== undefined ? dto.buildingId : existing.buildingId;
+    const nextEventual =
+      dto.eventualClientId !== undefined
+        ? dto.eventualClientId
+        : existing.eventualClientId;
 
-    if (dto.particularClientId !== undefined || dto.buildingId !== undefined) {
-      await this.assertClientXor(nextParticular, nextBuilding);
+    if (
+      dto.particularClientId !== undefined ||
+      dto.buildingId !== undefined ||
+      dto.eventualClientId !== undefined
+    ) {
+      await this.assertClientXor({
+        particularClientId: nextParticular,
+        buildingId: nextBuilding,
+        eventualClientId: nextEventual,
+      });
     }
 
     const computed = dto.items ? this.computeTotals(dto.items) : null;
@@ -207,6 +244,9 @@ export class QuotesService {
             ? { particularClientId: dto.particularClientId }
             : {}),
           ...(dto.buildingId !== undefined ? { buildingId: dto.buildingId } : {}),
+          ...(dto.eventualClientId !== undefined
+            ? { eventualClientId: dto.eventualClientId }
+            : {}),
           ...(dto.requestDate !== undefined
             ? { requestDate: parseDateOnly(dto.requestDate) }
             : {}),
@@ -329,6 +369,27 @@ export class QuotesService {
     };
   }
 
+  async findParticularClientMatches(id: string) {
+    const quote = await this.assertExists(id);
+    if (!quote.eventualClient) {
+      return { eventualClient: null, matches: [] as const };
+    }
+
+    const address = quote.eventualClient.address?.trim() || null;
+    const matches = address
+      ? await this.findParticularClientsByAddress(address)
+      : [];
+
+    return {
+      eventualClient: {
+        id: quote.eventualClient.id,
+        name: quote.eventualClient.name,
+        address: quote.eventualClient.address,
+      },
+      matches,
+    };
+  }
+
   async convertToWorkOrder(id: string, dto: ConvertQuoteDto, createdById: string) {
     const quote = await this.assertExists(id);
 
@@ -337,6 +398,11 @@ export class QuotesService {
     }
     if (quote.workOrderId) {
       throw new ConflictException('Este presupuesto ya tiene un servicio eventual asociado.');
+    }
+
+    // ── Cliente eventual → particular + servicio QUOTE_ACCEPTED ──────────────
+    if (quote.eventualClient) {
+      return this.convertEventualQuoteToWorkOrder(quote, dto, createdById);
     }
 
     const siteBuildingId =
@@ -396,6 +462,185 @@ export class QuotesService {
     };
   }
 
+  private async convertEventualQuoteToWorkOrder(
+    quote: Awaited<ReturnType<QuotesService['assertExists']>>,
+    dto: ConvertQuoteDto,
+    createdById: string,
+  ) {
+    const eventual = quote.eventualClient!;
+    const address = eventual.address?.trim() || null;
+    const matches = address ? await this.findParticularClientsByAddress(address) : [];
+
+    let siteBuildingId: string;
+
+    if (matches.length > 0) {
+      if (!dto.particularClientAction) {
+        throw new BadRequestException(
+          'Hay clientes particulares con la misma dirección. Elegí usar uno existente o crear uno nuevo.',
+        );
+      }
+
+      if (dto.particularClientAction === ParticularClientAction.USE_EXISTING) {
+        if (!dto.particularClientId) {
+          throw new BadRequestException('Seleccioná el cliente particular a reutilizar.');
+        }
+        const chosen = matches.find((m) => m.id === dto.particularClientId);
+        if (!chosen) {
+          throw new BadRequestException(
+            'El cliente seleccionado no coincide con la dirección del presupuesto.',
+          );
+        }
+        siteBuildingId = chosen.buildingId;
+      } else {
+        siteBuildingId = (
+          await this.createParticularFromEventual({
+            name: eventual.name,
+            address,
+            phone: quote.contactPhone,
+            email: quote.contactEmail,
+          })
+        ).buildingId;
+      }
+    } else {
+      siteBuildingId = (
+        await this.createParticularFromEventual({
+          name: eventual.name,
+          address,
+          phone: quote.contactPhone,
+          email: quote.contactEmail,
+        })
+      ).buildingId;
+    }
+
+    const hierarchy = await this.resolveDefaultLocation(
+      siteBuildingId,
+      dto.floorId,
+      dto.zoneId,
+    );
+
+    const title =
+      dto.title?.trim() ||
+      quote.serviceType?.trim() ||
+      `Presupuesto ${String(quote.number).padStart(8, '0')}`;
+
+    const descriptionParts = [
+      dto.description?.trim(),
+      quote.clientDetails?.trim(),
+      quote.items.map((i) => `${i.quantity} × ${i.description}`).join('\n'),
+      `Origen: presupuesto ${String(quote.number).padStart(8, '0')}`,
+      `Cliente eventual: ${eventual.name}${address ? ` · ${address}` : ''}`,
+    ].filter(Boolean);
+
+    const result = await this.workOrdersService.createQuoteAcceptedService(
+      {
+        buildingId: siteBuildingId,
+        floorId: hierarchy.floorId,
+        zoneId: hierarchy.zoneId,
+        scheduledAt: dto.scheduledAt,
+        title,
+        description: descriptionParts.join('\n\n'),
+        clientAmountCharged: toNumber(quote.total),
+      },
+      createdById,
+    );
+
+    const updated = await this.prisma.quote.update({
+      where: { id: quote.id },
+      data: {
+        workOrderId: result.workOrder.id,
+        status: QuoteStatus.ACEPTADO,
+      },
+      include: QUOTE_INCLUDE,
+    });
+
+    return {
+      quote: updated,
+      workOrder: result.workOrder,
+      warning:
+        'Servicio en estado Presupuesto aceptado. Al asignar el limpiador deberás definir el checklist de tareas.',
+    };
+  }
+
+  private async findParticularClientsByAddress(address: string) {
+    const normalized = normalizeAddress(address);
+    if (!normalized) return [];
+
+    const candidates = await this.prisma.particularClient.findMany({
+      where: {
+        deletedAt: null,
+        isActive: true,
+        address: { not: null },
+      },
+      select: {
+        id: true,
+        name: true,
+        address: true,
+        buildingId: true,
+        phone: true,
+        email: true,
+      },
+      take: 200,
+    });
+
+    return candidates.filter(
+      (c) => normalizeAddress(c.address ?? '') === normalized,
+    );
+  }
+
+  private async createParticularFromEventual(input: {
+    name: string;
+    address: string | null;
+    phone?: string | null;
+    email?: string | null;
+  }) {
+    const { randomUUID } = await import('crypto');
+    const name = input.name.trim();
+    const address = emptyToNull(input.address);
+
+    return this.prisma.$transaction(async (tx) => {
+      const building = await tx.building.create({
+        data: {
+          name,
+          address,
+          requireGpsValidation: false,
+          buildingMode: BuildingMode.SIMPLE,
+          isActive: true,
+        },
+      });
+
+      const floor = await tx.floor.create({
+        data: {
+          name: 'Planta baja',
+          sortOrder: 0,
+          buildingId: building.id,
+        },
+      });
+
+      await tx.zone.create({
+        data: {
+          name: 'Principal',
+          floorId: floor.id,
+          buildingId: building.id,
+          qrToken: randomUUID(),
+        },
+      });
+
+      const client = await tx.particularClient.create({
+        data: {
+          name,
+          address,
+          phone: emptyToNull(input.phone),
+          email: emptyToNull(input.email),
+          isActive: true,
+          buildingId: building.id,
+        },
+        select: { id: true, buildingId: true },
+      });
+
+      return client;
+    });
+  }
+
   private async resolveDefaultLocation(
     buildingId: string,
     floorId?: string,
@@ -430,30 +675,36 @@ export class QuotesService {
     return { floorId: floor.id, zoneId: zone.id };
   }
 
-  private async assertClientXor(
-    particularClientId?: string | null,
-    buildingId?: string | null,
-  ) {
-    const hasParticular = Boolean(particularClientId);
-    const hasBuilding = Boolean(buildingId);
-    if (hasParticular === hasBuilding) {
+  private async assertClientXor(input: {
+    particularClientId?: string | null;
+    buildingId?: string | null;
+    eventualClientId?: string | null;
+    eventualClient?: { name?: string } | null;
+  }) {
+    const hasParticular = Boolean(input.particularClientId);
+    const hasBuilding = Boolean(input.buildingId);
+    const hasEventual =
+      Boolean(input.eventualClientId) || Boolean(input.eventualClient?.name?.trim());
+    const selected = [hasParticular, hasBuilding, hasEventual].filter(Boolean).length;
+
+    if (selected !== 1) {
       throw new BadRequestException(
-        'El presupuesto debe asociarse a un cliente particular o a un edificio (uno solo).',
+        'El presupuesto debe asociarse a un cliente particular, un edificio o un cliente eventual (uno solo).',
       );
     }
 
-    if (particularClientId) {
+    if (input.particularClientId) {
       const client = await this.prisma.particularClient.findFirst({
-        where: { id: particularClientId, deletedAt: null },
+        where: { id: input.particularClientId, deletedAt: null },
         select: { id: true },
       });
       if (!client) throw new BadRequestException('Cliente particular no encontrado.');
     }
 
-    if (buildingId) {
+    if (input.buildingId) {
       const building = await this.prisma.building.findFirst({
         where: {
-          id: buildingId,
+          id: input.buildingId,
           deletedAt: null,
           particularClient: null,
         },
@@ -464,6 +715,18 @@ export class QuotesService {
           'Edificio no encontrado (o es un sitio de cliente particular; usá el cliente).',
         );
       }
+    }
+
+    if (input.eventualClientId) {
+      const client = await this.prisma.eventualClient.findFirst({
+        where: { id: input.eventualClientId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!client) throw new BadRequestException('Cliente eventual no encontrado.');
+    }
+
+    if (input.eventualClient && !emptyToNull(input.eventualClient.name)) {
+      throw new BadRequestException('El cliente eventual requiere un nombre.');
     }
   }
 
@@ -537,6 +800,16 @@ function addMonths(date: Date, months: number): Date {
   return d;
 }
 
+function normalizeAddress(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function formatDate(value: Date): string {
   return value.toISOString().slice(0, 10).split('-').reverse().join('/');
 }
@@ -560,6 +833,10 @@ function resolveClientInfo(quote: {
     city: string | null;
     province: string | null;
   } | null;
+  eventualClient: {
+    name: string;
+    address: string | null;
+  } | null;
 }) {
   if (quote.particularClient) {
     return {
@@ -569,6 +846,16 @@ function resolveClientInfo(quote: {
       contactName: quote.particularClient.contactName,
       email: quote.particularClient.email,
       phone: quote.particularClient.phone,
+    };
+  }
+  if (quote.eventualClient) {
+    return {
+      name: quote.eventualClient.name,
+      taxId: null,
+      address: quote.eventualClient.address,
+      contactName: null,
+      email: null,
+      phone: null,
     };
   }
   const b = quote.building!;

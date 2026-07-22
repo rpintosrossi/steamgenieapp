@@ -25,7 +25,18 @@ import type {
   WorkOrderListItem,
 } from '../../../../lib/types';
 
-const ASSIGNABLE_STATUSES = new Set(['UNASSIGNED', 'ASSIGNED', 'ACCEPTED', 'REJECTED']);
+const ASSIGNABLE_STATUSES = new Set([
+  'UNASSIGNED',
+  'QUOTE_ACCEPTED',
+  'ASSIGNED',
+  'ACCEPTED',
+  'REJECTED',
+]);
+
+type ChecklistDraft = {
+  name: string;
+  requiresPhoto: boolean;
+};
 const PAGE_SIZE = 20;
 type ScheduleSortDir = 'asc' | 'desc';
 
@@ -177,6 +188,7 @@ export default function EventualServicesPage() {
   const [selectedCleanerIds, setSelectedCleanerIds] = useState<string[]>([]);
   const [loadingAssign, setLoadingAssign] = useState(false);
   const [savingAssign, setSavingAssign] = useState(false);
+  const [checklistTasks, setChecklistTasks] = useState<ChecklistDraft[]>([]);
 
   const [deletingWo, setDeletingWo] = useState<WorkOrderListItem | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -239,6 +251,19 @@ export default function EventualServicesPage() {
     setLoadingAssign(true);
     setError(null);
     setSuccess(null);
+
+    const needsChecklist = wo.status === 'QUOTE_ACCEPTED' && wo._count.workOrderTasks === 0;
+    if (needsChecklist) {
+      const suggested =
+        wo.quote?.items?.map((item) => ({
+          name: String(item.description ?? '').trim(),
+          requiresPhoto: false,
+        })).filter((t) => t.name) ?? [];
+      setChecklistTasks(suggested.length > 0 ? suggested : [{ name: '', requiresPhoto: false }]);
+    } else {
+      setChecklistTasks([]);
+    }
+
     try {
       const params = new URLSearchParams({ excludeWorkOrderId: wo.id });
       const scheduledDateKey = calendarDateKeyFromStored(wo.scheduledDate);
@@ -263,6 +288,7 @@ export default function EventualServicesPage() {
     setCleaners([]);
     setBuildingUsersWrongRole([]);
     setSelectedCleanerIds([]);
+    setChecklistTasks([]);
   }
 
   function toggleCleaner(userId: string) {
@@ -272,8 +298,34 @@ export default function EventualServicesPage() {
     );
   }
 
+  function updateChecklistTask(index: number, patch: Partial<ChecklistDraft>) {
+    setChecklistTasks((prev) =>
+      prev.map((task, i) => (i === index ? { ...task, ...patch } : task)),
+    );
+  }
+
   async function handleAssign() {
     if (!assigningWo || selectedCleanerIds.length === 0) return;
+
+    const needsChecklist =
+      assigningWo.status === 'QUOTE_ACCEPTED' && assigningWo._count.workOrderTasks === 0;
+
+    let checklistPayload:
+      | Array<{ name: string; requiresPhoto: boolean }>
+      | undefined;
+    if (needsChecklist) {
+      const cleaned = checklistTasks
+        .map((t) => ({
+          name: t.name.trim(),
+          requiresPhoto: t.requiresPhoto,
+        }))
+        .filter((t) => t.name.length > 0);
+      if (cleaned.length === 0) {
+        setError('Agregá al menos una tarea al checklist antes de asignar.');
+        return;
+      }
+      checklistPayload = cleaned;
+    }
 
     const priorRejectionWarning = buildPriorRejectionAssignWarning(cleaners, selectedCleanerIds);
     if (priorRejectionWarning && !window.confirm(priorRejectionWarning)) {
@@ -284,7 +336,10 @@ export default function EventualServicesPage() {
     setError(null);
     setSuccess(null);
     try {
-      await api.post(`/work-orders/${assigningWo.id}/assign`, { userIds: selectedCleanerIds });
+      await api.post(`/work-orders/${assigningWo.id}/assign`, {
+        userIds: selectedCleanerIds,
+        ...(checklistPayload ? { checklistTasks: checklistPayload } : {}),
+      });
       setSuccess('Limpiadores asignados. Deberán aceptar el servicio en la app móvil.');
       closeAssign();
       await loadServices();
@@ -589,6 +644,78 @@ export default function EventualServicesPage() {
               {assigningWo.building?.name ?? 'Edificio'} · {assigningWo.zone?.name ?? 'Zona'} ·{' '}
               {formatDate(assigningWo.scheduledDate)}
             </p>
+
+            {assigningWo.status === 'QUOTE_ACCEPTED' &&
+            assigningWo._count.workOrderTasks === 0 ? (
+              <div
+                className="stack"
+                style={{
+                  marginBottom: 16,
+                  padding: 12,
+                  border: '1px solid var(--border, #e5e7eb)',
+                  borderRadius: 8,
+                  background: 'var(--surface-muted, #f9fafb)',
+                }}
+              >
+                <div>
+                  <strong>Checklist del limpiador *</strong>
+                  <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>
+                    Este servicio viene de un presupuesto. Definí las tareas que debe hacer el
+                    limpiador (no se usan las tareas eventuales del edificio).
+                  </p>
+                </div>
+                {checklistTasks.map((task, index) => (
+                  <div
+                    key={`chk-${index}`}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr auto auto',
+                      gap: 8,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <input
+                      className="input"
+                      value={task.name}
+                      onChange={(e) => updateChecklistTask(index, { name: e.target.value })}
+                      placeholder={`Tarea ${index + 1}`}
+                      required
+                    />
+                    <label className="checkbox-label" style={{ whiteSpace: 'nowrap' }}>
+                      <input
+                        type="checkbox"
+                        checked={task.requiresPhoto}
+                        onChange={(e) =>
+                          updateChecklistTask(index, { requiresPhoto: e.target.checked })
+                        }
+                      />
+                      Foto
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() =>
+                        setChecklistTasks((prev) =>
+                          prev.length <= 1 ? prev : prev.filter((_, i) => i !== index),
+                        )
+                      }
+                      disabled={checklistTasks.length <= 1}
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() =>
+                    setChecklistTasks((prev) => [...prev, { name: '', requiresPhoto: false }])
+                  }
+                >
+                  + Agregar tarea
+                </button>
+              </div>
+            ) : null}
 
             {assigningWo.assignments.some(
               (a) => a.status === 'PENDING' || a.status === 'ACCEPTED',

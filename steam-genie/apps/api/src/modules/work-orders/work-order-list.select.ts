@@ -20,5 +20,15 @@ export const WORK_ORDER_LIST_SELECT = {
       user: { select: { id: true, fullName: true, dni: true } },
     },
   },
+  quote: {
+    select: {
+      id: true,
+      number: true,
+      items: {
+        orderBy: { sortOrder: 'asc' as const },
+        select: { description: true, quantity: true },
+      },
+    },
+  },
   _count: { select: { workOrderTasks: true, assignments: true } },
 } as const;

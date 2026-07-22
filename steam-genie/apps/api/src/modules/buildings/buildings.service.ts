@@ -39,7 +39,9 @@ export class BuildingsService {
     if (!includeInactive) {
       where.isActive = true;
     }
-    // Por defecto ocultamos sitios de clientes particulares del listado de edificios.
+    // Por defecto ocultamos sitios de clientes particulares del listado admin.
+    // Los usuarios con acceso acotado (limpiadores) sí deben ver los sitios
+    // donde tienen rol, aunque sean de cliente particular.
     if (!includeParticularSites) {
       where.particularClient = null;
     }
@@ -71,6 +73,8 @@ export class BuildingsService {
           return { data: [], total: 0, page, limit, pages: 0 };
         }
 
+        // Acceso acotado: incluir sitios particulares asignados.
+        delete where.particularClient;
         where.id = { in: buildingIds };
       }
     }
@@ -149,7 +153,7 @@ export class BuildingsService {
     return building;
   }
 
-  /** Limpiadores asignables en un edificio (rol cleaner global o del edificio). */
+  /** Limpiadores asignables: cualquier usuario activo con rol cleaner (en cualquier edificio o global). */
   async findAssignableCleaners(buildingId: string, query: QueryAssignableCleanersDto = {}) {
     await this.assertBuildingExists(buildingId);
 
@@ -160,7 +164,6 @@ export class BuildingsService {
         buildingRoles: {
           some: {
             role: { name: 'cleaner' },
-            OR: [{ buildingId }, { buildingId: null }],
           },
         },
       },
@@ -328,6 +331,7 @@ export class BuildingsService {
         ...(dto.requireGpsValidation !== undefined
           ? { requireGpsValidation: dto.requireGpsValidation }
           : {}),
+        ...(dto.buildingMode !== undefined ? { buildingMode: dto.buildingMode } : {}),
         ...(dto.photoEvidenceMode !== undefined
           ? { photoEvidenceMode: dto.photoEvidenceMode }
           : {}),
@@ -350,6 +354,7 @@ export class BuildingsService {
         ...(dto.requireGpsValidation !== undefined
           ? { requireGpsValidation: dto.requireGpsValidation }
           : {}),
+        ...(dto.buildingMode !== undefined ? { buildingMode: dto.buildingMode } : {}),
         ...(dto.photoEvidenceMode !== undefined
           ? { photoEvidenceMode: dto.photoEvidenceMode }
           : {}),

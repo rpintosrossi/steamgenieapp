@@ -10,9 +10,11 @@ import {
   TaskFrequency,
   PeriodicTaskInstanceStatus,
   TaskExecutionStatus,
+  BuildingMode,
   PhotoEvidenceMode,
   PhotoPhase,
 } from '@prisma/client';
+import { resolvePhotoEvidenceMode } from '../../common/building-mode';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StorageService } from '../../infrastructure/storage/storage.service';
 import { MarkTaskDto } from '../service-executions/dto/mark-task.dto';
@@ -80,7 +82,7 @@ const TASK_SELECT = {
 const TASK_LIST_SELECT = {
   ...TASK_SELECT,
   category: { select: { id: true, name: true } },
-  building: { select: { id: true, name: true, photoEvidenceMode: true } },
+  building: { select: { id: true, name: true, buildingMode: true, photoEvidenceMode: true } },
   zone: {
     select: {
       id: true,
@@ -798,9 +800,9 @@ export class TasksService {
 
     const building = await this.prisma.building.findFirst({
       where: { id: instance.task.buildingId, deletedAt: null },
-      select: { photoEvidenceMode: true },
+      select: { buildingMode: true, photoEvidenceMode: true },
     });
-    const photoEvidenceMode = building?.photoEvidenceMode ?? PhotoEvidenceMode.PER_TASK;
+    const photoEvidenceMode = resolvePhotoEvidenceMode(building);
 
     if (
       dto.status === TaskExecutionStatus.DONE &&
@@ -1615,6 +1617,7 @@ export class TasksService {
       building: {
         id: string;
         name: string;
+        buildingMode?: BuildingMode;
         photoEvidenceMode?: PhotoEvidenceMode;
       } | null;
       zone: {
@@ -1667,8 +1670,7 @@ export class TasksService {
       taskName: task.name,
       frequency: task.frequency,
       requiresPhoto: task.requiresPhoto,
-      photoEvidenceMode:
-        task.building?.photoEvidenceMode ?? PhotoEvidenceMode.PER_TASK,
+      photoEvidenceMode: resolvePhotoEvidenceMode(task.building),
       building: task.building
         ? { id: task.building.id, name: task.building.name }
         : null,

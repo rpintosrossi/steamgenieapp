@@ -23,7 +23,7 @@ import { syncQueue, photoQueue, generateClientId } from '../../../src/sync/sync-
 import { syncManager } from '../../../src/sync/sync-manager';
 import { useNetworkStatus } from '../../../src/hooks/useNetworkStatus';
 import { useSyncStore } from '../../../src/stores/sync.store';
-import { useBuildingStore, RejectionReason } from '../../../src/stores/building.store';
+import { useBuildingStore, RejectionReason, isBeforeDuringAfterMode } from '../../../src/stores/building.store';
 import {
   PhasePhotosSection,
   type PhasePhotoItem,
@@ -178,7 +178,7 @@ export default function ChecklistScreen() {
     prefetchData?.activeAttendance,
     workOrderBuildingId,
   );
-  const isBdaMode = selectedBuilding?.photoEvidenceMode === 'BEFORE_DURING_AFTER';
+  const isBdaMode = isBeforeDuringAfterMode(selectedBuilding);
   const perTaskPhotosEnabled = !isBdaMode;
 
   const taskNotDoneReasons = (prefetchData?.rejectionReasons ?? []).filter(
