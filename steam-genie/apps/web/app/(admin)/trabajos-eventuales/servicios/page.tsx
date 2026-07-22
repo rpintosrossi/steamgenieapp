@@ -138,6 +138,11 @@ function CleanerAssignOption({
         <span className="checkbox-item-title">
           {cleaner.fullName}
           <span className="muted"> ({cleaner.dni})</span>
+          {cleaner.assignableRole === 'manager' ? (
+            <span className="badge" style={{ marginLeft: 8 }}>
+              Encargado
+            </span>
+          ) : null}
           {cleaner.recommended ? (
             <span className="badge badge-primary" style={{ marginLeft: 8 }}>
               Recomendado
@@ -574,7 +579,7 @@ export default function EventualServicesPage() {
                             onClick={() => void openAssign(wo)}
                             title={
                               canAssign
-                                ? 'Asignar limpiadores'
+                                ? 'Asignar limpiadores o encargados'
                                 : 'No se puede asignar en este estado'
                             }
                           >
@@ -632,7 +637,7 @@ export default function EventualServicesPage() {
         <div className="modal-overlay" onClick={closeAssign}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2 className="modal-title">Asignar limpiadores</h2>
+              <h2 className="modal-title">Asignar personal</h2>
               <button type="button" className="btn btn-secondary btn-sm" onClick={closeAssign}>
                 Cerrar
               </button>
@@ -726,13 +731,13 @@ export default function EventualServicesPage() {
             ) : null}
 
             {loadingAssign ? (
-              <p className="muted">Cargando limpiadores…</p>
+              <p className="muted">Cargando personal asignable…</p>
             ) : cleaners.length === 0 ? (
               <div className="stack" style={{ gap: 8 }}>
                 <p className="muted">
-                  No hay limpiadores activos con rol <strong>Limpiador</strong> en este edificio.
-                  En Usuarios, editá cada persona y asignale rol Limpiador + el edificio correspondiente
-                  (no alcanza con Administrador o Encargado).
+                  No hay usuarios activos con rol <strong>Limpiador</strong> o{' '}
+                  <strong>Encargado</strong>. En Usuarios, asignales ese rol; al confirmar la
+                  asignación se les vincula automáticamente este edificio.
                 </p>
                 {buildingUsersWrongRole.length > 0 ? (
                   <div className="alert alert-info">

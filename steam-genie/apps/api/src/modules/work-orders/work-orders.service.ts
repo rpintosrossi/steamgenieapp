@@ -490,10 +490,12 @@ export class WorkOrdersService {
       throw new NotFoundException('One or more users not found');
     }
 
-    const cleanerRole = await this.prisma.role.findFirst({
-      where: { name: 'cleaner' },
-      select: { id: true },
+    const roles = await this.prisma.role.findMany({
+      where: { name: { in: ['cleaner', 'manager'] } },
+      select: { id: true, name: true },
     });
+    const cleanerRole = roles.find((r) => r.name === 'cleaner');
+    const managerRole = roles.find((r) => r.name === 'manager');
     if (!cleanerRole) {
       throw new BadRequestException('Rol limpiador no configurado en el sistema.');
     }
@@ -501,30 +503,67 @@ export class WorkOrdersService {
     const notifiedUserIds: string[] = [];
 
     await this.prisma.$transaction(async (tx) => {
-      // Otorga rol cleaner en el edificio del servicio (si aún no lo tiene ahí).
-      // Aunque tenga cleaner global, hace falta el vínculo al edificio para que
-      // aparezca en el listado móvil.
-      const existingOnBuilding = await tx.userBuildingRole.findMany({
+      // Otorga en el edificio el rol operativo que ya tiene la persona (cleaner y/o manager).
+      const existingRoles = await tx.userBuildingRole.findMany({
         where: {
           userId: { in: dto.userIds },
-          roleId: cleanerRole.id,
-          buildingId: wo.buildingId,
+          role: { name: { in: ['cleaner', 'manager'] } },
         },
-        select: { userId: true },
+        select: { userId: true, buildingId: true, role: { select: { name: true } } },
       });
-      const usersWithBuildingRole = new Set(existingOnBuilding.map((r) => r.userId));
-      const missingRoleUserIds = dto.userIds.filter(
-        (userId) => !usersWithBuildingRole.has(userId),
-      );
-      if (missingRoleUserIds.length > 0) {
-        await tx.userBuildingRole.createMany({
-          data: missingRoleUserIds.map((userId) => ({
+
+      const rolesByUser = new Map<string, { cleaner: boolean; manager: boolean; onBuilding: Set<string> }>();
+      for (const userId of dto.userIds) {
+        rolesByUser.set(userId, { cleaner: false, manager: false, onBuilding: new Set() });
+      }
+      for (const row of existingRoles) {
+        const entry = rolesByUser.get(row.userId);
+        if (!entry) continue;
+        if (row.role.name === 'cleaner') entry.cleaner = true;
+        if (row.role.name === 'manager') entry.manager = true;
+        if (row.buildingId === wo.buildingId) {
+          entry.onBuilding.add(row.role.name);
+        }
+      }
+
+      const rolesToCreate: Array<{
+        userId: string;
+        roleId: string;
+        buildingId: string;
+        grantedById: string;
+      }> = [];
+
+      for (const userId of dto.userIds) {
+        const entry = rolesByUser.get(userId)!;
+        if (entry.manager && managerRole && !entry.onBuilding.has('manager')) {
+          rolesToCreate.push({
+            userId,
+            roleId: managerRole.id,
+            buildingId: wo.buildingId,
+            grantedById,
+          });
+        }
+        if (entry.cleaner && !entry.onBuilding.has('cleaner')) {
+          rolesToCreate.push({
             userId,
             roleId: cleanerRole.id,
             buildingId: wo.buildingId,
             grantedById,
-          })),
-        });
+          });
+        }
+        // Sin roles operativos previos (caso raro): otorgar cleaner para poder operar.
+        if (!entry.manager && !entry.cleaner && !entry.onBuilding.has('cleaner')) {
+          rolesToCreate.push({
+            userId,
+            roleId: cleanerRole.id,
+            buildingId: wo.buildingId,
+            grantedById,
+          });
+        }
+      }
+
+      if (rolesToCreate.length > 0) {
+        await tx.userBuildingRole.createMany({ data: rolesToCreate });
       }
 
       if (

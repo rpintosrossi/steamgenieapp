@@ -93,6 +93,8 @@ export interface AssignableCleanerItem {
   id: string;
   fullName: string;
   dni: string;
+  /** cleaner | manager — rol operativo con el que aparece en la lista. */
+  assignableRole?: 'cleaner' | 'manager';
   recommended: boolean;
   sameDayServices: AssignableCleanerSameDayService[];
   priorRejection: AssignableCleanerPriorRejection | null;

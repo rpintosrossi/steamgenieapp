@@ -153,7 +153,7 @@ export class BuildingsService {
     return building;
   }
 
-  /** Limpiadores asignables: cualquier usuario activo con rol cleaner (en cualquier edificio o global). */
+  /** Asignables: usuarios activos con rol cleaner o manager (en cualquier edificio o global). */
   async findAssignableCleaners(buildingId: string, query: QueryAssignableCleanersDto = {}) {
     await this.assertBuildingExists(buildingId);
 
@@ -163,11 +163,20 @@ export class BuildingsService {
         isActive: true,
         buildingRoles: {
           some: {
-            role: { name: 'cleaner' },
+            role: { name: { in: ['cleaner', 'manager'] } },
           },
         },
       },
-      select: { id: true, fullName: true, dni: true },
+      select: {
+        id: true,
+        fullName: true,
+        dni: true,
+        buildingRoles: {
+          where: { role: { name: { in: ['cleaner', 'manager'] } } },
+          select: { role: { select: { name: true } } },
+          take: 10,
+        },
+      },
       orderBy: { fullName: 'asc' },
     });
 
@@ -183,16 +192,27 @@ export class BuildingsService {
       rejectedAt: string | null;
     };
 
-    let enrichedCleaners = cleaners.map((cleaner) => ({
+    const withRoleLabel = cleaners.map((user) => {
+      const roleNames = new Set(user.buildingRoles.map((r) => r.role.name));
+      const assignableRole = roleNames.has('manager') ? 'manager' : 'cleaner';
+      return {
+        id: user.id,
+        fullName: user.fullName,
+        dni: user.dni,
+        assignableRole,
+      };
+    });
+
+    let enrichedCleaners = withRoleLabel.map((cleaner) => ({
       ...cleaner,
       recommended: false,
       sameDayServices: [] as SameDayService[],
       priorRejection: null as PriorRejection | null,
     }));
 
-    if (query.scheduledDate && cleaners.length > 0) {
+    if (query.scheduledDate && withRoleLabel.length > 0) {
       const scheduledDate = parseCalendarDateInput(query.scheduledDate);
-      const cleanerIds = cleaners.map((cleaner) => cleaner.id);
+      const cleanerIds = withRoleLabel.map((cleaner) => cleaner.id);
 
       const assignments = await this.prisma.workOrderAssignment.findMany({
         where: {
@@ -232,7 +252,7 @@ export class BuildingsService {
         servicesByUser.set(assignment.userId, list);
       }
 
-      enrichedCleaners = cleaners.map((cleaner) => {
+      enrichedCleaners = withRoleLabel.map((cleaner) => {
         const sameDayServices = servicesByUser.get(cleaner.id) ?? [];
         return {
           ...cleaner,
@@ -248,8 +268,8 @@ export class BuildingsService {
       });
     }
 
-    if (query.excludeWorkOrderId && cleaners.length > 0) {
-      const cleanerIds = cleaners.map((cleaner) => cleaner.id);
+    if (query.excludeWorkOrderId && withRoleLabel.length > 0) {
+      const cleanerIds = withRoleLabel.map((cleaner) => cleaner.id);
       const priorRejections = await this.prisma.workOrderAssignment.findMany({
         where: {
           workOrderId: query.excludeWorkOrderId,
@@ -281,7 +301,7 @@ export class BuildingsService {
     }
 
     let otherUsersOnBuilding: Array<{ id: string; fullName: string; dni: string; primaryRole: string }> = [];
-    if (cleaners.length === 0) {
+    if (withRoleLabel.length === 0) {
       const usersOnBuilding = await this.prisma.user.findMany({
         where: {
           deletedAt: null,
@@ -305,7 +325,10 @@ export class BuildingsService {
       otherUsersOnBuilding = usersOnBuilding
         .filter(
           (user) =>
-            !user.buildingRoles.some((assignment) => assignment.role.name === 'cleaner'),
+            !user.buildingRoles.some(
+              (assignment) =>
+                assignment.role.name === 'cleaner' || assignment.role.name === 'manager',
+            ),
         )
         .map((user) => ({
           id: user.id,
