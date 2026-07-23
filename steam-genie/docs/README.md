@@ -7,6 +7,10 @@ Manuales operativos orientados a quienes usan el sistema.
 | Administrador (panel web) | [manual-admin.md](./manual-admin.md) | `/documentacion` → PDF |
 | Técnico / Limpiador (app) | [manual-tecnico.md](./manual-tecnico.md) | `/documentacion` → PDF |
 
+## Comercial / ventas
+
+Kit para presentar y cotizar el producto: [comercial/README.md](./comercial/README.md)
+
 ## Regenerar PDFs
 
 Desde la raíz del monorepo:

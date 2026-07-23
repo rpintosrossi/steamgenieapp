@@ -343,6 +343,7 @@ export interface WorkOrderListItem {
   buildingId: string;
   zoneId: string | null;
   subzoneId: string | null;
+  reservationId?: string | null;
   scheduledDate: string | null;
   scheduledTime: string | null;
   deadlineAt: string | null;

@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Delete,
   Body,
   Param,
@@ -21,6 +22,7 @@ import { AssignWorkOrderDto } from './dto/assign-work-order.dto';
 import { RejectWorkOrderDto } from './dto/reject-work-order.dto';
 import { CreateCheckoutCleaningDto } from './dto/create-checkout-cleaning.dto';
 import { CreateAdditionalRequestDto } from './dto/create-additional-request.dto';
+import { RescheduleWorkOrderDto } from './dto/reschedule-work-order.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
 
 @Controller('work-orders')
@@ -62,6 +64,16 @@ export class WorkOrdersController {
   @RequiredRoles('admin', 'manager', 'cleaner', 'client', 'provider')
   findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
     return this.workOrdersService.findOne(id, user);
+  }
+
+  @Patch(':id/reschedule')
+  @RequiredRoles('admin', 'manager')
+  reschedule(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RescheduleWorkOrderDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.workOrdersService.reschedule(id, dto, user);
   }
 
   @Post(':id/assign')

@@ -16,6 +16,7 @@ import { AssignWorkOrderDto } from './dto/assign-work-order.dto';
 import { RejectWorkOrderDto } from './dto/reject-work-order.dto';
 import { CreateCheckoutCleaningDto } from './dto/create-checkout-cleaning.dto';
 import { CreateAdditionalRequestDto } from './dto/create-additional-request.dto';
+import { RescheduleWorkOrderDto } from './dto/reschedule-work-order.dto';
 import { WORK_ORDER_LIST_SELECT } from './work-order-list.select';
 import { NotificationsService } from '../notifications/notifications.service';
 import type { AuthUser } from '@steam-genie/shared-types';
@@ -995,6 +996,79 @@ export class WorkOrdersService {
     ]);
 
     return this.findOne(id);
+  }
+
+  // ─── RESCHEDULE ────────────────────────────────────────────────────────────
+
+  async reschedule(id: string, dto: RescheduleWorkOrderDto, user: AuthUser) {
+    const wo = await this.prisma.workOrder.findFirst({
+      where: { id, deletedAt: null },
+      select: {
+        id: true,
+        buildingId: true,
+        status: true,
+        reservationId: true,
+        deadlineAt: true,
+      },
+    });
+    if (!wo) throw new NotFoundException('Work order not found');
+
+    const globalStaff = await this.hasGlobalStaffAccess(user.id);
+    if (!globalStaff) {
+      const staffBuildingIds = await this.getStaffBuildingIds(user.id);
+      if (!staffBuildingIds.includes(wo.buildingId)) {
+        throw new ForbiddenException('No tenés acceso a servicios de este edificio.');
+      }
+    }
+
+    if (wo.status === WorkOrderStatus.IN_PROGRESS) {
+      throw new ConflictException('No se puede reprogramar un servicio en curso.');
+    }
+    if (wo.status === WorkOrderStatus.COMPLETED) {
+      throw new ConflictException('No se puede reprogramar un servicio completado.');
+    }
+
+    const scheduledAt = new Date(dto.scheduledAt);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      throw new BadRequestException('scheduledAt is invalid');
+    }
+
+    let deadlineAt: Date | null;
+    if (dto.deadlineAt !== undefined) {
+      deadlineAt = new Date(dto.deadlineAt);
+      if (Number.isNaN(deadlineAt.getTime())) {
+        throw new BadRequestException('deadlineAt is invalid');
+      }
+      if (deadlineAt <= scheduledAt) {
+        throw new BadRequestException('deadlineAt must be after scheduledAt');
+      }
+    } else if (wo.deadlineAt && wo.deadlineAt > scheduledAt) {
+      deadlineAt = wo.deadlineAt;
+    } else {
+      deadlineAt = null;
+    }
+
+    const scheduledDate = calendarDateFromInstant(scheduledAt);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.workOrder.update({
+        where: { id },
+        data: {
+          scheduledDate,
+          scheduledTime: scheduledAt,
+          deadlineAt,
+        },
+      });
+
+      if (wo.reservationId) {
+        await tx.reservation.update({
+          where: { id: wo.reservationId },
+          data: { checkoutAt: scheduledAt },
+        });
+      }
+    });
+
+    return this.findOneForList(id);
   }
 
   // ─── DELETE ───────────────────────────────────────────────────────────────

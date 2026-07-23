@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "docs:pdf": "node scripts/generate-manual-pdfs.mjs"
+    "docs:pdf": "node scripts/generate-manual-pdfs.mjs",
+    "docs:pdf:comercial": "node scripts/generate-comercial-pdf.mjs"
   },
   "dependencies": {
     "@steam-genie/shared-constants": "workspace:*",

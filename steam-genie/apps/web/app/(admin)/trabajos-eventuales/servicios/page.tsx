@@ -1,9 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { APP_MODULES } from '@steam-genie/shared-constants';
 import { WorkOrderFinanceModal } from '../../../../components/WorkOrderFinanceModal';
+import { toIsoFromDatetimeLocal } from '../../../../components/LocationPicker';
 import { api } from '../../../../lib/api-client';
 import { getCurrentUserRole, hasModule } from '../../../../lib/auth';
 import { fetchBuildingsList } from '../../../../lib/buildings-cache';
@@ -40,6 +41,9 @@ type ChecklistDraft = {
 const PAGE_SIZE = 20;
 type ScheduleSortDir = 'asc' | 'desc';
 
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0'));
+const MINUTE_OPTIONS = ['00', '15', '30', '45'] as const;
+
 function formatDate(value: string | null): string {
   return formatStoredCalendarDate(value, 'es-AR');
 }
@@ -53,6 +57,22 @@ function formatScheduledTime(value: string | null): string {
     minute: '2-digit',
     hour12: false,
   });
+}
+
+function parseScheduleForForm(wo: WorkOrderListItem): { date: string; hour: string; minute: string } {
+  const date = calendarDateKeyFromStored(wo.scheduledDate) || '';
+  if (!wo.scheduledTime) {
+    return { date, hour: '11', minute: '00' };
+  }
+  const instant = new Date(wo.scheduledTime);
+  if (Number.isNaN(instant.getTime())) {
+    return { date, hour: '11', minute: '00' };
+  }
+  const hour = String(instant.getHours()).padStart(2, '0');
+  const minuteNum = instant.getMinutes();
+  const snapped = String(Math.min(45, Math.round(minuteNum / 15) * 15)).padStart(2, '0');
+  const minute = (MINUTE_OPTIONS as readonly string[]).includes(snapped) ? snapped : '00';
+  return { date, hour, minute };
 }
 
 function formatAssignments(wo: WorkOrderListItem): string {
@@ -109,6 +129,7 @@ function buildPriorRejectionAssignWarning(
 }
 
 const NON_DELETABLE_STATUSES = new Set(['IN_PROGRESS', 'COMPLETED']);
+const NON_RESCHEDULABLE_STATUSES = new Set(['IN_PROGRESS', 'COMPLETED']);
 const PURGE_CONFIRM_TOKEN = 'DELETE_ALL_WORK_ORDERS';
 
 function CleanerAssignOption({
@@ -198,6 +219,12 @@ export default function EventualServicesPage() {
   const [deletingWo, setDeletingWo] = useState<WorkOrderListItem | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [purging, setPurging] = useState(false);
+
+  const [reschedulingWo, setReschedulingWo] = useState<WorkOrderListItem | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [rescheduleHour, setRescheduleHour] = useState('11');
+  const [rescheduleMinute, setRescheduleMinute] = useState('00');
+  const [savingReschedule, setSavingReschedule] = useState(false);
   const [financeWoId, setFinanceWoId] = useState<string | null>(null);
   const canManageFinance = hasModule(APP_MODULES.GASTOS_SERVICIOS);
 
@@ -363,6 +390,45 @@ export default function EventualServicesPage() {
 
   function closeDelete() {
     setDeletingWo(null);
+  }
+
+  function openReschedule(wo: WorkOrderListItem) {
+    const parsed = parseScheduleForForm(wo);
+    setReschedulingWo(wo);
+    setRescheduleDate(parsed.date);
+    setRescheduleHour(parsed.hour);
+    setRescheduleMinute(parsed.minute);
+    setError(null);
+    setSuccess(null);
+  }
+
+  function closeReschedule() {
+    setReschedulingWo(null);
+  }
+
+  async function handleReschedule(e: FormEvent) {
+    e.preventDefault();
+    if (!reschedulingWo || !rescheduleDate) {
+      setError('Indicá la nueva fecha del servicio.');
+      return;
+    }
+
+    setSavingReschedule(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const scheduledAt = toIsoFromDatetimeLocal(
+        `${rescheduleDate}T${rescheduleHour}:${rescheduleMinute}`,
+      );
+      await api.patch(`/work-orders/${reschedulingWo.id}/reschedule`, { scheduledAt });
+      setSuccess('Servicio reprogramado.');
+      closeReschedule();
+      await loadServices();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo reprogramar el servicio');
+    } finally {
+      setSavingReschedule(false);
+    }
   }
 
   async function handleDelete() {
@@ -541,6 +607,7 @@ export default function EventualServicesPage() {
                 {items.map((wo) => {
                   const canAssign = ASSIGNABLE_STATUSES.has(wo.status);
                   const canDelete = !NON_DELETABLE_STATUSES.has(wo.status);
+                  const canReschedule = !NON_RESCHEDULABLE_STATUSES.has(wo.status);
                   return (
                     <tr key={wo.id}>
                       <td>
@@ -572,6 +639,19 @@ export default function EventualServicesPage() {
                               Gastos
                             </button>
                           ) : null}
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            disabled={!canReschedule}
+                            onClick={() => openReschedule(wo)}
+                            title={
+                              canReschedule
+                                ? 'Cambiar fecha y hora del servicio'
+                                : 'No se puede reprogramar un servicio en curso o completado'
+                            }
+                          >
+                            Reprogramar
+                          </button>
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
@@ -828,6 +908,102 @@ export default function EventualServicesPage() {
                 Cancelar
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {reschedulingWo ? (
+        <div className="modal-overlay" onClick={closeReschedule}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">Reprogramar servicio</h2>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={closeReschedule}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <p className="muted" style={{ marginTop: 0 }}>
+              <strong>{reschedulingWo.title}</strong>
+              <br />
+              {reschedulingWo.building?.name ?? 'Edificio'} ·{' '}
+              {reschedulingWo.zone?.name ?? 'Zona'}
+              <br />
+              Fecha actual: {formatDate(reschedulingWo.scheduledDate)}{' '}
+              {formatScheduledTime(reschedulingWo.scheduledTime)}
+            </p>
+
+            <form onSubmit={(e) => void handleReschedule(e)}>
+              <div className="form-grid" style={{ marginTop: 12 }}>
+                <div className="form-field">
+                  <label htmlFor="reschedule-date">Nueva fecha *</label>
+                  <input
+                    id="reschedule-date"
+                    className="input"
+                    type="date"
+                    required
+                    value={rescheduleDate}
+                    onChange={(e) => setRescheduleDate(e.target.value)}
+                  />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="reschedule-hour">Hora</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <select
+                      id="reschedule-hour"
+                      className="input"
+                      value={rescheduleHour}
+                      onChange={(e) => setRescheduleHour(e.target.value)}
+                    >
+                      {HOUR_OPTIONS.map((h) => (
+                        <option key={h} value={h}>
+                          {h}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      id="reschedule-minute"
+                      className="input"
+                      value={rescheduleMinute}
+                      onChange={(e) => setRescheduleMinute(e.target.value)}
+                    >
+                      {MINUTE_OPTIONS.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {reschedulingWo.reservationId ? (
+                <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
+                  Este servicio está ligado a una reserva: al reprogramar también se actualiza
+                  el checkout de la reserva.
+                </p>
+              ) : null}
+
+              <div className="form-actions" style={{ marginTop: 16 }}>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={savingReschedule || !rescheduleDate}
+                >
+                  {savingReschedule ? 'Guardando…' : 'Guardar nueva fecha'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={closeReschedule}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       ) : null}

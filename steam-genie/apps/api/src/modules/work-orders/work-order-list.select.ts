@@ -6,6 +6,7 @@ export const WORK_ORDER_LIST_SELECT = {
   buildingId: true,
   zoneId: true,
   subzoneId: true,
+  reservationId: true,
   scheduledDate: true,
   scheduledTime: true,
   deadlineAt: true,
