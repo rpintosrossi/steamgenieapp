@@ -26,6 +26,8 @@ import { CreateStockProductDto } from './dto/create-stock-product.dto';
 import { UpdateStockProductDto } from './dto/update-stock-product.dto';
 import { AdjustStockProductDto } from './dto/adjust-stock-product.dto';
 import { BulkAdjustStockDto } from './dto/bulk-adjust-stock.dto';
+import { CreateStockWarehouseDto } from './dto/create-stock-warehouse.dto';
+import { UpdateStockWarehouseDto } from './dto/update-stock-warehouse.dto';
 
 const STOCK_ROLES = ['admin', 'manager', 'stock'] as const;
 
@@ -36,8 +38,41 @@ export class StockController {
 
   @Get('stats')
   @RequiredRoles(...STOCK_ROLES)
-  getStats() {
-    return this.stockService.getStats();
+  getStats(@Query('warehouseId') warehouseId?: string) {
+    return this.stockService.getStats(warehouseId);
+  }
+
+  @Get('warehouses')
+  @RequiredRoles(...STOCK_ROLES)
+  findAllWarehouses(@Query() query: QueryStockCatalogDto) {
+    return this.stockService.findAllWarehouses(query.includeInactive);
+  }
+
+  @Get('warehouses/:id')
+  @RequiredRoles(...STOCK_ROLES)
+  findWarehouse(@Param('id', ParseUUIDPipe) id: string) {
+    return this.stockService.findWarehouseById(id);
+  }
+
+  @Post('warehouses')
+  @RequiredRoles(...STOCK_ROLES)
+  createWarehouse(@Body() dto: CreateStockWarehouseDto) {
+    return this.stockService.createWarehouse(dto);
+  }
+
+  @Patch('warehouses/:id')
+  @RequiredRoles(...STOCK_ROLES)
+  updateWarehouse(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateStockWarehouseDto,
+  ) {
+    return this.stockService.updateWarehouse(id, dto);
+  }
+
+  @Delete('warehouses/:id')
+  @RequiredRoles(...STOCK_ROLES)
+  removeWarehouse(@Param('id', ParseUUIDPipe) id: string) {
+    return this.stockService.removeWarehouse(id);
   }
 
   @Get('products/grouped')
@@ -83,8 +118,13 @@ export class StockController {
   listProductMovements(
     @Param('id', ParseUUIDPipe) id: string,
     @Query('limit') limit?: string,
+    @Query('warehouseId') warehouseId?: string,
   ) {
-    return this.stockService.listProductMovements(id, limit ? Number(limit) : undefined);
+    return this.stockService.listProductMovements(
+      id,
+      limit ? Number(limit) : undefined,
+      warehouseId,
+    );
   }
 
   @Delete('products/:id')

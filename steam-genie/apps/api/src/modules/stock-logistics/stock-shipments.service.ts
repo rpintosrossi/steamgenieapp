@@ -13,6 +13,7 @@ import {
 } from './dto/shipment-order.dto';
 import {
   assertActiveProduct,
+  assertActiveWarehouse,
   aggregateLineQuantities,
   assertDepotAvailabilityForTotals,
   computeOrderStatus,
@@ -30,11 +31,13 @@ const ORDER_SELECT = {
   reference: true,
   status: true,
   notes: true,
+  sourceWarehouseId: true,
   createdById: true,
   dispatchedById: true,
   dispatchedAt: true,
   createdAt: true,
   updatedAt: true,
+  sourceWarehouse: { select: { id: true, name: true, type: true } },
   destinations: {
     select: {
       id: true,
@@ -84,7 +87,8 @@ export class StockShipmentsService {
   }
 
   async create(user: AuthUser, dto: CreateShipmentOrderDto) {
-    await this.validateDestinationsInput(dto.destinations);
+    await assertActiveWarehouse(this.prisma, dto.sourceWarehouseId);
+    await this.validateDestinationsInput(dto.destinations, dto.sourceWarehouseId);
 
     const reference = await generateShipmentReference(this.prisma);
 
@@ -93,6 +97,7 @@ export class StockShipmentsService {
         reference,
         status: 'DRAFT',
         notes: dto.notes?.trim() || null,
+        sourceWarehouseId: dto.sourceWarehouseId,
         createdById: user.id,
         destinations: {
           create: dto.destinations.map((dest) => ({
@@ -115,9 +120,14 @@ export class StockShipmentsService {
 
   async update(id: string, dto: UpdateShipmentOrderDto) {
     const order = await this.assertDraftOrder(id);
+    const warehouseId = dto.sourceWarehouseId ?? order.sourceWarehouseId;
+
+    if (dto.sourceWarehouseId) {
+      await assertActiveWarehouse(this.prisma, dto.sourceWarehouseId);
+    }
 
     if (dto.destinations) {
-      await this.validateDestinationsInput(dto.destinations);
+      await this.validateDestinationsInput(dto.destinations, warehouseId);
       await this.prisma.$transaction(async (tx) => {
         await tx.stockShipmentLine.deleteMany({
           where: { destination: { orderId: id } },
@@ -139,17 +149,43 @@ export class StockShipmentsService {
           });
         }
 
-        if (dto.notes !== undefined) {
-          await tx.stockShipmentOrder.update({
-            where: { id },
-            data: { notes: dto.notes?.trim() || null },
-          });
-        }
+        await tx.stockShipmentOrder.update({
+          where: { id },
+          data: {
+            ...(dto.notes !== undefined ? { notes: dto.notes?.trim() || null } : {}),
+            ...(dto.sourceWarehouseId
+              ? { sourceWarehouseId: dto.sourceWarehouseId }
+              : {}),
+          },
+        });
       });
-    } else if (dto.notes !== undefined) {
+    } else if (dto.notes !== undefined || dto.sourceWarehouseId) {
+      if (dto.sourceWarehouseId) {
+        const current = await this.prisma.stockShipmentOrder.findUnique({
+          where: { id },
+          include: { destinations: { include: { lines: true } } },
+        });
+        if (current?.destinations.length) {
+          await this.validateDestinationsInput(
+            current.destinations.map((d) => ({
+              buildingId: d.buildingId,
+              lines: d.lines.map((l) => ({
+                productId: l.productId,
+                quantity: toNumber(l.quantity),
+              })),
+            })),
+            warehouseId,
+          );
+        }
+      }
       await this.prisma.stockShipmentOrder.update({
         where: { id },
-        data: { notes: dto.notes?.trim() || null },
+        data: {
+          ...(dto.notes !== undefined ? { notes: dto.notes?.trim() || null } : {}),
+          ...(dto.sourceWarehouseId
+            ? { sourceWarehouseId: dto.sourceWarehouseId }
+            : {}),
+        },
       });
     }
 
@@ -183,7 +219,11 @@ export class StockShipmentsService {
     }
 
     const depotTotals = aggregateLineQuantities(order.destinations);
-    await assertDepotAvailabilityForTotals(this.prisma, depotTotals);
+    await assertDepotAvailabilityForTotals(
+      this.prisma,
+      order.sourceWarehouseId,
+      depotTotals,
+    );
 
     await this.prisma.$transaction(async (tx) => {
       for (const dest of order.destinations) {
@@ -192,7 +232,7 @@ export class StockShipmentsService {
         for (const line of dest.lines) {
           const qty = toNumber(line.quantity);
           await assertActiveProduct(tx, line.productId);
-          await reserveDepotStock(tx, line.productId, qty, {
+          await reserveDepotStock(tx, order.sourceWarehouseId, line.productId, qty, {
             performedById: user.id,
             shipmentOrderId: order.id,
             shipmentDestinationId: dest.id,
@@ -290,6 +330,7 @@ export class StockShipmentsService {
         const qty = toNumber(line.quantity);
         await transferReservedToBuilding(
           tx,
+          destination.order.sourceWarehouseId,
           destination.buildingId,
           line.productId,
           qty,
@@ -362,13 +403,19 @@ export class StockShipmentsService {
         if (line.status !== 'PENDING') continue;
         const qty = toNumber(line.quantity);
         if (isDispatched) {
-          await releaseDepotReservation(tx, line.productId, qty, {
-            performedById: user.id,
-            shipmentOrderId: destination.orderId,
-            shipmentDestinationId: destination.id,
-            shipmentLineId: line.id,
-            note: `Cancelación de envío — ${destination.order.reference}`,
-          });
+          await releaseDepotReservation(
+            tx,
+            destination.order.sourceWarehouseId,
+            line.productId,
+            qty,
+            {
+              performedById: user.id,
+              shipmentOrderId: destination.orderId,
+              shipmentDestinationId: destination.id,
+              shipmentLineId: line.id,
+              note: `Cancelación de envío — ${destination.order.reference}`,
+            },
+          );
         }
         await tx.stockShipmentLine.update({
           where: { id: line.id },
@@ -418,6 +465,7 @@ export class StockShipmentsService {
 
   private async validateDestinationsInput(
     destinations: CreateShipmentOrderDto['destinations'],
+    warehouseId: string,
   ) {
     if (!destinations.length) {
       throw new BadRequestException('Debe incluir al menos un edificio destino.');
@@ -456,7 +504,7 @@ export class StockShipmentsService {
       }
     }
 
-    await assertDepotAvailabilityForTotals(this.prisma, productTotals);
+    await assertDepotAvailabilityForTotals(this.prisma, warehouseId, productTotals);
   }
 
   private async ensureBuildingProductsFromOrder(order: {
@@ -490,6 +538,8 @@ export class StockShipmentsService {
     reference: string;
     status: string;
     notes: string | null;
+    sourceWarehouseId: string;
+    sourceWarehouse?: { id: string; name: string; type: string };
     createdById: string;
     dispatchedById: string | null;
     dispatchedAt: Date | null;

@@ -10,6 +10,9 @@ import {
 } from 'class-validator';
 
 export class CreateStockProductDto {
+  @IsUUID()
+  warehouseId!: string;
+
   @IsString()
   @MaxLength(300)
   name!: string;

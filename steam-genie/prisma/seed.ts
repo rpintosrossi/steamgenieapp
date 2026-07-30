@@ -170,6 +170,18 @@ async function main() {
       },
     }));
 
+  const warehouse =
+    (await prisma.stockWarehouse.findFirst({
+      where: { name: 'Sucursal Buenos Aires', deletedAt: null },
+    })) ??
+    (await prisma.stockWarehouse.create({
+      data: {
+        name: 'Sucursal Buenos Aires',
+        type: 'COMPANY',
+        isActive: true,
+      },
+    }));
+
   const DEMO_PRODUCTS = [
     { name: 'Detergente multiuso', category: 'Limpieza', quantity: 24, minQuantity: 10, unitType: 'LITER' as const },
     { name: 'Escoba industrial', category: 'Limpieza', quantity: 8, minQuantity: 5, unitType: 'UNIT' as const },
@@ -182,22 +194,39 @@ async function main() {
     const categoryId = categoryIds.get(item.category);
     if (!categoryId) continue;
 
-    const existing = await prisma.stockProduct.findFirst({
+    let product = await prisma.stockProduct.findFirst({
       where: { name: item.name, deletedAt: null },
     });
-    if (!existing) {
-      await prisma.stockProduct.create({
+    if (!product) {
+      product = await prisma.stockProduct.create({
         data: {
           name: item.name,
           categoryId,
           supplierId: supplier.id,
-          quantity: item.quantity,
-          minQuantity: item.minQuantity,
           unitType: item.unitType,
           isActive: true,
         },
       });
       console.log(`  ✓ Producto stock: ${item.name}`);
+    }
+
+    const balance = await prisma.stockBalance.findUnique({
+      where: {
+        warehouseId_productId: {
+          warehouseId: warehouse.id,
+          productId: product.id,
+        },
+      },
+    });
+    if (!balance) {
+      await prisma.stockBalance.create({
+        data: {
+          warehouseId: warehouse.id,
+          productId: product.id,
+          quantity: item.quantity,
+          minQuantity: item.minQuantity,
+        },
+      });
     }
   }
 

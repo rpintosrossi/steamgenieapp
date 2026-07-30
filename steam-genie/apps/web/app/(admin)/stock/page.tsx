@@ -18,7 +18,7 @@ const SUBMODULES: Array<{
     title: 'Depósito',
     module: APP_MODULES.STOCK,
     description:
-      'Inventario central, estadísticas, ajustes rápidos y reservas por órdenes de envío.',
+      'Depósitos y sucursales: inventario por ubicación, ajustes y reservas por envíos.',
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
@@ -94,7 +94,7 @@ export default function StockHubPage() {
         <div>
           <h1 className="page-title">Stock</h1>
           <p className="page-subtitle">
-            Depósito, monitoreo por edificio y logística de envíos.
+            Depósitos, monitoreo por edificio y logística de envíos.
           </p>
         </div>
       </div>

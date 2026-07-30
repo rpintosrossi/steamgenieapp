@@ -28,6 +28,7 @@ import type {
   ShipmentDestinationItem,
   ShipmentOrderItem,
   StockProductGroup,
+  StockWarehouseItem,
 } from '../../../../lib/types';
 
 function openCreateModal(
@@ -35,12 +36,15 @@ function openCreateModal(
   setDestinations: (v: DraftDestination[]) => void,
   setNotes: (v: string) => void,
   setCreateError: (v: string | null) => void,
-  reloadProducts: () => void,
+  setSourceWarehouseId: (v: string) => void,
+  defaultWarehouseId: string,
+  reloadProducts: (warehouseId: string) => void,
 ) {
   setNotes('');
   setDestinations([emptyDestination()]);
   setCreateError(null);
-  reloadProducts();
+  setSourceWarehouseId(defaultWarehouseId);
+  if (defaultWarehouseId) reloadProducts(defaultWarehouseId);
   setShowCreate(true);
 }
 
@@ -70,6 +74,7 @@ function formatDateTime(iso: string | null) {
 export default function StockShipmentsPage() {
   const [orders, setOrders] = useState<ShipmentOrderItem[]>([]);
   const [buildings, setBuildings] = useState<Array<{ id: string; name: string }>>([]);
+  const [warehouses, setWarehouses] = useState<StockWarehouseItem[]>([]);
   const [productGroups, setProductGroups] = useState<StockProductGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +83,7 @@ export default function StockShipmentsPage() {
   const [selected, setSelected] = useState<ShipmentOrderItem | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [notes, setNotes] = useState('');
+  const [sourceWarehouseId, setSourceWarehouseId] = useState('');
   const [destinations, setDestinations] = useState<DraftDestination[]>([emptyDestination()]);
   const [dispatchDates, setDispatchDates] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -104,9 +110,17 @@ export default function StockShipmentsPage() {
     [destinations, productsById],
   );
 
-  const reloadProducts = useCallback(() => {
+  const defaultWarehouseId = warehouses[0]?.id ?? '';
+
+  const reloadProducts = useCallback((warehouseId: string) => {
+    if (!warehouseId) {
+      setProductGroups([]);
+      return;
+    }
     void api
-      .get<{ groups: StockProductGroup[] }>('/stock/products/grouped?includeInactive=false')
+      .get<{ groups: StockProductGroup[] }>(
+        `/stock/products/grouped?includeInactive=false&warehouseId=${warehouseId}`,
+      )
       .then((res) => setProductGroups(res.groups));
   }, []);
 
@@ -127,11 +141,14 @@ export default function StockShipmentsPage() {
     void Promise.all([
       loadOrders(),
       fetchBuildingsList().then(setBuildings),
-      api
-        .get<{ groups: StockProductGroup[] }>('/stock/products/grouped?includeInactive=false')
-        .then((res) => setProductGroups(res.groups)),
+      api.get<StockWarehouseItem[]>('/stock/warehouses').then((list) => {
+        setWarehouses(list);
+        if (list[0]?.id) {
+          reloadProducts(list[0].id);
+        }
+      }),
     ]);
-  }, [loadOrders]);
+  }, [loadOrders, reloadProducts]);
 
   function openOrder(order: ShipmentOrderItem) {
     setSelected(order);
@@ -157,6 +174,10 @@ export default function StockShipmentsPage() {
   }
 
   async function createOrder() {
+    if (!sourceWarehouseId) {
+      setCreateError('Seleccioná el depósito de origen.');
+      return;
+    }
     const validationError = validateShipmentDraft(destinations, productsById);
     if (validationError) {
       setCreateError(validationError);
@@ -168,6 +189,7 @@ export default function StockShipmentsPage() {
     setCreateError(null);
     try {
       const payload = {
+        sourceWarehouseId,
         notes: notes.trim() || undefined,
         destinations: destinations
           .filter((d) => d.buildingId)
@@ -211,7 +233,7 @@ export default function StockShipmentsPage() {
     setError(null);
     setDispatchError(null);
     try {
-      await reloadProducts();
+      await reloadProducts(selected.sourceWarehouseId);
       const body = {
         destinations: selected.destinations.map((d) => ({
           destinationId: d.id,
@@ -296,7 +318,15 @@ export default function StockShipmentsPage() {
           type="button"
           className="btn btn-primary"
           onClick={() =>
-            openCreateModal(setShowCreate, setDestinations, setNotes, setCreateError, reloadProducts)
+            openCreateModal(
+              setShowCreate,
+              setDestinations,
+              setNotes,
+              setCreateError,
+              setSourceWarehouseId,
+              defaultWarehouseId,
+              reloadProducts,
+            )
           }
         >
           Nueva orden
@@ -324,6 +354,7 @@ export default function StockShipmentsPage() {
             <thead>
               <tr>
                 <th>Referencia</th>
+                <th>Depósito</th>
                 <th>Estado</th>
                 <th>Destinos</th>
                 <th>Despachada</th>
@@ -353,6 +384,7 @@ export default function StockShipmentsPage() {
                       {order.destinations.map((d) => d.building.name).join(' · ')}
                     </span>
                   </td>
+                  <td>{order.sourceWarehouse?.name ?? '—'}</td>
                   <td>
                     <span className={orderStatusBadge(order.status)}>
                       {STOCK_SHIPMENT_ORDER_STATUS_LABELS[order.status]}
@@ -383,6 +415,28 @@ export default function StockShipmentsPage() {
           >
             <div className="modal-header">
               <h2 className="modal-title">Nueva orden de envío</h2>
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="shipment-warehouse">Depósito de origen</label>
+              <select
+                id="shipment-warehouse"
+                className="select"
+                value={sourceWarehouseId}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setSourceWarehouseId(next);
+                  setDestinations([emptyDestination()]);
+                  reloadProducts(next);
+                }}
+              >
+                <option value="">Seleccionar depósito...</option>
+                {warehouses.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="form-field">
@@ -592,6 +646,11 @@ export default function StockShipmentsPage() {
           >
             <div className="modal-header">
               <h2 className="modal-title">Orden {selected.reference}</h2>
+              {selected.sourceWarehouse ? (
+                <p className="text-muted text-sm" style={{ margin: 0 }}>
+                  Origen: {selected.sourceWarehouse.name}
+                </p>
+              ) : null}
             </div>
 
             <div className="logistics-detail-meta">

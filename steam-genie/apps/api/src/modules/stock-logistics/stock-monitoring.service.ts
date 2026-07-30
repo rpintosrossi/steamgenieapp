@@ -116,27 +116,27 @@ export class StockMonitoringService {
       products = products.filter((p) => alertProductIds.has(p.id));
     }
 
-    const depotProducts = await this.prisma.stockProduct.findMany({
-      where: { deletedAt: null, isActive: true },
+    const depotBalances = await this.prisma.stockBalance.findMany({
+      where: {
+        product: { deletedAt: null, isActive: true },
+        warehouse: { deletedAt: null, isActive: true },
+      },
       select: {
-        id: true,
-        name: true,
         quantity: true,
         reservedQuantity: true,
         minQuantity: true,
-        unitType: true,
       },
     });
 
     const depotStats = {
-      totalProducts: depotProducts.length,
+      totalProducts: depotBalances.length,
       lowStock: 0,
       outOfStock: 0,
     };
 
-    for (const product of depotProducts) {
-      const available = toNumber(product.quantity) - toNumber(product.reservedQuantity);
-      const status = computeStockStatus(available, toNumber(product.minQuantity));
+    for (const balance of depotBalances) {
+      const available = toNumber(balance.quantity) - toNumber(balance.reservedQuantity);
+      const status = computeStockStatus(available, toNumber(balance.minQuantity));
       if (status === 'OUT') depotStats.outOfStock += 1;
       else if (status === 'LOW') depotStats.lowStock += 1;
     }

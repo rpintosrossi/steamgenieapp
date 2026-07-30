@@ -5,6 +5,9 @@ import type { StockStatus } from '@steam-genie/shared-constants';
 const STOCK_STATUSES = ['OK', 'LOW', 'OUT'] as const satisfies readonly StockStatus[];
 
 export class QueryStockProductsDto {
+  @IsUUID()
+  warehouseId!: string;
+
   @IsOptional()
   @IsUUID()
   categoryId?: string;

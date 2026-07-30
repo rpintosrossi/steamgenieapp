@@ -30,6 +30,7 @@ type StockMovementHistoryModalProps = {
   productName: string;
   buildingId?: string;
   buildingName?: string;
+  warehouseId?: string;
 };
 
 export function StockMovementHistoryModal({
@@ -39,6 +40,7 @@ export function StockMovementHistoryModal({
   productName,
   buildingId,
   buildingName,
+  warehouseId,
 }: StockMovementHistoryModalProps) {
   const [rows, setRows] = useState<StockMovementRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -51,6 +53,7 @@ export function StockMovementHistoryModal({
     try {
       const params = new URLSearchParams({ productId });
       if (buildingId) params.set('buildingId', buildingId);
+      if (warehouseId) params.set('warehouseId', warehouseId);
       params.set('limit', '100');
       const data = await api.get<StockMovementRow[]>(`/stock-logistics/movements?${params}`);
       setRows(data);
@@ -60,7 +63,7 @@ export function StockMovementHistoryModal({
     } finally {
       setLoading(false);
     }
-  }, [buildingId, productId]);
+  }, [buildingId, productId, warehouseId]);
 
   useEffect(() => {
     if (open) void load();

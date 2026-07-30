@@ -41,8 +41,39 @@ export async function assertActiveProduct(
   return product;
 }
 
+export async function assertActiveWarehouse(
+  prisma: PrismaExecutor,
+  warehouseId: string,
+) {
+  const warehouse = await prisma.stockWarehouse.findFirst({
+    where: { id: warehouseId, deletedAt: null, isActive: true },
+  });
+  if (!warehouse) throw new NotFoundException('Depósito no encontrado');
+  return warehouse;
+}
+
+export async function ensureStockBalance(
+  tx: Prisma.TransactionClient,
+  warehouseId: string,
+  productId: string,
+  minQuantity = 5,
+) {
+  return tx.stockBalance.upsert({
+    where: { warehouseId_productId: { warehouseId, productId } },
+    create: {
+      warehouseId,
+      productId,
+      quantity: 0,
+      reservedQuantity: 0,
+      minQuantity,
+    },
+    update: {},
+  });
+}
+
 export async function assertDepotAvailabilityForTotals(
   prisma: PrismaExecutor,
+  warehouseId: string,
   totals: Map<string, number>,
 ) {
   for (const [productId, totalQty] of totals) {
@@ -50,7 +81,11 @@ export async function assertDepotAvailabilityForTotals(
       where: { id: productId },
     });
     if (!product) throw new NotFoundException('Producto no encontrado');
-    const available = availableDepotQuantity(product);
+
+    const balance = await prisma.stockBalance.findUnique({
+      where: { warehouseId_productId: { warehouseId, productId } },
+    });
+    const available = balance ? availableDepotQuantity(balance) : 0;
     if (totalQty > available) {
       throw new BadRequestException(
         `Stock insuficiente en depósito para «${product.name}». Disponible: ${available}, solicitado en la orden: ${totalQty}.`,
@@ -83,15 +118,16 @@ export async function ensureBuildingStockItem(
   });
 }
 
-export function availableDepotQuantity(product: {
-  quantity: Prisma.Decimal;
-  reservedQuantity: Prisma.Decimal;
+export function availableDepotQuantity(balance: {
+  quantity: Prisma.Decimal | number;
+  reservedQuantity: Prisma.Decimal | number;
 }) {
-  return toNumber(product.quantity) - toNumber(product.reservedQuantity);
+  return toNumber(balance.quantity) - toNumber(balance.reservedQuantity);
 }
 
 export async function reserveDepotStock(
   tx: Prisma.TransactionClient,
+  warehouseId: string,
   productId: string,
   amount: number,
   meta?: StockMovementMeta,
@@ -99,18 +135,24 @@ export async function reserveDepotStock(
   const product = await tx.stockProduct.findUnique({ where: { id: productId } });
   if (!product) throw new NotFoundException('Producto no encontrado');
 
-  const available = availableDepotQuantity(product);
+  await ensureStockBalance(tx, warehouseId, productId);
+  const balance = await tx.stockBalance.findUnique({
+    where: { warehouseId_productId: { warehouseId, productId } },
+  });
+  if (!balance) throw new NotFoundException('Saldo de depósito no encontrado');
+
+  const available = availableDepotQuantity(balance);
   if (amount > available) {
     throw new BadRequestException(
       `Stock insuficiente en depósito para "${product.name}". Disponible: ${available}`,
     );
   }
 
-  const qtyBefore = toNumber(product.quantity);
-  const reservedBefore = toNumber(product.reservedQuantity);
+  const qtyBefore = toNumber(balance.quantity);
+  const reservedBefore = toNumber(balance.reservedQuantity);
 
-  const updated = await tx.stockProduct.update({
-    where: { id: productId },
+  const updated = await tx.stockBalance.update({
+    where: { id: balance.id },
     data: {
       reservedQuantity: { increment: amount },
       stockUpdatedAt: new Date(),
@@ -122,6 +164,7 @@ export async function reserveDepotStock(
       scope: 'DEPOT',
       movementType: 'DEPOT_RESERVE',
       productId,
+      warehouseId,
       quantityBefore: qtyBefore,
       quantityDelta: 0,
       quantityAfter: qtyBefore,
@@ -141,22 +184,25 @@ export async function reserveDepotStock(
 
 export async function releaseDepotReservation(
   tx: Prisma.TransactionClient,
+  warehouseId: string,
   productId: string,
   amount: number,
   meta?: StockMovementMeta,
 ) {
-  const product = await tx.stockProduct.findUnique({ where: { id: productId } });
-  if (!product) throw new NotFoundException('Producto no encontrado');
+  const balance = await tx.stockBalance.findUnique({
+    where: { warehouseId_productId: { warehouseId, productId } },
+  });
+  if (!balance) throw new NotFoundException('Saldo de depósito no encontrado');
 
-  const reserved = toNumber(product.reservedQuantity);
+  const reserved = toNumber(balance.reservedQuantity);
   if (amount > reserved) {
     throw new BadRequestException('No hay reserva suficiente para liberar.');
   }
 
-  const qtyBefore = toNumber(product.quantity);
+  const qtyBefore = toNumber(balance.quantity);
 
-  const updated = await tx.stockProduct.update({
-    where: { id: productId },
+  const updated = await tx.stockBalance.update({
+    where: { id: balance.id },
     data: { reservedQuantity: { decrement: amount } },
   });
 
@@ -165,6 +211,7 @@ export async function releaseDepotReservation(
       scope: 'DEPOT',
       movementType: 'DEPOT_RESERVE_RELEASE',
       productId,
+      warehouseId,
       quantityBefore: qtyBefore,
       quantityDelta: 0,
       quantityAfter: qtyBefore,
@@ -184,24 +231,27 @@ export async function releaseDepotReservation(
 
 export async function transferReservedToBuilding(
   tx: Prisma.TransactionClient,
+  warehouseId: string,
   buildingId: string,
   productId: string,
   amount: number,
   meta?: StockMovementMeta,
 ) {
-  const product = await tx.stockProduct.findUnique({ where: { id: productId } });
-  if (!product) throw new NotFoundException('Producto no encontrado');
+  const balance = await tx.stockBalance.findUnique({
+    where: { warehouseId_productId: { warehouseId, productId } },
+  });
+  if (!balance) throw new NotFoundException('Saldo de depósito no encontrado');
 
-  const reserved = toNumber(product.reservedQuantity);
+  const reserved = toNumber(balance.reservedQuantity);
   if (amount > reserved) {
     throw new BadRequestException('La reserva no alcanza para confirmar la entrega.');
   }
 
-  const depotQtyBefore = toNumber(product.quantity);
+  const depotQtyBefore = toNumber(balance.quantity);
   const reservedBefore = reserved;
 
-  await tx.stockProduct.update({
-    where: { id: productId },
+  await tx.stockBalance.update({
+    where: { id: balance.id },
     data: {
       quantity: { decrement: amount },
       reservedQuantity: { decrement: amount },
@@ -228,6 +278,7 @@ export async function transferReservedToBuilding(
       scope: 'DEPOT',
       movementType: 'DEPOT_SHIP_OUT',
       productId,
+      warehouseId,
       buildingId,
       quantityBefore: depotQtyBefore,
       quantityDelta: -amount,
@@ -246,6 +297,7 @@ export async function transferReservedToBuilding(
       scope: 'BUILDING',
       movementType: 'BUILDING_RECEIVE',
       productId,
+      warehouseId,
       buildingId,
       quantityBefore: buildingQtyBefore,
       quantityDelta: amount,

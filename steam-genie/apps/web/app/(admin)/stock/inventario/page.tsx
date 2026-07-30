@@ -1,300 +1,154 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  STOCK_STATUS_LABELS,
-  STOCK_UNIT_LABELS,
-} from '@steam-genie/shared-constants';
-import { StockProductModal, type StockProductFormState } from '../../../../components/StockProductModal';
-import { StockMovementHistoryModal } from '../../../../components/StockMovementHistoryModal';
+import Link from 'next/link';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { StockSubnav } from '../../../../components/StockSubnav';
 import { api } from '../../../../lib/api-client';
-import type {
-  StockCategoryItem,
-  StockProductGroup,
-  StockProductItem,
-  StockStats,
-  StockSupplierItem,
-} from '../../../../lib/types';
+import type { StockWarehouseItem } from '../../../../lib/types';
 
-const QUICK_AMOUNTS = [1, 5, 10, 25];
-const PAGE_SIZE = 25;
+const TYPE_LABELS = {
+  COMPANY: 'Propio',
+  CLIENT: 'Cliente',
+} as const;
 
-type StatusFilter = 'ALL' | 'OK' | 'LOW' | 'OUT';
-
-function statusBadgeClass(status: StockProductItem['status']) {
-  if (status === 'OUT') return 'badge badge-error';
-  if (status === 'LOW') return 'badge badge-warning';
-  return 'badge badge-success';
-}
-
-function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString('es-AR', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function computeStats(products: StockProductItem[]): StockStats {
-  const active = products.filter((p) => p.isActive);
-  let lowStock = 0;
-  let outOfStock = 0;
-
-  for (const product of active) {
-    if (product.status === 'OUT') outOfStock += 1;
-    else if (product.status === 'LOW') lowStock += 1;
-  }
-
-  return {
-    totalProducts: active.length,
-    lowStock,
-    outOfStock,
-  };
-}
-
-function patchGroups(
-  groups: StockProductGroup[],
-  updates: StockProductItem[],
-): StockProductGroup[] {
-  const byId = new Map(updates.map((product) => [product.id, product]));
-  return groups.map((group) => ({
-    ...group,
-    products: group.products.map((product) => byId.get(product.id) ?? product),
-  }));
-}
-
-export default function StockInventoryPage() {
-  const [stats, setStats] = useState<StockStats | null>(null);
-  const [groups, setGroups] = useState<StockProductGroup[]>([]);
-  const [categories, setCategories] = useState<StockCategoryItem[]>([]);
-  const [suppliers, setSuppliers] = useState<StockSupplierItem[]>([]);
-  const [initialLoading, setInitialLoading] = useState(true);
-  const [inventoryLoading, setInventoryLoading] = useState(false);
+export default function StockWarehousesPage() {
+  const [items, setItems] = useState<StockWarehouseItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
-  const [showInactive, setShowInactive] = useState(false);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [pages, setPages] = useState(1);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newNotes, setNewNotes] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [showInactive, setShowInactive] = useState(true);
 
-  const [adjustAmount, setAdjustAmount] = useState(1);
-  const [adjustingId, setAdjustingId] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [bulkOpen, setBulkOpen] = useState(false);
-  const [bulkDelta, setBulkDelta] = useState(1);
-  const [bulkSaving, setBulkSaving] = useState(false);
-
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<StockProductItem | null>(null);
-  const [historyProduct, setHistoryProduct] = useState<StockProductItem | null>(null);
-  const [savingProduct, setSavingProduct] = useState(false);
-  const hasLoadedOnce = useRef(false);
-
-  const applyProductUpdates = useCallback((updates: StockProductItem[]) => {
-    setGroups((prev) => {
-      const next = patchGroups(prev, updates);
-      setStats(computeStats(next.flatMap((group) => group.products)));
-      return next;
-    });
-  }, []);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
-    return () => window.clearTimeout(timer);
-  }, [search]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch]);
-
-  const loadCatalog = useCallback(async () => {
-    try {
-      const [categoriesRes, suppliersRes] = await Promise.all([
-        api.get<StockCategoryItem[]>('/stock/categories'),
-        api.get<StockSupplierItem[]>('/stock/suppliers'),
-      ]);
-      setCategories(categoriesRes);
-      setSuppliers(suppliersRes);
-    } catch {
-      // El modal puede recargar catálogo al abrir si hace falta.
-    }
-  }, []);
-
-  const loadInventory = useCallback(async (silent = false) => {
-    if (!silent) {
-      setInventoryLoading(true);
-    }
+  const load = useCallback(async () => {
+    setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams({
         includeInactive: showInactive ? 'true' : 'false',
-        page: String(page),
-        limit: String(PAGE_SIZE),
       });
-      if (debouncedSearch) params.set('search', debouncedSearch);
-      if (statusFilter !== 'ALL') params.set('status', statusFilter);
-
-      const [statsRes, groupedRes] = await Promise.all([
-        api.get<StockStats>('/stock/stats'),
-        api.get<{
-          groups: StockProductGroup[];
-          total: number;
-          page: number;
-          limit: number;
-          pages: number;
-        }>(`/stock/products/grouped?${params}`),
-      ]);
-
-      setStats(statsRes);
-      setGroups(groupedRes.groups);
-      setTotal(groupedRes.total);
-      setPages(Math.max(1, groupedRes.pages));
-      hasLoadedOnce.current = true;
+      const data = await api.get<StockWarehouseItem[]>(`/stock/warehouses?${params}`);
+      setItems(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al cargar inventario');
+      setError(e instanceof Error ? e.message : 'Error al cargar depósitos');
     } finally {
-      setInitialLoading(false);
-      setInventoryLoading(false);
+      setLoading(false);
     }
-  }, [debouncedSearch, showInactive, statusFilter, page]);
+  }, [showInactive]);
 
   useEffect(() => {
-    void loadCatalog();
-  }, [loadCatalog]);
-
-  useEffect(() => {
-    void loadInventory(hasLoadedOnce.current);
-  }, [loadInventory]);
-
-  const allVisibleProducts = useMemo(() => groups.flatMap((g) => g.products), [groups]);
-
-  function toggleSelect(id: string) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function toggleSelectAll() {
-    if (selectedIds.size === allVisibleProducts.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(allVisibleProducts.map((p) => p.id)));
-    }
-  }
-
-  async function adjustProduct(id: string, delta: number) {
-    setAdjustingId(id);
-    setError(null);
-    try {
-      const updated = await api.patch<StockProductItem>(`/stock/products/${id}/adjust`, { delta });
-      applyProductUpdates([updated]);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'No se pudo ajustar el stock');
-    } finally {
-      setAdjustingId(null);
-    }
-  }
-
-  async function applyBulkAdjust(sign: 1 | -1) {
-    const delta = bulkDelta * sign;
-    if (selectedIds.size === 0) {
-      setError('Seleccioná al menos un producto.');
-      return;
-    }
-
-    setBulkSaving(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      const result = await api.post<{ updated: StockProductItem[] }>('/stock/products/bulk-adjust', {
-        adjustments: [...selectedIds].map((productId) => ({ productId, delta })),
-      });
-      applyProductUpdates(result.updated);
-      setSuccess(
-        `Ajuste masivo aplicado a ${selectedIds.size} producto(s): ${delta > 0 ? '+' : ''}${delta}.`,
-      );
-      setSelectedIds(new Set());
-      setBulkOpen(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'No se pudo aplicar el ajuste masivo');
-    } finally {
-      setBulkSaving(false);
-    }
-  }
+    void load();
+  }, [load]);
 
   function openCreate() {
-    setEditing(null);
-    setModalOpen(true);
+    setNewName('');
+    setNewNotes('');
+    setCreateOpen(true);
     setError(null);
     setSuccess(null);
   }
 
-  function openEdit(product: StockProductItem) {
-    setEditing(product);
-    setModalOpen(true);
-    setError(null);
-    setSuccess(null);
+  function closeCreate() {
+    setCreateOpen(false);
+    setNewName('');
+    setNewNotes('');
   }
 
-  async function saveProduct(form: StockProductFormState) {
-    setSavingProduct(true);
+  async function handleCreate(e: FormEvent) {
+    e.preventDefault();
+    const name = newName.trim();
+    if (!name) return;
+
+    setCreating(true);
     setError(null);
     setSuccess(null);
     try {
-      const payload = {
-        name: form.name.trim(),
-        sku: form.sku.trim() || undefined,
-        description: form.description.trim() || undefined,
-        categoryId: form.categoryId,
-        supplierId: form.supplierId || null,
-        quantity: Number(form.quantity),
-        minQuantity: Number(form.minQuantity),
-        unitType: form.unitType,
-        ...(editing ? { isActive: form.isActive } : {}),
-      };
-
-      if (editing) {
-        await api.patch(`/stock/products/${editing.id}`, payload);
-        setSuccess('Producto actualizado.');
-      } else {
-        await api.post('/stock/products', payload);
-        setSuccess('Producto creado.');
-      }
-
-      setModalOpen(false);
-      setEditing(null);
-      await loadInventory(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'No se pudo guardar el producto');
-      throw e;
+      await api.post('/stock/warehouses', {
+        name,
+        type: 'COMPANY',
+        notes: newNotes.trim() || undefined,
+      });
+      closeCreate();
+      setSuccess('Depósito creado.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo crear el depósito');
     } finally {
-      setSavingProduct(false);
+      setCreating(false);
     }
   }
 
-  async function removeProduct(product: StockProductItem) {
-    if (!window.confirm(`¿Eliminar "${product.name}" del inventario?`)) return;
+  function startEdit(item: StockWarehouseItem) {
+    setEditingId(item.id);
+    setEditName(item.name);
+    setEditNotes(item.notes ?? '');
+    setError(null);
+    setSuccess(null);
+  }
 
-    setAdjustingId(product.id);
+  function cancelEdit() {
+    setEditingId(null);
+    setEditName('');
+    setEditNotes('');
+  }
+
+  async function saveEdit(id: string) {
+    const name = editName.trim();
+    if (!name) return;
+
+    setSavingId(id);
     setError(null);
     setSuccess(null);
     try {
-      await api.delete(`/stock/products/${product.id}`);
-      setSuccess('Producto eliminado.');
-      await loadInventory(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'No se pudo eliminar el producto');
+      await api.patch(`/stock/warehouses/${id}`, {
+        name,
+        notes: editNotes.trim() || null,
+      });
+      cancelEdit();
+      setSuccess('Depósito actualizado.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo guardar el depósito');
     } finally {
-      setAdjustingId(null);
+      setSavingId(null);
+    }
+  }
+
+  async function toggleActive(item: StockWarehouseItem) {
+    setSavingId(item.id);
+    setError(null);
+    setSuccess(null);
+    try {
+      await api.patch(`/stock/warehouses/${item.id}`, { isActive: !item.isActive });
+      setSuccess(item.isActive ? 'Depósito desactivado.' : 'Depósito activado.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo actualizar el depósito');
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  async function removeItem(item: StockWarehouseItem) {
+    if (!window.confirm(`¿Eliminar el depósito "${item.name}"?`)) return;
+
+    setSavingId(item.id);
+    setError(null);
+    setSuccess(null);
+    try {
+      await api.delete(`/stock/warehouses/${item.id}`);
+      setSuccess('Depósito eliminado.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo eliminar el depósito');
+    } finally {
+      setSavingId(null);
     }
   }
 
@@ -302,372 +156,218 @@ export default function StockInventoryPage() {
     <>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Inventario</h1>
+          <h1 className="page-title">Depósitos</h1>
           <p className="page-subtitle">
-            Inventario de insumos agrupado por categoría, con ajustes rápidos individuales o masivos.
+            Administrá sucursales y depósitos. Entrá a cada uno para ver y ajustar su inventario.
           </p>
         </div>
         <button type="button" className="btn btn-primary" onClick={openCreate}>
-          Nuevo producto
+          Nuevo depósito
         </button>
       </div>
 
       <StockSubnav />
 
-      {stats ? (
-        <div className="hierarchy-stats" style={{ marginBottom: 20 }}>
-          <div className="hierarchy-stat-chip">
-            <span className="hierarchy-stat-value">{stats.totalProducts}</span>
-            <span className="hierarchy-stat-label">Total productos</span>
-          </div>
-          <div className="hierarchy-stat-chip">
-            <span className="hierarchy-stat-value" style={{ color: 'var(--color-warning)' }}>
-              {stats.lowStock}
-            </span>
-            <span className="hierarchy-stat-label">Stock bajo</span>
-          </div>
-          <div className="hierarchy-stat-chip">
-            <span className="hierarchy-stat-value" style={{ color: 'var(--color-error)' }}>
-              {stats.outOfStock}
-            </span>
-            <span className="hierarchy-stat-label">Sin stock</span>
-          </div>
-        </div>
-      ) : null}
-
-      <div className="card" style={{ marginBottom: 16, padding: '16px 20px' }}>
-        <div className="stock-toolbar">
-          <div className="form-field" style={{ margin: 0, flex: '1 1 200px' }}>
-            <label htmlFor="stock-search">Buscar</label>
-            <input
-              id="stock-search"
-              className="input"
-              placeholder="Nombre o SKU…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-
-          <div className="form-field" style={{ margin: 0 }}>
-            <label htmlFor="stock-filter">Estado</label>
-            <select
-              id="stock-filter"
-              className="input"
-              value={statusFilter}
-              onChange={(e) => {
-                setStatusFilter(e.target.value as StatusFilter);
-                setPage(1);
-              }}
-            >
-              <option value="ALL">Todos</option>
-              <option value="OK">Disponible</option>
-              <option value="LOW">Stock bajo</option>
-              <option value="OUT">Sin stock</option>
-            </select>
-          </div>
-
-          <div className="form-field" style={{ margin: 0 }}>
-            <label htmlFor="stock-adjust-amt">Cantidad rápida</label>
-            <select
-              id="stock-adjust-amt"
-              className="input"
-              value={adjustAmount}
-              onChange={(e) => setAdjustAmount(Number(e.target.value))}
-            >
-              {QUICK_AMOUNTS.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <label className="checkbox-label" style={{ alignSelf: 'flex-end', paddingBottom: 8 }}>
-            <input
-              type="checkbox"
-              checked={showInactive}
-              onChange={(e) => {
-                setShowInactive(e.target.checked);
-                setPage(1);
-              }}
-            />
-            Incluir inactivos
-          </label>
-
-          <button
-            type="button"
-            className="btn btn-secondary"
-            style={{ alignSelf: 'flex-end' }}
-            disabled={selectedIds.size === 0}
-            onClick={() => setBulkOpen(true)}
-          >
-            Ajuste masivo ({selectedIds.size})
-          </button>
-        </div>
+      <div style={{ marginBottom: 12 }}>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={showInactive}
+            onChange={(e) => setShowInactive(e.target.checked)}
+          />
+          Mostrar inactivos
+        </label>
       </div>
 
       {error ? <div className="alert alert-error">{error}</div> : null}
       {success ? <div className="alert alert-success">{success}</div> : null}
 
-      {initialLoading ? (
-        <div className="card">
+      <div className="card">
+        {loading ? (
           <div className="loading-state">
             <div className="spinner" role="status" aria-label="Cargando" />
           </div>
-        </div>
-      ) : groups.length === 0 ? (
-        <div className="card empty-state">
-          <p>{inventoryLoading ? 'Actualizando inventario…' : 'No hay productos para mostrar.'}</p>
-        </div>
-      ) : (
-        <>
-          {inventoryLoading ? (
-            <p className="muted" style={{ margin: '0 0 12px' }}>
-              Actualizando inventario…
-            </p>
-          ) : null}
-          {groups.map((group) => (
-          <div key={group.category.id} className="card" style={{ marginBottom: 16 }}>
-            <h2 className="stock-category-title">{group.category.name}</h2>
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th style={{ width: 36 }}>
-                      <input
-                        type="checkbox"
-                        aria-label="Seleccionar todos en esta categoría"
-                        checked={
-                          group.products.length > 0 &&
-                          group.products.every((p) => selectedIds.has(p.id))
-                        }
-                        onChange={() => {
-                          const allSelected = group.products.every((p) => selectedIds.has(p.id));
-                          setSelectedIds((prev) => {
-                            const next = new Set(prev);
-                            for (const p of group.products) {
-                              if (allSelected) next.delete(p.id);
-                              else next.add(p.id);
-                            }
-                            return next;
-                          });
-                        }}
-                      />
-                    </th>
-                    <th>Producto</th>
-                    <th>Stock</th>
-                    <th>Estado</th>
-                    <th>Proveedor</th>
-                    <th>Última actualización</th>
-                    <th>Ajuste rápido</th>
-                    <th style={{ width: 100 }} />
-                  </tr>
-                </thead>
-                <tbody>
-                  {group.products.map((product) => {
-                    const busy = adjustingId === product.id;
-                    const unitLabel = STOCK_UNIT_LABELS[product.unitType as keyof typeof STOCK_UNIT_LABELS] ?? product.unitType;
-                    return (
-                      <tr key={product.id} className={!product.isActive ? 'row-muted' : undefined}>
-                        <td>
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.has(product.id)}
-                            onChange={() => toggleSelect(product.id)}
-                            aria-label={`Seleccionar ${product.name}`}
-                          />
-                        </td>
-                        <td>
-                          <strong>{product.name}</strong>
-                          {product.sku ? (
-                            <div className="text-muted text-sm">SKU: {product.sku}</div>
-                          ) : null}
-                          <div className="text-muted text-sm">{unitLabel}</div>
-                        </td>
-                        <td>
-                          <strong>{product.quantity}</strong>{' '}
-                          <span className="text-muted text-sm">{unitLabel}</span>
-                        </td>
-                        <td>
-                          <span className={statusBadgeClass(product.status)}>
-                            {STOCK_STATUS_LABELS[product.status]}
-                          </span>
-                        </td>
-                        <td>{product.supplier?.name ?? '—'}</td>
-                        <td>{formatDateTime(product.stockUpdatedAt)}</td>
-                        <td>
-                          <div className="stock-quick-adjust">
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-secondary"
-                              disabled={busy}
-                              onClick={() => void adjustProduct(product.id, -adjustAmount)}
-                              aria-label={`Restar ${adjustAmount}`}
-                            >
-                              −{adjustAmount}
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-primary"
-                              disabled={busy}
-                              onClick={() => void adjustProduct(product.id, adjustAmount)}
-                              aria-label={`Sumar ${adjustAmount}`}
-                            >
-                              +{adjustAmount}
-                            </button>
-                          </div>
-                        </td>
-                        <td>
-                          <div className="table-actions">
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => setHistoryProduct(product)}
-                            >
-                              Historial
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => openEdit(product)}
-                            >
-                              Editar
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-sm"
-                              disabled={busy}
-                              onClick={() => void removeProduct(product)}
-                            >
-                              Eliminar
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          ))}
-          <div className="pagination" style={{ marginTop: 8 }}>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Anterior
-            </button>
-            <span className="pagination-info">
-              Página {page} de {pages} · {total} producto{total === 1 ? '' : 's'}
-            </span>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              disabled={page >= pages}
-              onClick={() => setPage((p) => Math.min(pages, p + 1))}
-            >
-              Siguiente
+        ) : items.length === 0 ? (
+          <div className="empty-state">
+            <p>No hay depósitos.</p>
+            <button type="button" className="btn btn-primary" onClick={openCreate}>
+              Crear el primero
             </button>
           </div>
-        </>
-      )}
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Nombre</th>
+                  <th>Tipo</th>
+                  <th>Estado</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => {
+                  const editing = editingId === item.id;
+                  const busy = savingId === item.id;
+                  return (
+                    <tr key={item.id} className={!item.isActive ? 'row-muted' : undefined}>
+                      <td>
+                        {editing ? (
+                          <div style={{ display: 'grid', gap: 8 }}>
+                            <input
+                              className="input"
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                              maxLength={200}
+                            />
+                            <input
+                              className="input"
+                              value={editNotes}
+                              onChange={(e) => setEditNotes(e.target.value)}
+                              placeholder="Notas"
+                              maxLength={1000}
+                            />
+                          </div>
+                        ) : (
+                          <>
+                            <strong>{item.name}</strong>
+                            {item.notes ? (
+                              <div className="text-muted text-sm">{item.notes}</div>
+                            ) : null}
+                            {item.building ? (
+                              <div className="text-muted text-sm">
+                                Cliente: {item.building.name}
+                              </div>
+                            ) : null}
+                          </>
+                        )}
+                      </td>
+                      <td>{TYPE_LABELS[item.type]}</td>
+                      <td>
+                        <span
+                          className={item.isActive ? 'badge badge-success' : 'badge badge-warning'}
+                        >
+                          {item.isActive ? 'Activo' : 'Inactivo'}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="table-actions">
+                          {editing ? (
+                            <>
+                              <button
+                                type="button"
+                                className="btn btn-primary btn-sm"
+                                disabled={busy}
+                                onClick={() => void saveEdit(item.id)}
+                              >
+                                Guardar
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                onClick={cancelEdit}
+                              >
+                                Cancelar
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <Link
+                                href={`/stock/inventario/${item.id}`}
+                                className="btn btn-primary btn-sm"
+                              >
+                                Ver inventario
+                              </Link>
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => startEdit(item)}
+                              >
+                                Editar
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                disabled={busy}
+                                onClick={() => void toggleActive(item)}
+                              >
+                                {item.isActive ? 'Desactivar' : 'Activar'}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                disabled={busy}
+                                onClick={() => void removeItem(item)}
+                              >
+                                Eliminar
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
-      {allVisibleProducts.length > 0 ? (
-        <div style={{ marginTop: 8 }}>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={
-                allVisibleProducts.length > 0 &&
-                selectedIds.size === allVisibleProducts.length
-              }
-              onChange={toggleSelectAll}
-            />
-            Seleccionar todos los productos de esta página ({allVisibleProducts.length})
-          </label>
-        </div>
-      ) : null}
-
-      <StockProductModal
-        open={modalOpen}
-        editing={editing}
-        categories={categories}
-        suppliers={suppliers}
-        saving={savingProduct}
-        onClose={() => {
-          setModalOpen(false);
-          setEditing(null);
-        }}
-        onSubmit={saveProduct}
-      />
-
-      {bulkOpen ? (
-        <div className="modal-overlay" onClick={() => setBulkOpen(false)} role="presentation">
+      {createOpen ? (
+        <div className="modal-overlay" onClick={closeCreate} role="presentation">
           <div
             className="modal"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
-            aria-labelledby="bulk-adjust-title"
+            aria-labelledby="create-warehouse-title"
           >
             <div className="modal-header">
-              <h2 id="bulk-adjust-title" className="modal-title">
-                Ajuste masivo de stock
+              <h2 id="create-warehouse-title" className="modal-title">
+                Nuevo depósito
               </h2>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={() => setBulkOpen(false)}
-              >
+              <button type="button" className="btn btn-ghost btn-sm" onClick={closeCreate}>
                 Cerrar
               </button>
             </div>
-            <p>
-              Se aplicará el mismo cambio a <strong>{selectedIds.size}</strong> producto(s)
-              seleccionado(s).
-            </p>
-            <div className="form-field">
-              <label htmlFor="bulk-delta">Cantidad por producto</label>
-              <input
-                id="bulk-delta"
-                className="input"
-                type="number"
-                min={1}
-                value={bulkDelta}
-                onChange={(e) => setBulkDelta(Math.max(1, Number(e.target.value) || 1))}
-              />
-            </div>
-            <div className="form-actions">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={bulkSaving}
-                onClick={() => void applyBulkAdjust(-1)}
-              >
-                Restar −{bulkDelta}
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={bulkSaving}
-                onClick={() => void applyBulkAdjust(1)}
-              >
-                Sumar +{bulkDelta}
-              </button>
-            </div>
+            <form onSubmit={handleCreate}>
+              <div className="form-field">
+                <label htmlFor="wh-name">Nombre</label>
+                <input
+                  id="wh-name"
+                  className="input"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="Ej. Sucursal Córdoba"
+                  maxLength={200}
+                  required
+                  autoFocus
+                />
+              </div>
+              <div className="form-field">
+                <label htmlFor="wh-notes">Notas (opcional)</label>
+                <input
+                  id="wh-notes"
+                  className="input"
+                  value={newNotes}
+                  onChange={(e) => setNewNotes(e.target.value)}
+                  placeholder="Ubicación, contacto…"
+                  maxLength={1000}
+                />
+              </div>
+              <div className="form-actions">
+                <button type="button" className="btn btn-secondary" onClick={closeCreate}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={creating}>
+                  {creating ? 'Creando…' : 'Crear depósito'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       ) : null}
-
-      <StockMovementHistoryModal
-        open={historyProduct != null}
-        onClose={() => setHistoryProduct(null)}
-        productId={historyProduct?.id ?? ''}
-        productName={historyProduct?.name ?? ''}
-      />
     </>
   );
 }

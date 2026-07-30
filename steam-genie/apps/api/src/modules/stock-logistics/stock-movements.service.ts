@@ -9,6 +9,7 @@ const MOVEMENT_SELECT = {
   scope: true,
   movementType: true,
   productId: true,
+  warehouseId: true,
   buildingId: true,
   quantityBefore: true,
   quantityDelta: true,
@@ -19,6 +20,7 @@ const MOVEMENT_SELECT = {
   note: true,
   occurredAt: true,
   performedBy: { select: { id: true, fullName: true } },
+  warehouse: { select: { id: true, name: true } },
   building: { select: { id: true, name: true } },
   shipmentOrder: { select: { id: true, reference: true } },
   shipmentDestination: {
@@ -39,6 +41,7 @@ export class StockMovementsService {
 
     const where: Prisma.StockMovementWhereInput = {
       productId: query.productId,
+      ...(query.warehouseId ? { warehouseId: query.warehouseId } : {}),
       ...(query.buildingId
         ? {
             OR: [
@@ -65,6 +68,8 @@ export class StockMovementsService {
       scope: row.scope,
       movementType: row.movementType,
       productId: row.productId,
+      warehouseId: row.warehouseId,
+      warehouse: row.warehouse,
       buildingId: row.buildingId,
       building: row.building,
       quantityBefore: toNumber(row.quantityBefore),

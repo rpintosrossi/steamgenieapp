@@ -571,6 +571,19 @@ export interface Quote {
   createdBy?: { id: string; fullName: string };
 }
 
+export interface StockWarehouseItem {
+  id: string;
+  name: string;
+  type: 'COMPANY' | 'CLIENT';
+  buildingId?: string | null;
+  notes?: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  productCount?: number;
+  building?: { id: string; name: string } | null;
+}
+
 export interface StockProductItem {
   id: string;
   name: string;
@@ -674,6 +687,8 @@ export interface ShipmentOrderItem {
   reference: string;
   status: 'DRAFT' | 'DISPATCHED' | 'DELIVERED' | 'CANCELLED';
   notes: string | null;
+  sourceWarehouseId: string;
+  sourceWarehouse?: { id: string; name: string; type: string };
   createdById: string;
   dispatchedById: string | null;
   dispatchedAt: string | null;

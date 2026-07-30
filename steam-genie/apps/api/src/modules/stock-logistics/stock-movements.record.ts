@@ -6,6 +6,7 @@ export type RecordStockMovementInput = {
   scope: StockMovementScope;
   movementType: StockMovementType;
   productId: string;
+  warehouseId?: string | null;
   buildingId?: string | null;
   quantityBefore: number;
   quantityDelta: number;
@@ -29,6 +30,7 @@ export async function recordStockMovement(
       scope: input.scope,
       movementType: input.movementType,
       productId: input.productId,
+      warehouseId: input.warehouseId ?? null,
       buildingId: input.buildingId ?? null,
       quantityBefore: input.quantityBefore,
       quantityDelta: input.quantityDelta,

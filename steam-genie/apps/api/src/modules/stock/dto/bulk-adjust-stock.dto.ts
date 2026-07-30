@@ -16,6 +16,9 @@ class BulkAdjustItemDto {
 }
 
 export class BulkAdjustStockDto {
+  @IsUUID()
+  warehouseId!: string;
+
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })

@@ -4,12 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, StockUnitType } from '@prisma/client';
+import { Prisma, StockUnitType, StockWarehouseType } from '@prisma/client';
 import {
   computeStockStatus,
   type StockStatus,
 } from '@steam-genie/shared-constants';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { ensureStockBalance } from '../stock-logistics/stock-logistics.helpers';
 import { recordStockMovement } from '../stock-logistics/stock-movements.record';
 import { StockMovementsService } from '../stock-logistics/stock-movements.service';
 import { CreateStockCategoryDto } from './dto/create-stock-category.dto';
@@ -21,6 +22,8 @@ import { UpdateStockProductDto } from './dto/update-stock-product.dto';
 import { QueryStockProductsDto } from './dto/query-stock-products.dto';
 import { AdjustStockProductDto } from './dto/adjust-stock-product.dto';
 import { BulkAdjustStockDto } from './dto/bulk-adjust-stock.dto';
+import { CreateStockWarehouseDto } from './dto/create-stock-warehouse.dto';
+import { UpdateStockWarehouseDto } from './dto/update-stock-warehouse.dto';
 
 const CATEGORY_SELECT = {
   id: true,
@@ -42,26 +45,41 @@ const SUPPLIER_SELECT = {
   updatedAt: true,
 } as const;
 
-const PRODUCT_SELECT = {
+const WAREHOUSE_SELECT = {
+  id: true,
+  name: true,
+  type: true,
+  buildingId: true,
+  notes: true,
+  isActive: true,
+  createdAt: true,
+  updatedAt: true,
+  building: { select: { id: true, name: true } },
+} as const;
+
+const PRODUCT_BASE_SELECT = {
   id: true,
   name: true,
   sku: true,
   description: true,
   categoryId: true,
   supplierId: true,
-  quantity: true,
-  reservedQuantity: true,
-  minQuantity: true,
   unitType: true,
   isActive: true,
-  stockUpdatedAt: true,
   createdAt: true,
   updatedAt: true,
   category: { select: CATEGORY_SELECT },
   supplier: { select: SUPPLIER_SELECT },
 } as const;
 
-type ProductRow = Prisma.StockProductGetPayload<{ select: typeof PRODUCT_SELECT }>;
+type ProductBaseRow = Prisma.StockProductGetPayload<{ select: typeof PRODUCT_BASE_SELECT }>;
+
+type BalanceQty = {
+  quantity: Prisma.Decimal | number;
+  reservedQuantity: Prisma.Decimal | number;
+  minQuantity: Prisma.Decimal | number;
+  stockUpdatedAt: Date;
+};
 
 @Injectable()
 export class StockService {
@@ -70,39 +88,225 @@ export class StockService {
     private readonly movementsService: StockMovementsService,
   ) {}
 
-  async listProductMovements(productId: string, limit?: number) {
+  async listProductMovements(productId: string, limit?: number, warehouseId?: string) {
     await this.assertProductExists(productId);
-    return this.movementsService.list({ productId, limit });
+    return this.movementsService.list({ productId, limit, warehouseId });
+  }
+
+  // ─── Warehouses ────────────────────────────────────────────────────────────
+
+  async findAllWarehouses(includeInactive = false) {
+    const warehouses = await this.prisma.stockWarehouse.findMany({
+      where: {
+        deletedAt: null,
+        ...(includeInactive ? {} : { isActive: true }),
+      },
+      select: {
+        ...WAREHOUSE_SELECT,
+        _count: { select: { balances: true } },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    return warehouses.map((w) => ({
+      ...w,
+      productCount: w._count.balances,
+      _count: undefined,
+    }));
+  }
+
+  async findWarehouseById(id: string) {
+    const warehouse = await this.prisma.stockWarehouse.findFirst({
+      where: { id, deletedAt: null },
+      select: {
+        ...WAREHOUSE_SELECT,
+        _count: { select: { balances: true } },
+      },
+    });
+    if (!warehouse) throw new NotFoundException('Depósito no encontrado');
+    return {
+      ...warehouse,
+      productCount: warehouse._count.balances,
+      _count: undefined,
+    };
+  }
+
+  async createWarehouse(dto: CreateStockWarehouseDto) {
+    const name = dto.name.trim();
+    await this.assertWarehouseNameAvailable(name);
+
+    const type = dto.type ?? StockWarehouseType.COMPANY;
+    if (type === StockWarehouseType.CLIENT) {
+      if (!dto.buildingId) {
+        throw new BadRequestException(
+          'Un depósito de cliente debe estar vinculado a un edificio.',
+        );
+      }
+      await this.assertBuildingExists(dto.buildingId);
+    } else if (dto.buildingId) {
+      throw new BadRequestException(
+        'Solo los depósitos de tipo cliente pueden vincularse a un edificio.',
+      );
+    }
+
+    return this.prisma.stockWarehouse.create({
+      data: {
+        name,
+        type,
+        buildingId: dto.buildingId ?? null,
+        notes: dto.notes?.trim() || null,
+        isActive: true,
+      },
+      select: WAREHOUSE_SELECT,
+    });
+  }
+
+  async updateWarehouse(id: string, dto: UpdateStockWarehouseDto) {
+    const existing = await this.assertWarehouseExists(id);
+
+    if (dto.name !== undefined) {
+      const name = dto.name.trim();
+      if (name !== existing.name) {
+        await this.assertWarehouseNameAvailable(name, id);
+      }
+    }
+
+    const nextType = dto.type ?? existing.type;
+    const nextBuildingId =
+      dto.buildingId !== undefined ? dto.buildingId : existing.buildingId;
+
+    if (nextType === StockWarehouseType.CLIENT) {
+      if (!nextBuildingId) {
+        throw new BadRequestException(
+          'Un depósito de cliente debe estar vinculado a un edificio.',
+        );
+      }
+      await this.assertBuildingExists(nextBuildingId);
+    } else if (nextBuildingId) {
+      throw new BadRequestException(
+        'Solo los depósitos de tipo cliente pueden vincularse a un edificio.',
+      );
+    }
+
+    return this.prisma.stockWarehouse.update({
+      where: { id },
+      data: {
+        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+        ...(dto.type !== undefined ? { type: dto.type } : {}),
+        ...(dto.buildingId !== undefined ? { buildingId: dto.buildingId } : {}),
+        ...(dto.notes !== undefined ? { notes: dto.notes?.trim() || null } : {}),
+        ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+        ...(nextType === StockWarehouseType.COMPANY ? { buildingId: null } : {}),
+      },
+      select: WAREHOUSE_SELECT,
+    });
+  }
+
+  async removeWarehouse(id: string) {
+    await this.assertWarehouseExists(id);
+
+    const withStock = await this.prisma.stockBalance.count({
+      where: {
+        warehouseId: id,
+        OR: [{ quantity: { gt: 0 } }, { reservedQuantity: { gt: 0 } }],
+      },
+    });
+    if (withStock > 0) {
+      throw new ConflictException(
+        'No se puede eliminar un depósito con stock o reservas. Trasladá el stock antes.',
+      );
+    }
+
+    const openShipments = await this.prisma.stockShipmentOrder.count({
+      where: {
+        sourceWarehouseId: id,
+        status: { in: ['DRAFT', 'DISPATCHED'] },
+      },
+    });
+    if (openShipments > 0) {
+      throw new ConflictException(
+        'No se puede eliminar un depósito con órdenes de envío abiertas.',
+      );
+    }
+
+    await this.prisma.stockWarehouse.update({
+      where: { id },
+      data: { deletedAt: new Date(), isActive: false },
+    });
+    return { message: 'Depósito eliminado' };
   }
 
   // ─── Stats & grouped listing ───────────────────────────────────────────────
 
-  async getStats() {
+  async getStats(warehouseId?: string) {
+    if (warehouseId) {
+      await this.assertWarehouseExists(warehouseId);
+    }
+
     const products = await this.prisma.stockProduct.findMany({
       where: { deletedAt: null, isActive: true },
-      select: { quantity: true, reservedQuantity: true, minQuantity: true },
+      select: { id: true },
     });
+    const balances = await this.prisma.stockBalance.findMany({
+      where: {
+        ...(warehouseId ? { warehouseId } : {}),
+        productId: { in: products.map((p) => p.id) },
+        warehouse: { deletedAt: null, isActive: true },
+      },
+      select: {
+        productId: true,
+        quantity: true,
+        reservedQuantity: true,
+        minQuantity: true,
+      },
+    });
+
+    if (warehouseId) {
+      const byProduct = new Map(balances.map((b) => [b.productId, b]));
+      let lowStock = 0;
+      let outOfStock = 0;
+
+      for (const product of products) {
+        const balance = byProduct.get(product.id);
+        const qty = balance
+          ? this.toNumber(balance.quantity) - this.toNumber(balance.reservedQuantity)
+          : 0;
+        const min = balance ? this.toNumber(balance.minQuantity) : 5;
+        const status = computeStockStatus(qty, min);
+        if (status === 'OUT') outOfStock += 1;
+        else if (status === 'LOW') lowStock += 1;
+      }
+
+      return {
+        totalProducts: products.length,
+        lowStock,
+        outOfStock,
+      };
+    }
 
     let lowStock = 0;
     let outOfStock = 0;
-
-    for (const product of products) {
+    for (const balance of balances) {
       const qty =
-        this.toNumber(product.quantity) - this.toNumber(product.reservedQuantity);
-      const min = this.toNumber(product.minQuantity);
-      const status = computeStockStatus(qty, min);
+        this.toNumber(balance.quantity) - this.toNumber(balance.reservedQuantity);
+      const status = computeStockStatus(qty, this.toNumber(balance.minQuantity));
       if (status === 'OUT') outOfStock += 1;
       else if (status === 'LOW') lowStock += 1;
     }
 
     return {
-      totalProducts: products.length,
+      totalProducts: balances.length,
       lowStock,
       outOfStock,
     };
   }
 
   async findProductsGrouped(query: QueryStockProductsDto) {
+    if (!query.warehouseId) {
+      throw new BadRequestException('Debés indicar el depósito (warehouseId).');
+    }
+    await this.assertWarehouseExists(query.warehouseId);
+
     const where = this.buildProductWhere(query);
     const orderBy = [
       { category: { sortOrder: 'asc' as const } },
@@ -112,60 +316,32 @@ export class StockService {
     const paginate = query.page !== undefined || query.limit !== undefined;
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
+    const warehouseId = query.warehouseId;
 
     if (!paginate) {
       const products = await this.prisma.stockProduct.findMany({
         where,
-        select: PRODUCT_SELECT,
+        select: PRODUCT_BASE_SELECT,
         orderBy,
       });
-      const mapped = products.map((product) => this.mapProduct(product));
+      const mapped = await this.mapProductsWithBalances(products, warehouseId);
       return { groups: this.groupByCategory(mapped) };
     }
 
     if (query.status) {
-      const rows = await this.prisma.stockProduct.findMany({
+      const products = await this.prisma.stockProduct.findMany({
         where,
-        select: {
-          id: true,
-          quantity: true,
-          reservedQuantity: true,
-          minQuantity: true,
-        },
+        select: PRODUCT_BASE_SELECT,
         orderBy,
       });
-
-      const matchingIds = rows
-        .filter((row) => {
-          const available =
-            this.toNumber(row.quantity) - this.toNumber(row.reservedQuantity);
-          return (
-            computeStockStatus(available, this.toNumber(row.minQuantity)) ===
-            query.status
-          );
-        })
-        .map((row) => row.id);
-
-      const total = matchingIds.length;
+      const mapped = await this.mapProductsWithBalances(products, warehouseId);
+      const matching = mapped.filter((p) => p.status === query.status);
+      const total = matching.length;
       const pages = Math.max(1, Math.ceil(total / limit));
-      const pageIds = matchingIds.slice((page - 1) * limit, page * limit);
-
-      if (pageIds.length === 0) {
-        return { groups: [], total, page, limit, pages };
-      }
-
-      const products = await this.prisma.stockProduct.findMany({
-        where: { id: { in: pageIds } },
-        select: PRODUCT_SELECT,
-      });
-      const byId = new Map(products.map((product) => [product.id, product]));
-      const ordered = pageIds
-        .map((id) => byId.get(id))
-        .filter((product): product is NonNullable<typeof product> => product != null);
-      const mapped = ordered.map((product) => this.mapProduct(product));
+      const pageItems = matching.slice((page - 1) * limit, page * limit);
 
       return {
-        groups: this.groupByCategory(mapped),
+        groups: this.groupByCategory(pageItems),
         total,
         page,
         limit,
@@ -177,14 +353,14 @@ export class StockService {
       this.prisma.stockProduct.count({ where }),
       this.prisma.stockProduct.findMany({
         where,
-        select: PRODUCT_SELECT,
+        select: PRODUCT_BASE_SELECT,
         orderBy,
         skip: (page - 1) * limit,
         take: limit,
       }),
     ]);
 
-    const mapped = products.map((product) => this.mapProduct(product));
+    const mapped = await this.mapProductsWithBalances(products, warehouseId);
     const pages = Math.max(1, Math.ceil(total / limit));
 
     return {
@@ -342,8 +518,13 @@ export class StockService {
   async createProduct(dto: CreateStockProductDto, performedById: string) {
     await this.assertCategoryExists(dto.categoryId);
     if (dto.supplierId) await this.assertSupplierExists(dto.supplierId);
+    if (!dto.warehouseId) {
+      throw new BadRequestException('Debés indicar el depósito (warehouseId).');
+    }
+    await this.assertWarehouseExists(dto.warehouseId);
 
     const initialQty = dto.quantity ?? 0;
+    const minQuantity = dto.minQuantity ?? 5;
 
     const product = await this.prisma.$transaction(async (tx) => {
       const created = await tx.stockProduct.create({
@@ -353,13 +534,21 @@ export class StockService {
           description: dto.description?.trim() || null,
           categoryId: dto.categoryId,
           supplierId: dto.supplierId ?? null,
-          quantity: initialQty,
-          minQuantity: dto.minQuantity ?? 5,
           unitType: dto.unitType ?? StockUnitType.UNIT,
           isActive: true,
+        },
+        select: PRODUCT_BASE_SELECT,
+      });
+
+      await tx.stockBalance.create({
+        data: {
+          warehouseId: dto.warehouseId!,
+          productId: created.id,
+          quantity: initialQty,
+          reservedQuantity: 0,
+          minQuantity,
           stockUpdatedAt: new Date(),
         },
-        select: PRODUCT_SELECT,
       });
 
       if (initialQty > 0) {
@@ -367,6 +556,7 @@ export class StockService {
           scope: 'DEPOT',
           movementType: 'DEPOT_INITIAL',
           productId: created.id,
+          warehouseId: dto.warehouseId,
           quantityBefore: 0,
           quantityDelta: initialQty,
           quantityAfter: initialQty,
@@ -377,7 +567,8 @@ export class StockService {
       return created;
     });
 
-    return this.mapProduct(product);
+    const [mapped] = await this.mapProductsWithBalances([product], dto.warehouseId);
+    return mapped;
   }
 
   async updateProduct(id: string, dto: UpdateStockProductDto, performedById: string) {
@@ -390,8 +581,14 @@ export class StockService {
       throw new BadRequestException('La cantidad no puede ser negativa.');
     }
 
-    const quantityChanged = dto.quantity !== undefined;
-    const currentQty = this.toNumber(existing.quantity);
+    const quantityChanged = dto.quantity !== undefined || dto.minQuantity !== undefined;
+    if (quantityChanged && !dto.warehouseId) {
+      throw new BadRequestException(
+        'Debés indicar el depósito (warehouseId) para actualizar cantidades.',
+      );
+    }
+
+    if (dto.warehouseId) await this.assertWarehouseExists(dto.warehouseId);
 
     const product = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.stockProduct.update({
@@ -404,77 +601,136 @@ export class StockService {
             : {}),
           ...(dto.categoryId !== undefined ? { categoryId: dto.categoryId } : {}),
           ...(dto.supplierId !== undefined ? { supplierId: dto.supplierId } : {}),
-          ...(dto.quantity !== undefined ? { quantity: dto.quantity } : {}),
-          ...(dto.minQuantity !== undefined ? { minQuantity: dto.minQuantity } : {}),
           ...(dto.unitType !== undefined ? { unitType: dto.unitType } : {}),
           ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
-          ...(quantityChanged ? { stockUpdatedAt: new Date() } : {}),
         },
-        select: PRODUCT_SELECT,
+        select: PRODUCT_BASE_SELECT,
       });
 
-      if (quantityChanged && dto.quantity !== undefined && dto.quantity !== currentQty) {
-        await recordStockMovement(tx, {
-          scope: 'DEPOT',
-          movementType: 'DEPOT_SET',
-          productId: id,
-          quantityBefore: currentQty,
-          quantityDelta: dto.quantity - currentQty,
-          quantityAfter: dto.quantity,
-          performedById,
+      if (dto.warehouseId && (dto.quantity !== undefined || dto.minQuantity !== undefined)) {
+        await ensureStockBalance(tx, dto.warehouseId, id, dto.minQuantity ?? 5);
+        const balance = await tx.stockBalance.findUnique({
+          where: {
+            warehouseId_productId: { warehouseId: dto.warehouseId, productId: id },
+          },
         });
+        if (!balance) throw new NotFoundException('Saldo de depósito no encontrado');
+
+        const currentQty = this.toNumber(balance.quantity);
+
+        await tx.stockBalance.update({
+          where: { id: balance.id },
+          data: {
+            ...(dto.quantity !== undefined ? { quantity: dto.quantity } : {}),
+            ...(dto.minQuantity !== undefined ? { minQuantity: dto.minQuantity } : {}),
+            ...(dto.quantity !== undefined ? { stockUpdatedAt: new Date() } : {}),
+          },
+        });
+
+        if (dto.quantity !== undefined && dto.quantity !== currentQty) {
+          await recordStockMovement(tx, {
+            scope: 'DEPOT',
+            movementType: 'DEPOT_SET',
+            productId: id,
+            warehouseId: dto.warehouseId,
+            quantityBefore: currentQty,
+            quantityDelta: dto.quantity - currentQty,
+            quantityAfter: dto.quantity,
+            performedById,
+          });
+        }
       }
 
       return updated;
     });
 
-    return this.mapProduct(product);
-  }
-
-  async adjustProduct(id: string, dto: AdjustStockProductDto, performedById: string) {
-    const existing = await this.assertProductExists(id);
-    const current = this.toNumber(existing.quantity);
-    const next = current + dto.delta;
-
-    if (next < 0) {
-      throw new BadRequestException(
-        `No hay stock suficiente. Disponible: ${current}`,
-      );
+    if (dto.warehouseId) {
+      const [mapped] = await this.mapProductsWithBalances([product], dto.warehouseId);
+      return mapped;
     }
 
+    return {
+      ...product,
+      quantity: 0,
+      reservedQuantity: 0,
+      available: 0,
+      minQuantity: 5,
+      status: 'OUT' as StockStatus,
+      stockUpdatedAt: existing.updatedAt,
+      category: product.category,
+      supplier: product.supplier,
+    };
+  }
+
+  async adjustProduct(
+    id: string,
+    dto: AdjustStockProductDto,
+    performedById: string,
+  ) {
+    if (!dto.warehouseId) {
+      throw new BadRequestException('Debés indicar el depósito (warehouseId).');
+    }
+    await this.assertProductExists(id);
+    await this.assertWarehouseExists(dto.warehouseId);
+
     const product = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.stockProduct.update({
-        where: { id },
+      await ensureStockBalance(tx, dto.warehouseId!, id);
+      const balance = await tx.stockBalance.findUnique({
+        where: {
+          warehouseId_productId: { warehouseId: dto.warehouseId!, productId: id },
+        },
+      });
+      if (!balance) throw new NotFoundException('Saldo de depósito no encontrado');
+
+      const current = this.toNumber(balance.quantity);
+      const next = current + dto.delta;
+
+      if (next < 0) {
+        throw new BadRequestException(
+          `No hay stock suficiente. Disponible: ${current}`,
+        );
+      }
+
+      await tx.stockBalance.update({
+        where: { id: balance.id },
         data: {
           quantity: next,
           stockUpdatedAt: new Date(),
         },
-        select: PRODUCT_SELECT,
       });
 
       await recordStockMovement(tx, {
         scope: 'DEPOT',
         movementType: 'DEPOT_ADJUST',
         productId: id,
+        warehouseId: dto.warehouseId,
         quantityBefore: current,
         quantityDelta: dto.delta,
         quantityAfter: next,
         performedById,
       });
 
-      return updated;
+      return tx.stockProduct.findFirstOrThrow({
+        where: { id },
+        select: PRODUCT_BASE_SELECT,
+      });
     });
 
-    return this.mapProduct(product);
+    const [mapped] = await this.mapProductsWithBalances([product], dto.warehouseId);
+    return mapped;
   }
 
   async bulkAdjust(dto: BulkAdjustStockDto, performedById: string) {
+    if (!dto.warehouseId) {
+      throw new BadRequestException('Debés indicar el depósito (warehouseId).');
+    }
     if (dto.adjustments.length === 0) {
       throw new BadRequestException('Debe indicar al menos un ajuste.');
     }
+    await this.assertWarehouseExists(dto.warehouseId);
 
     const results = await this.prisma.$transaction(async (tx) => {
-      const updated: ProductRow[] = [];
+      const updated: ProductBaseRow[] = [];
 
       for (const adjustment of dto.adjustments) {
         const existing = await tx.stockProduct.findFirst({
@@ -486,7 +742,18 @@ export class StockService {
           );
         }
 
-        const current = this.toNumber(existing.quantity);
+        await ensureStockBalance(tx, dto.warehouseId!, adjustment.productId);
+        const balance = await tx.stockBalance.findUnique({
+          where: {
+            warehouseId_productId: {
+              warehouseId: dto.warehouseId!,
+              productId: adjustment.productId,
+            },
+          },
+        });
+        if (!balance) throw new NotFoundException('Saldo de depósito no encontrado');
+
+        const current = this.toNumber(balance.quantity);
         const next = current + adjustment.delta;
         if (next < 0) {
           throw new BadRequestException(
@@ -494,19 +761,19 @@ export class StockService {
           );
         }
 
-        const product = await tx.stockProduct.update({
-          where: { id: adjustment.productId },
+        await tx.stockBalance.update({
+          where: { id: balance.id },
           data: {
             quantity: next,
             stockUpdatedAt: new Date(),
           },
-          select: PRODUCT_SELECT,
         });
 
         await recordStockMovement(tx, {
           scope: 'DEPOT',
           movementType: 'DEPOT_ADJUST',
           productId: adjustment.productId,
+          warehouseId: dto.warehouseId,
           quantityBefore: current,
           quantityDelta: adjustment.delta,
           quantityAfter: next,
@@ -514,15 +781,18 @@ export class StockService {
           note: 'Ajuste masivo',
         });
 
+        const product = await tx.stockProduct.findFirstOrThrow({
+          where: { id: adjustment.productId },
+          select: PRODUCT_BASE_SELECT,
+        });
         updated.push(product);
       }
 
       return updated;
     });
 
-    return {
-      updated: results.map((product) => this.mapProduct(product)),
-    };
+    const mapped = await this.mapProductsWithBalances(results, dto.warehouseId);
+    return { updated: mapped };
   }
 
   async removeProduct(id: string) {
@@ -587,11 +857,45 @@ export class StockService {
     );
   }
 
-  private mapProduct(product: ProductRow) {
-    const quantity = this.toNumber(product.quantity);
-    const reservedQuantity = this.toNumber(product.reservedQuantity);
+  private async mapProductsWithBalances(
+    products: ProductBaseRow[],
+    warehouseId: string,
+  ) {
+    if (products.length === 0) return [];
+
+    const balances = await this.prisma.stockBalance.findMany({
+      where: {
+        warehouseId,
+        productId: { in: products.map((p) => p.id) },
+      },
+      select: {
+        productId: true,
+        quantity: true,
+        reservedQuantity: true,
+        minQuantity: true,
+        stockUpdatedAt: true,
+      },
+    });
+    const byProduct = new Map(balances.map((b) => [b.productId, b]));
+
+    return products.map((product) =>
+      this.mapProduct(
+        product,
+        byProduct.get(product.id) ?? {
+          quantity: 0,
+          reservedQuantity: 0,
+          minQuantity: 5,
+          stockUpdatedAt: product.updatedAt,
+        },
+      ),
+    );
+  }
+
+  private mapProduct(product: ProductBaseRow, balance: BalanceQty) {
+    const quantity = this.toNumber(balance.quantity);
+    const reservedQuantity = this.toNumber(balance.reservedQuantity);
     const available = quantity - reservedQuantity;
-    const minQuantity = this.toNumber(product.minQuantity);
+    const minQuantity = this.toNumber(balance.minQuantity);
     const status = computeStockStatus(available, minQuantity);
 
     return {
@@ -608,7 +912,7 @@ export class StockService {
       unitType: product.unitType,
       isActive: product.isActive,
       status: status as StockStatus,
-      stockUpdatedAt: product.stockUpdatedAt,
+      stockUpdatedAt: balance.stockUpdatedAt,
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,
       category: product.category,
@@ -644,6 +948,22 @@ export class StockService {
     return product;
   }
 
+  private async assertWarehouseExists(id: string) {
+    const warehouse = await this.prisma.stockWarehouse.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!warehouse) throw new NotFoundException('Depósito no encontrado');
+    return warehouse;
+  }
+
+  private async assertBuildingExists(id: string) {
+    const building = await this.prisma.building.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!building) throw new NotFoundException('Edificio no encontrado');
+    return building;
+  }
+
   private async assertCategoryNameAvailable(name: string, excludeId?: string) {
     const duplicate = await this.prisma.stockCategory.findFirst({
       where: {
@@ -667,6 +987,19 @@ export class StockService {
     });
     if (duplicate) {
       throw new ConflictException('Ya existe un proveedor con ese nombre.');
+    }
+  }
+
+  private async assertWarehouseNameAvailable(name: string, excludeId?: string) {
+    const duplicate = await this.prisma.stockWarehouse.findFirst({
+      where: {
+        name: { equals: name, mode: 'insensitive' },
+        deletedAt: null,
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+    });
+    if (duplicate) {
+      throw new ConflictException('Ya existe un depósito con ese nombre.');
     }
   }
 }

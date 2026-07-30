@@ -12,6 +12,10 @@ import {
 
 export class UpdateStockProductDto {
   @IsOptional()
+  @IsUUID()
+  warehouseId?: string;
+
+  @IsOptional()
   @IsString()
   @MaxLength(300)
   name?: string;

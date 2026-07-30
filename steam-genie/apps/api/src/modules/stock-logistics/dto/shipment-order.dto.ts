@@ -32,6 +32,9 @@ class ShipmentDestinationInputDto {
 }
 
 export class CreateShipmentOrderDto {
+  @IsUUID()
+  sourceWarehouseId!: string;
+
   @IsOptional()
   @IsString()
   notes?: string;
@@ -44,6 +47,10 @@ export class CreateShipmentOrderDto {
 }
 
 export class UpdateShipmentOrderDto {
+  @IsOptional()
+  @IsUUID()
+  sourceWarehouseId?: string;
+
   @IsOptional()
   @IsString()
   notes?: string;

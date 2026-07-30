@@ -10,6 +10,10 @@ export class QueryStockMovementsDto {
   buildingId?: string;
 
   @IsOptional()
+  @IsUUID()
+  warehouseId?: string;
+
+  @IsOptional()
   @Transform(({ value }) => (value != null ? Number(value) : undefined))
   @IsInt()
   @Min(1)
