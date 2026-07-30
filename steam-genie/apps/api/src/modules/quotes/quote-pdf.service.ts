@@ -397,12 +397,16 @@ export class QuotePdfService {
   }
 
   private loadBrandLogo(): { buffer: Buffer } | null {
+    // En prod (Docker): WORKDIR=/app/apps/api y __dirname=.../dist/modules/quotes.
+    // Priorizamos assets junto al package y también los copiados a dist/.
     const candidates = [
-      join(__dirname, '../../../assets/brand/logo-horizontal.png'),
-      join(process.cwd(), 'apps/api/assets/brand/logo-horizontal.png'),
       join(process.cwd(), 'assets/brand/logo-horizontal.png'),
-      join(process.cwd(), 'apps/web/public/logoParaWeb.png'),
+      join(__dirname, '../../../assets/brand/logo-horizontal.png'),
+      join(__dirname, '../../assets/brand/logo-horizontal.png'),
+      join(process.cwd(), 'apps/api/assets/brand/logo-horizontal.png'),
+      join(process.cwd(), 'assets/brand/logo-wide.png'),
       join(__dirname, '../../../assets/brand/logo-wide.png'),
+      join(__dirname, '../../assets/brand/logo-wide.png'),
       join(process.cwd(), 'apps/api/assets/brand/logo-wide.png'),
     ];
 
@@ -415,7 +419,9 @@ export class QuotePdfService {
       }
     }
 
-    this.logger.warn('Logo de marca no encontrado; se usará tipografía de respaldo.');
+    this.logger.warn(
+      `Logo de marca no encontrado (cwd=${process.cwd()}, __dirname=${__dirname}); se usará tipografía de respaldo.`,
+    );
     return null;
   }
 }
