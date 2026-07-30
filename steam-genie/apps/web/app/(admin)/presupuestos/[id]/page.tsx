@@ -7,6 +7,7 @@ import {
   QUOTE_STATUSES,
   QUOTE_STATUS_LABELS,
   formatQuoteNumber,
+  parseQuoteServiceIncludes,
   type QuoteStatus as SharedQuoteStatus,
 } from '@steam-genie/shared-constants';
 import { api } from '../../../../lib/api-client';
@@ -324,6 +325,9 @@ export default function QuoteDetailPage() {
           </p>
         </div>
         <div className="page-header-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Link href={`/presupuestos/${quote.id}/editar`} className="btn btn-secondary">
+            Editar
+          </Link>
           <button type="button" className="btn btn-secondary" onClick={() => void downloadPdf()}>
             Descargar PDF
           </button>
@@ -485,6 +489,14 @@ export default function QuoteDetailPage() {
             {quote.clientDetails}
           </p>
         ) : null}
+        <div style={{ marginTop: 12 }}>
+          <div className="muted">El servicio incluye</div>
+          <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+            {parseQuoteServiceIncludes(quote.serviceIncludes).map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
       </div>
 
       <div className="card">

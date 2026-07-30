@@ -13,6 +13,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { QuoteStatus } from '@prisma/client';
+import { EventualClientInputDto } from './create-quote.dto';
 import { QuoteItemDto } from './quote-item.dto';
 
 export class UpdateQuoteDto {
@@ -34,6 +35,12 @@ export class UpdateQuoteDto {
   @ValidateIf((_, v) => v !== null)
   @IsUUID()
   eventualClientId?: string | null;
+
+  /** Actualiza o crea cliente eventual inline (nombre + dirección). */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => EventualClientInputDto)
+  eventualClient?: EventualClientInputDto;
 
   @IsOptional()
   @IsDateString()
@@ -86,6 +93,12 @@ export class UpdateQuoteDto {
   @IsString()
   @MaxLength(1000)
   observations?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(2000)
+  serviceIncludes?: string | null;
 
   @IsOptional()
   @ValidateIf((_, v) => v !== null)

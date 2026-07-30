@@ -94,6 +94,11 @@ export class CreateQuoteDto {
   observations?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  serviceIncludes?: string;
+
+  @IsOptional()
   @IsDateString()
   validUntil?: string;
 

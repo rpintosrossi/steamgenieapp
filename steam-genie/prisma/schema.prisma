@@ -416,6 +416,8 @@ model Quote {
   paymentCondition   String?   @db.VarChar(100)
   paymentTerms       String?   @db.VarChar(500)
   observations       String?   @db.VarChar(1000)
+  /// Texto “El servicio incluye” (una línea por ítem). Null = default del sistema.
+  serviceIncludes    String?   @db.VarChar(2000)
   validUntil         DateTime? @db.Date
 
   subtotal         Decimal  @db.Decimal(14, 2)

@@ -183,7 +183,13 @@ export default function QuotesPage() {
                     <td>{formatDate(quote.requestDate)}</td>
                     <td>{quote.serviceType ?? '—'}</td>
                     <td>{money(quote.total)}</td>
-                    <td>
+                    <td style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                      <Link
+                        href={`/presupuestos/${quote.id}/editar`}
+                        className="btn btn-ghost btn-sm"
+                      >
+                        Editar
+                      </Link>
                       <Link href={`/presupuestos/${quote.id}`} className="btn btn-ghost btn-sm">
                         Abrir
                       </Link>

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { QUOTE_COMPANY, formatQuoteNumber } from '@steam-genie/shared-constants';
+import { QUOTE_COMPANY, formatQuoteNumber, parseQuoteServiceIncludes } from '@steam-genie/shared-constants';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const PDFDocument = require('pdfkit') as typeof import('pdfkit');
@@ -34,6 +34,7 @@ export type QuotePdfPayload = {
   paymentCondition: string | null;
   paymentTerms: string | null;
   observations: string | null;
+  serviceIncludes: string | null;
   validUntil: string | null;
   serviceType: string | null;
   subtotal: number;
@@ -333,18 +334,25 @@ export class QuotePdfService {
       doc.text('EL SERVICIO INCLUYE', marginX, y);
       y += 14;
       doc.font('Helvetica').fontSize(9);
-      const includes = [
-        'Insumos requeridos para el servicio',
-        'Indumentaria',
-        'Todos los seguros correspondientes del operario',
-      ];
+      const includes = parseQuoteServiceIncludes(payload.serviceIncludes);
       for (const item of includes) {
-        doc.fillColor(COLORS.primary).text('•', marginX, y, { width: 12, lineBreak: false });
-        doc.fillColor(COLORS.text).text(item, marginX + 14, y, {
-          width: contentWidth - 14,
-          lineBreak: false,
+        if (y > pageHeight - 60) {
+          doc.addPage();
+          y = 48;
+        }
+        const bulletX = marginX;
+        const textX = marginX + 14;
+        const textW = contentWidth - 14;
+        const h = Math.max(
+          12,
+          doc.heightOfString(item, { width: textW, lineGap: 2 }),
+        );
+        doc.fillColor(COLORS.primary).text('•', bulletX, y, { width: 12, lineBreak: false });
+        doc.fillColor(COLORS.text).text(item, textX, y, {
+          width: textW,
+          lineGap: 2,
         });
-        y += 15;
+        y += h + 6;
       }
 
       // ── Footer ────────────────────────────────────────────────────────────

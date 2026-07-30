@@ -545,6 +545,7 @@ export interface Quote {
   paymentCondition?: string | null;
   paymentTerms?: string | null;
   observations?: string | null;
+  serviceIncludes?: string | null;
   validUntil?: string | null;
   subtotal: string | number;
   discountPercent?: string | number | null;

@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { BuildingMode, Prisma, QuoteStatus } from '@prisma/client';
-import { QUOTE_STATUS_LABELS, QUOTE_VAT_RATE } from '@steam-genie/shared-constants';
+import { QUOTE_STATUS_LABELS, QUOTE_VAT_RATE, QUOTE_DEFAULT_SERVICE_INCLUDES } from '@steam-genie/shared-constants';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { WorkOrdersService } from '../work-orders/work-orders.service';
 import { CreateQuoteDto } from './dto/create-quote.dto';
@@ -169,6 +169,8 @@ export class QuotesService {
             '50% DE ANTICIPO EL RESTO A FINALIZAR EL SERVICIO',
           observations:
             emptyToNull(dto.observations) ?? 'ESTE PRESUPUESTO ES VALIDO POR UN MES',
+          serviceIncludes:
+            emptyToNull(dto.serviceIncludes) ?? QUOTE_DEFAULT_SERVICE_INCLUDES,
           validUntil,
           ...computed,
           createdById,
@@ -209,32 +211,68 @@ export class QuotesService {
       );
     }
 
-    const nextParticular =
+    const switchingClient =
+      dto.particularClientId !== undefined ||
+      dto.buildingId !== undefined ||
+      dto.eventualClientId !== undefined ||
+      dto.eventualClient !== undefined;
+
+    let nextParticular =
       dto.particularClientId !== undefined
         ? dto.particularClientId
         : existing.particularClientId;
-    const nextBuilding =
+    let nextBuilding =
       dto.buildingId !== undefined ? dto.buildingId : existing.buildingId;
-    const nextEventual =
+    let nextEventual =
       dto.eventualClientId !== undefined
         ? dto.eventualClientId
         : existing.eventualClientId;
 
-    if (
-      dto.particularClientId !== undefined ||
-      dto.buildingId !== undefined ||
-      dto.eventualClientId !== undefined
-    ) {
+    // Si se envía cliente eventual inline, limpia los otros tipos.
+    if (dto.eventualClient) {
+      nextParticular = null;
+      nextBuilding = null;
+      nextEventual = nextEventual ?? existing.eventualClientId;
+    } else if (dto.particularClientId) {
+      nextBuilding = null;
+      nextEventual = null;
+    } else if (dto.buildingId) {
+      nextParticular = null;
+      nextEventual = null;
+    }
+
+    if (switchingClient) {
       await this.assertClientXor({
         particularClientId: nextParticular,
         buildingId: nextBuilding,
         eventualClientId: nextEventual,
+        eventualClient: dto.eventualClient,
       });
     }
 
     const computed = dto.items ? this.computeTotals(dto.items) : null;
 
     return this.prisma.$transaction(async (tx) => {
+      let eventualClientId = nextEventual;
+
+      if (dto.eventualClient) {
+        const eventualData = {
+          name: dto.eventualClient.name.trim(),
+          taxId: emptyToNull(dto.eventualClient.taxId),
+          address: emptyToNull(dto.eventualClient.address),
+        };
+        if (existing.eventualClientId) {
+          await tx.eventualClient.update({
+            where: { id: existing.eventualClientId },
+            data: eventualData,
+          });
+          eventualClientId = existing.eventualClientId;
+        } else {
+          const created = await tx.eventualClient.create({ data: eventualData });
+          eventualClientId = created.id;
+        }
+      }
+
       if (dto.items) {
         await tx.quoteItem.deleteMany({ where: { quoteId: id } });
       }
@@ -243,12 +281,12 @@ export class QuotesService {
         where: { id },
         data: {
           ...(dto.status !== undefined ? { status: dto.status } : {}),
-          ...(dto.particularClientId !== undefined
-            ? { particularClientId: dto.particularClientId }
-            : {}),
-          ...(dto.buildingId !== undefined ? { buildingId: dto.buildingId } : {}),
-          ...(dto.eventualClientId !== undefined
-            ? { eventualClientId: dto.eventualClientId }
+          ...(switchingClient
+            ? {
+                particularClientId: nextParticular,
+                buildingId: nextBuilding,
+                eventualClientId,
+              }
             : {}),
           ...(dto.requestDate !== undefined
             ? { requestDate: parseDateOnly(dto.requestDate) }
@@ -276,6 +314,9 @@ export class QuotesService {
             : {}),
           ...(dto.observations !== undefined
             ? { observations: emptyToNull(dto.observations) }
+            : {}),
+          ...(dto.serviceIncludes !== undefined
+            ? { serviceIncludes: emptyToNull(dto.serviceIncludes) }
             : {}),
           ...(dto.validUntil !== undefined
             ? {
@@ -349,6 +390,7 @@ export class QuotesService {
       paymentCondition: quote.paymentCondition,
       paymentTerms: quote.paymentTerms,
       observations: quote.observations,
+      serviceIncludes: quote.serviceIncludes,
       validUntil: quote.validUntil ? formatDate(quote.validUntil) : null,
       serviceType: quote.serviceType,
       subtotal: toNumber(quote.subtotal),
