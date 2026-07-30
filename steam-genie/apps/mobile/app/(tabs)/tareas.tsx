@@ -248,6 +248,8 @@ export default function TareasScreen() {
   const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   const [selectedSubzoneId, setSelectedSubzoneId] = useState<string | null>(null);
+  /** zones = navegación por tarjetas; checklist = listado plano del piso. */
+  const [hierarchyViewMode, setHierarchyViewMode] = useState<'zones' | 'checklist'>('zones');
 
   const buildingId = selectedBuilding?.id;
   const hasLoadedRef = useRef(false);
@@ -263,6 +265,7 @@ export default function TareasScreen() {
     setSelectedFloorId(null);
     setSelectedZoneId(null);
     setSelectedSubzoneId(null);
+    setHierarchyViewMode('zones');
     setSelectionMode(false);
     setSelectedIds(new Set());
   }, [buildingId]);
@@ -271,6 +274,16 @@ export default function TareasScreen() {
     setSelectionMode(false);
     setSelectedIds(new Set());
   }, []);
+
+  const setHierarchyView = useCallback(
+    (mode: 'zones' | 'checklist') => {
+      setHierarchyViewMode(mode);
+      setSelectedZoneId(null);
+      setSelectedSubzoneId(null);
+      clearSelection();
+    },
+    [clearSelection],
+  );
 
   const activeAttendance =
     prefetchData?.activeAttendance?.buildingId === selectedBuilding?.id
@@ -816,7 +829,84 @@ export default function TareasScreen() {
             onSelect={(floorId) => setSelectedFloorId(floorId)}
           />
 
-          {selectedZone ? (
+          <View style={styles.viewModeToggle}>
+            <TouchableOpacity
+              style={[
+                styles.viewModeBtn,
+                hierarchyViewMode === 'zones' && styles.viewModeBtnActive,
+              ]}
+              onPress={() => setHierarchyView('zones')}
+              activeOpacity={0.85}
+            >
+              <Ionicons
+                name="grid-outline"
+                size={16}
+                color={hierarchyViewMode === 'zones' ? '#fff' : COLORS.primary}
+              />
+              <Text
+                style={[
+                  styles.viewModeBtnText,
+                  hierarchyViewMode === 'zones' && styles.viewModeBtnTextActive,
+                ]}
+              >
+                Por zonas
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.viewModeBtn,
+                hierarchyViewMode === 'checklist' && styles.viewModeBtnActive,
+              ]}
+              onPress={() => setHierarchyView('checklist')}
+              activeOpacity={0.85}
+            >
+              <Ionicons
+                name="list-outline"
+                size={16}
+                color={hierarchyViewMode === 'checklist' ? '#fff' : COLORS.primary}
+              />
+              <Text
+                style={[
+                  styles.viewModeBtnText,
+                  hierarchyViewMode === 'checklist' && styles.viewModeBtnTextActive,
+                ]}
+              >
+                Checklist
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {hierarchyViewMode === 'checklist' ? (
+            <FlatFloorChecklistView
+              floor={selectedFloor}
+              markingId={markingId}
+              uploadingPhotoForItemId={uploadingPhotoForItemId}
+              uploadingPhaseFor={uploadingPhaseFor}
+              deletingPhasePhotoId={deletingPhasePhotoId}
+              isBulkMarking={isBulkMarking}
+              selectionMode={selectionMode}
+              selectedIds={selectedIds}
+              isRefreshing={isRefreshing}
+              perTaskPhotosEnabled={perTaskPhotosEnabled}
+              isBdaMode={isBdaMode}
+              onRefresh={handleRefresh}
+              onToggleSelectionMode={() => {
+                if (selectionMode) clearSelection();
+                else setSelectionMode(true);
+              }}
+              onToggleSelectItem={toggleSelectItem}
+              onSelectAllPending={(tasks) => selectAllPendingInSubzone(tasks)}
+              onDeselectAll={deselectAllInSubzone}
+              onBulkMarkDone={(tasks) => markSelectedAsDone(tasks)}
+              onDone={(item) => {
+                requestMarkDone(item);
+              }}
+              onNotDone={handleMarkNotDone}
+              onAddPhoto={handlePhotoUpload}
+              onAddPhasePhoto={handlePhasePhotoUpload}
+              onDeletePhasePhoto={handlePhasePhotoDelete}
+            />
+          ) : selectedZone ? (
             <ZoneDetailView
               zone={selectedZone}
               activeSubzone={activeSubzone}
@@ -903,6 +993,193 @@ export default function TareasScreen() {
           </View>
         </View>
       </Modal>
+    </View>
+  );
+}
+
+function FlatFloorChecklistView({
+  floor,
+  markingId,
+  uploadingPhotoForItemId,
+  uploadingPhaseFor,
+  deletingPhasePhotoId = null,
+  isBulkMarking,
+  selectionMode,
+  selectedIds,
+  isRefreshing,
+  perTaskPhotosEnabled = true,
+  isBdaMode = false,
+  onRefresh,
+  onToggleSelectionMode,
+  onToggleSelectItem,
+  onSelectAllPending,
+  onDeselectAll,
+  onBulkMarkDone,
+  onDone,
+  onNotDone,
+  onAddPhoto,
+  onAddPhasePhoto,
+  onDeletePhasePhoto,
+}: {
+  floor: FloorGroup | undefined;
+  markingId: string | null;
+  uploadingPhotoForItemId: string | null;
+  uploadingPhaseFor: { itemId: string; phase: PhotoPhase; progress?: string | null } | null;
+  deletingPhasePhotoId?: string | null;
+  isBulkMarking: boolean;
+  selectionMode: boolean;
+  selectedIds: Set<string>;
+  isRefreshing: boolean;
+  perTaskPhotosEnabled?: boolean;
+  isBdaMode?: boolean;
+  onRefresh: () => void;
+  onToggleSelectionMode: () => void;
+  onToggleSelectItem: (item: PeriodicDueItem) => void;
+  onSelectAllPending: (tasks: PeriodicDueItem[]) => void;
+  onDeselectAll: () => void;
+  onBulkMarkDone: (tasks: PeriodicDueItem[]) => void;
+  onDone: (item: PeriodicDueItem) => void;
+  onNotDone: (item: PeriodicDueItem) => void;
+  onAddPhoto: (item: PeriodicDueItem) => void;
+  onAddPhasePhoto: (item: PeriodicDueItem, phase: PhotoPhase) => void;
+  onDeletePhasePhoto: (item: PeriodicDueItem, photo: PhasePhotoItem) => void;
+}) {
+  const scopeTasks = floor?.tasks ?? [];
+  const bulkSelectablePending = scopeTasks.filter(isBulkSelectable);
+  const selectedCount = bulkSelectablePending.filter((t) => selectedIds.has(t.id)).length;
+  const allBulkSelectableSelected =
+    bulkSelectablePending.length > 0 &&
+    bulkSelectablePending.every((t) => selectedIds.has(t.id));
+  const showSelectionToggle = bulkSelectablePending.length > 0;
+
+  return (
+    <View style={styles.zoneDetail}>
+      {showSelectionToggle ? (
+        <View style={styles.flatSelectionHeader}>
+          <TouchableOpacity
+            style={styles.selectionToggleBtn}
+            onPress={onToggleSelectionMode}
+            disabled={isBulkMarking}
+          >
+            <Ionicons
+              name={selectionMode ? 'close' : 'checkbox-outline'}
+              size={16}
+              color={COLORS.primary}
+            />
+            <Text style={styles.selectionToggleText}>
+              {selectionMode ? 'Cancelar' : 'Seleccionar'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {selectionMode && bulkSelectablePending.length > 0 ? (
+        <View style={styles.selectionToolbar}>
+          <TouchableOpacity
+            style={styles.selectAllBtn}
+            onPress={() => {
+              if (allBulkSelectableSelected) onDeselectAll();
+              else onSelectAllPending(scopeTasks);
+            }}
+          >
+            <Ionicons
+              name={allBulkSelectableSelected ? 'checkbox' : 'square-outline'}
+              size={18}
+              color={COLORS.primary}
+            />
+            <Text style={styles.selectAllText}>
+              {allBulkSelectableSelected ? 'Deseleccionar todas' : 'Seleccionar todas'}
+            </Text>
+          </TouchableOpacity>
+          <Text style={styles.selectionCount}>
+            {selectedCount} seleccionada{selectedCount === 1 ? '' : 's'}
+          </Text>
+        </View>
+      ) : null}
+
+      <ScrollView
+        style={styles.taskListScroll}
+        contentContainerStyle={[
+          styles.flatChecklistContent,
+          selectionMode && selectedCount > 0 && styles.taskListContentWithBar,
+        ]}
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
+      >
+        {(floor?.zones ?? []).map((zone) => {
+          const zoneProgress = countProgress(zone.tasks, perTaskPhotosEnabled);
+          return (
+            <View key={zone.zoneId} style={styles.flatZoneBlock}>
+              <View style={styles.flatZoneHeader}>
+                <View style={styles.zoneNumberBadge}>
+                  <Text style={styles.zoneNumberText}>{zone.zoneIndex}</Text>
+                </View>
+                <View style={styles.flatZoneTitles}>
+                  <Text style={styles.flatZoneName}>{zone.zoneName}</Text>
+                  <Text style={styles.flatZoneMeta}>
+                    {zoneProgress.resolved}/{zoneProgress.total} tareas
+                  </Text>
+                </View>
+              </View>
+              {zone.subzones.map((sub) => (
+                <View key={sub.subId} style={styles.flatSubzoneBlock}>
+                  <Text style={styles.flatSubzoneTitle}>{sub.subName}</Text>
+                  {sub.tasks.map((item) => (
+                    <TaskRow
+                      key={item.id}
+                      item={item}
+                      isMarking={markingId === item.id || isBulkMarking}
+                      isMarkingThisItem={markingId === item.id}
+                      isUploadingPhoto={uploadingPhotoForItemId === item.id}
+                      uploadingPhase={
+                        uploadingPhaseFor?.itemId === item.id
+                          ? uploadingPhaseFor.phase
+                          : null
+                      }
+                      uploadingPhaseProgress={
+                        uploadingPhaseFor?.itemId === item.id
+                          ? (uploadingPhaseFor.progress ?? null)
+                          : null
+                      }
+                      deletingPhasePhotoId={deletingPhasePhotoId}
+                      selectionMode={selectionMode}
+                      isSelected={selectedIds.has(item.id)}
+                      perTaskPhotosEnabled={perTaskPhotosEnabled}
+                      isBdaMode={isBdaMode}
+                      onToggleSelect={() => onToggleSelectItem(item)}
+                      onDone={() => onDone(item)}
+                      onNotDone={() => onNotDone(item)}
+                      onAddPhoto={() => onAddPhoto(item)}
+                      onAddPhasePhoto={(phase) => onAddPhasePhoto(item, phase)}
+                      onDeletePhasePhoto={(photo) => onDeletePhasePhoto(item, photo)}
+                    />
+                  ))}
+                </View>
+              ))}
+            </View>
+          );
+        })}
+      </ScrollView>
+
+      {selectionMode && selectedCount > 0 ? (
+        <View style={styles.bulkActionBar}>
+          <TouchableOpacity
+            style={[styles.bulkMarkBtn, isBulkMarking && styles.bulkMarkBtnDisabled]}
+            onPress={() => onBulkMarkDone(scopeTasks)}
+            disabled={isBulkMarking}
+          >
+            {isBulkMarking ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="checkmark-done" size={18} color="#fff" />
+                <Text style={styles.bulkMarkBtnText}>
+                  Marcar {selectedCount} como hecha{selectedCount === 1 ? '' : 's'}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1529,6 +1806,65 @@ const styles = StyleSheet.create({
   },
   floorChipTextActive: { color: '#fff' },
   floorChipDone: { position: 'absolute', top: 3, right: 3 },
+  viewModeToggle: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: COLORS.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  viewModeBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.surface,
+  },
+  viewModeBtnActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  viewModeBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.primary,
+  },
+  viewModeBtnTextActive: { color: '#fff' },
+  flatSelectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 4,
+    backgroundColor: COLORS.surface,
+  },
+  flatChecklistContent: { padding: 16, gap: 14, paddingBottom: 32 },
+  flatZoneBlock: { gap: 10 },
+  flatZoneHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  flatZoneTitles: { flex: 1, gap: 2 },
+  flatZoneName: { fontSize: 15, fontWeight: '800', color: COLORS.text },
+  flatZoneMeta: { fontSize: 12, color: COLORS.textMuted, fontWeight: '600' },
+  flatSubzoneBlock: { gap: 8, paddingLeft: 4 },
+  flatSubzoneTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.primary,
+    marginTop: 2,
+  },
   sectionTitle: {
     fontSize: 14,
     fontWeight: '700',
