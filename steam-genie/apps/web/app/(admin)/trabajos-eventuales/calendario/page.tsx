@@ -677,9 +677,9 @@ export default function EventualCalendarPage() {
                         return (
                           <Link
                             key={s.id}
-                            href="/trabajos-eventuales/servicios"
+                            href={`/trabajos-eventuales/servicios?id=${encodeURIComponent(s.id)}`}
                             className={`eventual-calendar-event is-service ${s.unassigned ? 'is-unassigned' : ''}`}
-                            title={`${s.title} · ${WORK_ORDER_STATUS_LABELS[s.status] ?? s.status} · ${formatAssignees(s)}`}
+                            title={`${s.title} · ${WORK_ORDER_STATUS_LABELS[s.status] ?? s.status} · ${formatAssignees(s)} — Abrir servicio`}
                           >
                             <span className="eventual-calendar-event-title">
                               {time ? `${time} · ` : ''}

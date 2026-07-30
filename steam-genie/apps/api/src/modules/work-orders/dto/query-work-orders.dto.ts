@@ -20,6 +20,11 @@ export class QueryWorkOrdersDto {
   @IsUUID()
   buildingId?: string;
 
+  /** Si se envía, filtra por un work order concreto (p. ej. deep-link desde el calendario). */
+  @IsOptional()
+  @IsUUID()
+  id?: string;
+
   @IsOptional()
   @IsEnum(WorkOrderStatus)
   status?: WorkOrderStatus;

@@ -3465,10 +3465,19 @@ textarea {
   background: #f0fdf4;
   border-left-color: #22c55e;
   color: #14532d;
+  cursor: pointer;
 }
 
 .eventual-calendar-event.is-service:hover {
   background: #dcfce7;
+}
+
+.table tr.is-focused-service > td {
+  background: #ecfdf5;
+}
+
+.table tr.is-focused-service > td:first-child {
+  box-shadow: inset 3px 0 0 #22c55e;
 }
 
 .eventual-calendar-event.is-service.is-unassigned {

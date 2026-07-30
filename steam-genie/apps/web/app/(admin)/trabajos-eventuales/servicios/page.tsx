@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { FormEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { APP_MODULES } from '@steam-genie/shared-constants';
 import { WorkOrderFinanceModal } from '../../../../components/WorkOrderFinanceModal';
 import { toIsoFromDatetimeLocal } from '../../../../components/LocationPicker';
@@ -192,6 +193,26 @@ function CleanerAssignOption({
 }
 
 export default function EventualServicesPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="loading-state">
+          <div className="spinner" role="status" aria-label="Cargando" />
+          <p className="muted">Cargando servicios…</p>
+        </div>
+      }
+    >
+      <EventualServicesPageInner />
+    </Suspense>
+  );
+}
+
+function EventualServicesPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const focusId = searchParams.get('id');
+  const focusRowRef = useRef<HTMLTableRowElement | null>(null);
+
   const isAdmin = getCurrentUserRole() === 'admin';
   const [items, setItems] = useState<WorkOrderListItem[]>([]);
   const [buildings, setBuildings] = useState<Array<{ id: string; name: string }>>([]);
@@ -234,12 +255,16 @@ export default function EventualServicesPage() {
     try {
       const params = new URLSearchParams({
         limit: String(PAGE_SIZE),
-        page: String(page),
+        page: String(focusId ? 1 : page),
         type: 'CHECKOUT_CLEANING',
       });
-      if (buildingFilter) params.set('buildingId', buildingFilter);
-      if (statusFilter) params.set('status', statusFilter);
-      params.set('sortDir', sortDir);
+      if (focusId) {
+        params.set('id', focusId);
+      } else {
+        if (buildingFilter) params.set('buildingId', buildingFilter);
+        if (statusFilter) params.set('status', statusFilter);
+        params.set('sortDir', sortDir);
+      }
 
       const res = await api.get<Paginated<WorkOrderListItem>>(`/work-orders?${params}`);
       setItems(res.data);
@@ -250,7 +275,7 @@ export default function EventualServicesPage() {
     } finally {
       setLoading(false);
     }
-  }, [buildingFilter, statusFilter, sortDir, page]);
+  }, [buildingFilter, statusFilter, sortDir, page, focusId]);
 
   useEffect(() => {
     void fetchBuildingsList()
@@ -261,6 +286,15 @@ export default function EventualServicesPage() {
   useEffect(() => {
     void loadServices();
   }, [loadServices]);
+
+  useEffect(() => {
+    if (!focusId || loading || items.length === 0) return;
+    focusRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [focusId, loading, items]);
+
+  function clearFocus() {
+    router.replace('/trabajos-eventuales/servicios');
+  }
 
   const alreadyAssignedIds = useMemo(() => {
     if (!assigningWo) return new Set<string>();
@@ -519,6 +553,14 @@ export default function EventualServicesPage() {
 
       {error ? <div className="alert alert-error">{error}</div> : null}
       {success ? <div className="alert alert-success">{success}</div> : null}
+      {focusId ? (
+        <div className="alert alert-warning" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+          <span>Mostrando el servicio abierto desde el calendario.</span>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={clearFocus}>
+            Ver todos
+          </button>
+        </div>
+      ) : null}
 
       <div className="card">
         <p className="muted" style={{ marginTop: 0 }}>
@@ -526,6 +568,7 @@ export default function EventualServicesPage() {
           recibirán el pedido en la app móvil y deberán aceptarlo.
         </p>
 
+        {!focusId ? (
         <div className="grid-3" style={{ marginBottom: 16 }}>
           <div className="form-field">
             <label>Edificio</label>
@@ -575,6 +618,7 @@ export default function EventualServicesPage() {
             </select>
           </div>
         </div>
+        ) : null}
 
         {loading ? (
           <div className="loading-state">
@@ -583,9 +627,20 @@ export default function EventualServicesPage() {
           </div>
         ) : items.length === 0 ? (
           <p className="muted">
-            No hay servicios. Creá una{' '}
-            <Link href="/trabajos-eventuales/reservas">reserva</Link> o un{' '}
-            <Link href="/trabajos-eventuales">trabajo eventual</Link> manual.
+            {focusId ? (
+              <>
+                No se encontró ese servicio.{' '}
+                <button type="button" className="btn btn-secondary btn-sm" onClick={clearFocus}>
+                  Ver todos
+                </button>
+              </>
+            ) : (
+              <>
+                No hay servicios. Creá una{' '}
+                <Link href="/trabajos-eventuales/reservas">reserva</Link> o un{' '}
+                <Link href="/trabajos-eventuales">trabajo eventual</Link> manual.
+              </>
+            )}
           </p>
         ) : (
           <div className="table-wrap">
@@ -608,8 +663,13 @@ export default function EventualServicesPage() {
                   const canAssign = ASSIGNABLE_STATUSES.has(wo.status);
                   const canDelete = !NON_DELETABLE_STATUSES.has(wo.status);
                   const canReschedule = !NON_RESCHEDULABLE_STATUSES.has(wo.status);
+                  const isFocused = focusId === wo.id;
                   return (
-                    <tr key={wo.id}>
+                    <tr
+                      key={wo.id}
+                      ref={isFocused ? focusRowRef : undefined}
+                      className={isFocused ? 'is-focused-service' : undefined}
+                    >
                       <td>
                         <div>{wo.title}</div>
                         <div className="muted" style={{ fontSize: 12 }}>
@@ -688,7 +748,7 @@ export default function EventualServicesPage() {
           </div>
         )}
 
-        {!loading && items.length > 0 ? (
+        {!loading && items.length > 0 && !focusId ? (
           <div className="pagination">
             <button
               type="button"

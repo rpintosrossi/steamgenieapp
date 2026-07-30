@@ -86,10 +86,12 @@ export class WorkOrdersService {
   // ─── LIST ─────────────────────────────────────────────────────────────────
 
   async findAll(query: QueryWorkOrdersDto, user?: AuthUser) {
-    const { page = 1, limit = 20, buildingId, status, type, date, assignedTo, sortDir } = query;
+    const { page = 1, limit = 20, buildingId, status, type, date, assignedTo, sortDir, id } = query;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = { deletedAt: null };
     const isExternalViewer = user ? EXTERNAL_VIEWER_ROLES.has(user.primaryRole) : false;
+
+    if (id) where.id = id;
 
     if (isExternalViewer) {
       where.type = WorkOrderType.CHECKOUT_CLEANING;
