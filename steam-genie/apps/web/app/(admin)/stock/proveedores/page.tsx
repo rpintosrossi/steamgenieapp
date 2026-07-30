@@ -13,11 +13,13 @@ export default function StockSuppliersPage() {
   const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPhone, setNewPhone] = useState('');
+  const [newObservations, setNewObservations] = useState('');
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editPhone, setEditPhone] = useState('');
+  const [editObservations, setEditObservations] = useState('');
   const [savingId, setSavingId] = useState<string | null>(null);
   const [showInactive, setShowInactive] = useState(true);
 
@@ -54,10 +56,12 @@ export default function StockSuppliersPage() {
         name,
         contactEmail: newEmail.trim() || undefined,
         contactPhone: newPhone.trim() || undefined,
+        observations: newObservations.trim() || undefined,
       });
       setNewName('');
       setNewEmail('');
       setNewPhone('');
+      setNewObservations('');
       setSuccess('Proveedor creado.');
       await load();
     } catch (err) {
@@ -72,6 +76,7 @@ export default function StockSuppliersPage() {
     setEditName(item.name);
     setEditEmail(item.contactEmail ?? '');
     setEditPhone(item.contactPhone ?? '');
+    setEditObservations(item.observations ?? '');
     setError(null);
     setSuccess(null);
   }
@@ -81,6 +86,7 @@ export default function StockSuppliersPage() {
     setEditName('');
     setEditEmail('');
     setEditPhone('');
+    setEditObservations('');
   }
 
   async function saveEdit(id: string) {
@@ -95,6 +101,7 @@ export default function StockSuppliersPage() {
         name,
         contactEmail: editEmail.trim() || null,
         contactPhone: editPhone.trim() || null,
+        observations: editObservations.trim() || null,
       });
       cancelEdit();
       setSuccess('Proveedor actualizado.');
@@ -150,43 +157,62 @@ export default function StockSuppliersPage() {
       <StockSubnav />
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <form onSubmit={handleCreate} className="stock-inline-form">
-          <div className="form-field" style={{ flex: 2, margin: 0 }}>
-            <label htmlFor="sup-name">Nuevo proveedor</label>
-            <input
-              id="sup-name"
+        <form onSubmit={handleCreate} className="stack" style={{ gap: 12 }}>
+          <div className="stock-inline-form">
+            <div className="form-field" style={{ flex: 2, margin: 0 }}>
+              <label htmlFor="sup-name">Nuevo proveedor</label>
+              <input
+                id="sup-name"
+                className="input"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Nombre del proveedor"
+                maxLength={200}
+                required
+              />
+            </div>
+            <div className="form-field" style={{ flex: 1, margin: 0 }}>
+              <label htmlFor="sup-email">Email</label>
+              <input
+                id="sup-email"
+                className="input"
+                type="email"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                maxLength={200}
+              />
+            </div>
+            <div className="form-field" style={{ flex: 1, margin: 0 }}>
+              <label htmlFor="sup-phone">Teléfono</label>
+              <input
+                id="sup-phone"
+                className="input"
+                value={newPhone}
+                onChange={(e) => setNewPhone(e.target.value)}
+                maxLength={50}
+              />
+            </div>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={creating}
+              style={{ alignSelf: 'flex-end' }}
+            >
+              {creating ? 'Creando…' : 'Agregar'}
+            </button>
+          </div>
+          <div className="form-field" style={{ margin: 0 }}>
+            <label htmlFor="sup-observations">Observaciones</label>
+            <textarea
+              id="sup-observations"
               className="input"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="Nombre del proveedor"
-              maxLength={200}
-              required
+              value={newObservations}
+              onChange={(e) => setNewObservations(e.target.value)}
+              placeholder="Notas opcionales del proveedor"
+              maxLength={2000}
+              rows={2}
             />
           </div>
-          <div className="form-field" style={{ flex: 1, margin: 0 }}>
-            <label htmlFor="sup-email">Email</label>
-            <input
-              id="sup-email"
-              className="input"
-              type="email"
-              value={newEmail}
-              onChange={(e) => setNewEmail(e.target.value)}
-              maxLength={200}
-            />
-          </div>
-          <div className="form-field" style={{ flex: 1, margin: 0 }}>
-            <label htmlFor="sup-phone">Teléfono</label>
-            <input
-              id="sup-phone"
-              className="input"
-              value={newPhone}
-              onChange={(e) => setNewPhone(e.target.value)}
-              maxLength={50}
-            />
-          </div>
-          <button type="submit" className="btn btn-primary" disabled={creating} style={{ alignSelf: 'flex-end' }}>
-            {creating ? 'Creando…' : 'Agregar'}
-          </button>
         </form>
       </div>
 
@@ -219,6 +245,7 @@ export default function StockSuppliersPage() {
                   <th>Nombre</th>
                   <th>Email</th>
                   <th>Teléfono</th>
+                  <th>Observaciones</th>
                   <th>Productos</th>
                   <th>Estado</th>
                   <th />
@@ -265,9 +292,33 @@ export default function StockSuppliersPage() {
                           item.contactPhone ?? '—'
                         )}
                       </td>
+                      <td style={{ maxWidth: 280 }}>
+                        {editing ? (
+                          <textarea
+                            className="input"
+                            value={editObservations}
+                            onChange={(e) => setEditObservations(e.target.value)}
+                            maxLength={2000}
+                            rows={2}
+                          />
+                        ) : (
+                          <span
+                            className="muted"
+                            style={{
+                              display: 'block',
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word',
+                            }}
+                          >
+                            {item.observations?.trim() ? item.observations : '—'}
+                          </span>
+                        )}
+                      </td>
                       <td>{item._count?.products ?? 0}</td>
                       <td>
-                        <span className={item.isActive ? 'badge badge-success' : 'badge badge-warning'}>
+                        <span
+                          className={item.isActive ? 'badge badge-success' : 'badge badge-warning'}
+                        >
                           {item.isActive ? 'Activo' : 'Inactivo'}
                         </span>
                       </td>
@@ -283,7 +334,11 @@ export default function StockSuppliersPage() {
                               >
                                 Guardar
                               </button>
-                              <button type="button" className="btn btn-ghost btn-sm" onClick={cancelEdit}>
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                onClick={cancelEdit}
+                              >
                                 Cancelar
                               </button>
                             </>

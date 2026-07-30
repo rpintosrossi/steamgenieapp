@@ -34,6 +34,7 @@ export function BuildingSettingsCard({
   onSuccess,
 }: BuildingSettingsCardProps) {
   const [name, setName] = useState(building.name);
+  const [taxId, setTaxId] = useState(building.taxId ?? '');
   const [location, setLocation] = useState<BuildingLocationFieldsValue>({
     address: building.address ?? '',
     province: building.province ?? '',
@@ -73,6 +74,7 @@ export function BuildingSettingsCard({
 
       const updated = await api.patch<BuildingDetail>(`/buildings/${building.id}`, {
         name: name.trim(),
+        taxId: taxId.trim() || null,
         address: location.address.trim() || null,
         city: location.city.trim() || null,
         province: location.province.trim() || null,
@@ -106,6 +108,16 @@ export function BuildingSettingsCard({
         <div className="form-field">
           <label>Nombre *</label>
           <input value={name} onChange={(e) => setName(e.target.value)} required />
+        </div>
+
+        <div className="form-field">
+          <label>CUIT</label>
+          <input
+            value={taxId}
+            onChange={(e) => setTaxId(e.target.value)}
+            placeholder="Opcional"
+            maxLength={20}
+          />
         </div>
 
         <div className="form-field">

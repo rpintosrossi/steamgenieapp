@@ -301,6 +301,8 @@ model UserDevice {
 model Building {
   id          String   @id @default(uuid()) @db.Uuid
   name        String   @db.VarChar(200)
+  /// CUIT opcional de la empresa / edificio.
+  taxId       String?  @db.VarChar(20)
   address     String?  @db.VarChar(300)
   city        String?  @db.VarChar(100)
   province    String?  @db.VarChar(100)
@@ -364,10 +366,11 @@ model ParticularClient {
   @@map("particular_clients")
 }
 
-/// Cliente eventual: solo nombre y dirección (sin sitio operativo).
+/// Cliente eventual: nombre, dirección y CUIT opcional (sin sitio operativo).
 model EventualClient {
   id        String    @id @default(uuid()) @db.Uuid
   name      String    @db.VarChar(200)
+  taxId     String?   @db.VarChar(20)
   address   String?   @db.VarChar(300)
   deletedAt DateTime?
   createdAt DateTime  @default(now())
@@ -622,6 +625,7 @@ model StockSupplier {
   name         String    @db.VarChar(200)
   contactEmail String?   @db.VarChar(200)
   contactPhone String?   @db.VarChar(50)
+  observations String?   @db.VarChar(2000)
   isActive     Boolean   @default(true)
   deletedAt    DateTime?
   createdAt    DateTime  @default(now())

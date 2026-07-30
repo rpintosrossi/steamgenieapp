@@ -13,6 +13,7 @@ export type PhotoPhase = 'BEFORE' | 'DURING' | 'AFTER';
 export interface Building {
   id: string;
   name: string;
+  taxId?: string | null;
   address?: string | null;
   city?: string | null;
   province?: string | null;
@@ -472,6 +473,7 @@ export interface StockSupplierItem {
   name: string;
   contactEmail?: string | null;
   contactPhone?: string | null;
+  observations?: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -497,6 +499,7 @@ export interface ParticularClientItem {
 export interface EventualClientItem {
   id: string;
   name: string;
+  taxId?: string | null;
   address?: string | null;
   createdAt?: string;
   updatedAt?: string;
@@ -556,8 +559,8 @@ export interface Quote {
     ParticularClientItem,
     'id' | 'name' | 'taxId' | 'address' | 'contactName' | 'email' | 'phone' | 'buildingId'
   > | null;
-  building?: Pick<Building, 'id' | 'name' | 'address' | 'city' | 'province'> | null;
-  eventualClient?: Pick<EventualClientItem, 'id' | 'name' | 'address'> | null;
+  building?: Pick<Building, 'id' | 'name' | 'taxId' | 'address' | 'city' | 'province'> | null;
+  eventualClient?: Pick<EventualClientItem, 'id' | 'name' | 'taxId' | 'address'> | null;
   workOrder?: {
     id: string;
     title: string;

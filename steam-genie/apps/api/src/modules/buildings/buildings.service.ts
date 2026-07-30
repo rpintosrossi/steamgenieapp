@@ -345,6 +345,7 @@ export class BuildingsService {
     return this.prisma.building.create({
       data: {
         name: dto.name,
+        taxId: dto.taxId?.trim() || null,
         address: dto.address,
         city: dto.city,
         province: dto.province,
@@ -368,6 +369,7 @@ export class BuildingsService {
       where: { id },
       data: {
         ...(dto.name !== undefined ? { name: dto.name } : {}),
+        ...(dto.taxId !== undefined ? { taxId: dto.taxId?.trim() || null } : {}),
         ...(dto.address !== undefined ? { address: dto.address } : {}),
         ...(dto.city !== undefined ? { city: dto.city } : {}),
         ...(dto.province !== undefined ? { province: dto.province } : {}),
@@ -387,6 +389,7 @@ export class BuildingsService {
 
     if (
       dto.name !== undefined ||
+      dto.taxId !== undefined ||
       dto.address !== undefined ||
       dto.isActive !== undefined
     ) {
@@ -394,6 +397,7 @@ export class BuildingsService {
         where: { buildingId: id, deletedAt: null },
         data: {
           ...(dto.name !== undefined ? { name: dto.name } : {}),
+          ...(dto.taxId !== undefined ? { taxId: dto.taxId?.trim() || null } : {}),
           ...(dto.address !== undefined ? { address: dto.address } : {}),
           ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
         },

@@ -52,6 +52,7 @@ export default function NewQuotePage() {
   const [particularClientId, setParticularClientId] = useState('');
   const [buildingId, setBuildingId] = useState('');
   const [eventualName, setEventualName] = useState('');
+  const [eventualTaxId, setEventualTaxId] = useState('');
   const [eventualAddress, setEventualAddress] = useState('');
   const [particulars, setParticulars] = useState<ParticularClientItem[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
@@ -157,6 +158,7 @@ export default function NewQuotePage() {
             : {
                 eventualClient: {
                   name: eventualName.trim(),
+                  ...(eventualTaxId.trim() ? { taxId: eventualTaxId.trim() } : {}),
                   address: eventualAddress.trim() || undefined,
                 },
               };
@@ -291,6 +293,17 @@ export default function NewQuotePage() {
                   onChange={(e) => setEventualName(e.target.value)}
                   placeholder="Nombre del cliente"
                   required
+                />
+              </div>
+              <div className="form-field" style={{ margin: 0 }}>
+                <label htmlFor="q-eventual-tax">CUIT</label>
+                <input
+                  id="q-eventual-tax"
+                  className="input"
+                  value={eventualTaxId}
+                  onChange={(e) => setEventualTaxId(e.target.value)}
+                  placeholder="Opcional"
+                  maxLength={20}
                 />
               </div>
               <div className="form-field" style={{ margin: 0 }}>

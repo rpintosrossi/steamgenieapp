@@ -8,6 +8,7 @@ import {
   IsBoolean,
   IsEnum,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { BuildingMode, PhotoEvidenceMode } from '@prisma/client';
@@ -18,6 +19,12 @@ export class UpdateBuildingDto {
   @MinLength(1)
   @MaxLength(200)
   name?: string;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(20)
+  taxId?: string | null;
 
   @IsOptional()
   @IsString()

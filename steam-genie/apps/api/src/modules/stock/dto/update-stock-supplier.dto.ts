@@ -17,6 +17,11 @@ export class UpdateStockSupplierDto {
   contactPhone?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  observations?: string | null;
+
+  @IsOptional()
   @IsBoolean()
   isActive?: boolean;
 }

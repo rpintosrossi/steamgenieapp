@@ -33,6 +33,7 @@ const QUOTE_INCLUDE = {
     select: {
       id: true,
       name: true,
+      taxId: true,
       address: true,
       city: true,
       province: true,
@@ -42,6 +43,7 @@ const QUOTE_INCLUDE = {
     select: {
       id: true,
       name: true,
+      taxId: true,
       address: true,
     },
   },
@@ -138,6 +140,7 @@ export class QuotesService {
         const created = await tx.eventualClient.create({
           data: {
             name: dto.eventualClient.name.trim(),
+            taxId: emptyToNull(dto.eventualClient.taxId),
             address: emptyToNull(dto.eventualClient.address),
           },
           select: { id: true },
@@ -384,6 +387,7 @@ export class QuotesService {
       eventualClient: {
         id: quote.eventualClient.id,
         name: quote.eventualClient.name,
+        taxId: quote.eventualClient.taxId,
         address: quote.eventualClient.address,
       },
       matches,
@@ -495,6 +499,7 @@ export class QuotesService {
         siteBuildingId = (
           await this.createParticularFromEventual({
             name: eventual.name,
+            taxId: eventual.taxId,
             address,
             phone: quote.contactPhone,
             email: quote.contactEmail,
@@ -505,6 +510,7 @@ export class QuotesService {
       siteBuildingId = (
         await this.createParticularFromEventual({
           name: eventual.name,
+          taxId: eventual.taxId,
           address,
           phone: quote.contactPhone,
           email: quote.contactEmail,
@@ -589,6 +595,7 @@ export class QuotesService {
 
   private async createParticularFromEventual(input: {
     name: string;
+    taxId?: string | null;
     address: string | null;
     phone?: string | null;
     email?: string | null;
@@ -596,11 +603,13 @@ export class QuotesService {
     const { randomUUID } = await import('crypto');
     const name = input.name.trim();
     const address = emptyToNull(input.address);
+    const taxId = emptyToNull(input.taxId);
 
     return this.prisma.$transaction(async (tx) => {
       const building = await tx.building.create({
         data: {
           name,
+          taxId,
           address,
           requireGpsValidation: false,
           buildingMode: BuildingMode.SIMPLE,
@@ -628,6 +637,7 @@ export class QuotesService {
       const client = await tx.particularClient.create({
         data: {
           name,
+          taxId,
           address,
           phone: emptyToNull(input.phone),
           email: emptyToNull(input.email),
@@ -829,12 +839,14 @@ function resolveClientInfo(quote: {
   } | null;
   building: {
     name: string;
+    taxId: string | null;
     address: string | null;
     city: string | null;
     province: string | null;
   } | null;
   eventualClient: {
     name: string;
+    taxId: string | null;
     address: string | null;
   } | null;
 }) {
@@ -851,7 +863,7 @@ function resolveClientInfo(quote: {
   if (quote.eventualClient) {
     return {
       name: quote.eventualClient.name,
-      taxId: null,
+      taxId: quote.eventualClient.taxId,
       address: quote.eventualClient.address,
       contactName: null,
       email: null,
@@ -862,7 +874,7 @@ function resolveClientInfo(quote: {
   const address = [b.address, b.city, b.province].filter(Boolean).join(' · ') || null;
   return {
     name: b.name,
-    taxId: null,
+    taxId: b.taxId,
     address,
     contactName: null,
     email: null,

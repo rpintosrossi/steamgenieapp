@@ -14,4 +14,9 @@ export class CreateStockSupplierDto {
   @IsString()
   @MaxLength(50)
   contactPhone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  observations?: string;
 }

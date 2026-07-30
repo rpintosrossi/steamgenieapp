@@ -6,7 +6,7 @@ import { QUOTE_COMPANY, formatQuoteNumber } from '@steam-genie/shared-constants'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const PDFDocument = require('pdfkit') as typeof import('pdfkit');
 
-/** Colores de marca SteamGenie (alineados al panel web). */
+/** Colores de marca Steam Genie (alineados al panel web). */
 const COLORS = {
   navy: '#0a1628',
   primary: '#2f6fed',
@@ -79,57 +79,51 @@ export class QuotePdfService {
       const money = (n: number) =>
         n.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
 
-      // ── Header ────────────────────────────────────────────────────────────
+      // ── Header (fondo claro para el logo original con tipografía navy) ─────
       const headerH = 96;
-      doc.rect(0, 0, pageWidth, headerH).fill(COLORS.navy);
+      doc.rect(0, 0, pageWidth, headerH).fill(COLORS.white);
       doc.rect(0, headerH, pageWidth, 5).fill(COLORS.primary);
 
-      const logoIcon = this.loadLogoIcon();
       const brandX = marginX;
-      const brandY = 18;
-      const logoSize = 62;
-      if (logoIcon) {
+      const brandY = 16;
+      const logo = this.loadBrandLogo();
+      if (logo) {
         try {
-          // El PNG trae canvas blanco: lo recortamos a círculo para que no se vea sobre el navy.
-          this.drawCircularLogo(doc, logoIcon, brandX, brandY, logoSize);
+          // Logo horizontal: ícono SG + STEAM / GENIE (dos líneas).
+          const logoH = 64;
+          doc.image(logo.buffer, brandX, brandY, { height: logoH });
         } catch (err) {
           this.logger.warn(`No se pudo incrustar el logo: ${String(err)}`);
-          this.drawSgBadge(doc, brandX, brandY + 2, logoSize - 4);
+          this.drawBrandFallback(doc, brandX, brandY);
         }
       } else {
-        this.drawSgBadge(doc, brandX, brandY + 2, logoSize - 4);
+        this.drawBrandFallback(doc, brandX, brandY);
       }
 
-      const titleX = brandX + logoSize + 14;
-      doc.fillColor(COLORS.white).font('Helvetica-Bold').fontSize(22);
-      doc.text(QUOTE_COMPANY.name, titleX, brandY + 10, { width: 220, lineBreak: false });
-      doc.fillColor(COLORS.accent).font('Helvetica').fontSize(9);
-      doc.text('SERVICIO DE LIMPIEZA', titleX, brandY + 38, { width: 220, lineBreak: false });
-
-      // Bloque derecho del header (sin solaparse con la marca)
-      const rightW = 200;
+      // Bloque derecho del header
+      const rightW = 210;
       const rightX = pageWidth - marginX - rightW;
-      doc.fillColor(COLORS.white).font('Helvetica-Bold').fontSize(12);
-      doc.text('PRESUPUESTO DE VENTA', rightX, brandY + 6, {
+      doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(12);
+      doc.text('PRESUPUESTO DE VENTA', rightX, brandY + 8, {
         width: rightW,
         align: 'right',
         lineBreak: false,
       });
-      doc.fillColor(COLORS.accent).font('Helvetica').fontSize(10);
-      doc.text(`N° ${formatQuoteNumber(payload.number)}`, rightX, brandY + 26, {
+      doc.fillColor(COLORS.primary).font('Helvetica').fontSize(10);
+      doc.text(`N° ${formatQuoteNumber(payload.number)}`, rightX, brandY + 28, {
         width: rightW,
         align: 'right',
         lineBreak: false,
       });
-      doc.fillColor(COLORS.white).fontSize(9);
-      doc.text(`Fecha: ${payload.requestDate}`, rightX, brandY + 42, {
+      doc.fillColor(COLORS.text).fontSize(9);
+      doc.text(`Fecha: ${payload.requestDate}`, rightX, brandY + 44, {
         width: rightW,
         align: 'right',
         lineBreak: false,
       });
       if (payload.validUntil) {
-        doc.fillColor('#cbd5e1').fontSize(8);
-        doc.text(`Válido hasta: ${payload.validUntil}`, rightX, brandY + 56, {
+        doc.fillColor(COLORS.muted).fontSize(8);
+        doc.text(`Válido hasta: ${payload.validUntil}`, rightX, brandY + 58, {
           width: rightW,
           align: 'right',
           lineBreak: false,
@@ -345,7 +339,6 @@ export class QuotePdfService {
         'Todos los seguros correspondientes del operario',
       ];
       for (const item of includes) {
-        // Viñeta y texto en columnas fijas (evita continued/solapamiento de PDFKit).
         doc.fillColor(COLORS.primary).text('•', marginX, y, { width: 12, lineBreak: false });
         doc.fillColor(COLORS.text).text(item, marginX + 14, y, {
           width: contentWidth - 14,
@@ -389,46 +382,40 @@ export class QuotePdfService {
     });
   }
 
-  private drawCircularLogo(doc: PdfDoc, logo: Buffer, x: number, y: number, size: number) {
-    const r = size / 2;
-    const cx = x + r;
-    const cy = y + r;
-    doc.save();
-    doc.circle(cx, cy, r).clip();
-    doc.image(logo, x, y, { width: size, height: size });
-    doc.restore();
-  }
-
-  private drawSgBadge(doc: PdfDoc, x: number, y: number, size: number) {
+  /** Fallback tipográfico si no se encuentra el PNG de marca. */
+  private drawBrandFallback(doc: PdfDoc, x: number, y: number) {
+    const size = 56;
     const r = size / 2;
     doc.fillColor(COLORS.primary);
     doc.circle(x + r, y + r, r).fill();
-    doc.fillColor(COLORS.white).font('Helvetica-Bold').fontSize(size * 0.34);
-    doc.text('SG', x, y + size * 0.32, { width: size, align: 'center', lineBreak: false });
+    doc.fillColor(COLORS.white).font('Helvetica-Bold').fontSize(size * 0.28);
+    doc.text('SG', x, y + size * 0.34, { width: size, align: 'center', lineBreak: false });
+    doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(18);
+    doc.text(QUOTE_COMPANY.name, x + size + 12, y + 12, { lineBreak: false });
+    doc.fillColor(COLORS.primary).font('Helvetica').fontSize(8);
+    doc.text('SERVICIO DE LIMPIEZA', x + size + 12, y + 36, { lineBreak: false });
   }
 
-  private loadLogoIcon(): Buffer | null {
+  private loadBrandLogo(): { buffer: Buffer } | null {
     const candidates = [
-      join(__dirname, '../../../assets/brand/logo-icon.png'),
-      join(process.cwd(), 'apps/api/assets/brand/logo-icon.png'),
-      join(process.cwd(), 'assets/brand/logo-icon.png'),
-      join(process.cwd(), 'apps/mobile/assets/images/logo-sinletras.png'),
-      // Fallbacks: si solo hay logo completo, se usa igual (ya no se redibuja tipografía encima).
-      join(__dirname, '../../../assets/brand/logo.png'),
-      join(process.cwd(), 'apps/api/assets/brand/logo.png'),
-      join(process.cwd(), 'apps/web/public/logo-fondoblanco-sinfondo.png'),
+      join(__dirname, '../../../assets/brand/logo-horizontal.png'),
+      join(process.cwd(), 'apps/api/assets/brand/logo-horizontal.png'),
+      join(process.cwd(), 'assets/brand/logo-horizontal.png'),
+      join(process.cwd(), 'apps/web/public/logoParaWeb.png'),
+      join(__dirname, '../../../assets/brand/logo-wide.png'),
+      join(process.cwd(), 'apps/api/assets/brand/logo-wide.png'),
     ];
 
     for (const path of candidates) {
       if (!existsSync(path)) continue;
       try {
-        return readFileSync(path);
+        return { buffer: readFileSync(path) };
       } catch {
         // try next
       }
     }
 
-    this.logger.warn('Logo de marca no encontrado; se usará badge tipográfico.');
+    this.logger.warn('Logo de marca no encontrado; se usará tipografía de respaldo.');
     return null;
   }
 }

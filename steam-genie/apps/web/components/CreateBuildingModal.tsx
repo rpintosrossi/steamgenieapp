@@ -22,6 +22,7 @@ function parseOptionalNumber(value: string): number | undefined {
 
 export function CreateBuildingModal({ onClose, onCreated }: CreateBuildingModalProps) {
   const [name, setName] = useState('');
+  const [taxId, setTaxId] = useState('');
   const [location, setLocation] = useState<BuildingLocationFieldsValue>({
     address: '',
     province: '',
@@ -52,6 +53,7 @@ export function CreateBuildingModal({ onClose, onCreated }: CreateBuildingModalP
 
       const building = await api.post<Building>('/buildings', {
         name: name.trim(),
+        ...(taxId.trim() ? { taxId: taxId.trim() } : {}),
         address: location.address.trim() || undefined,
         city: location.city.trim() || undefined,
         province: location.province.trim() || undefined,
@@ -94,6 +96,16 @@ export function CreateBuildingModal({ onClose, onCreated }: CreateBuildingModalP
               placeholder="Ej: Edificio Central"
               required
               autoFocus
+            />
+          </div>
+
+          <div className="form-field">
+            <label>CUIT</label>
+            <input
+              value={taxId}
+              onChange={(e) => setTaxId(e.target.value)}
+              placeholder="Opcional"
+              maxLength={20}
             />
           </div>
 

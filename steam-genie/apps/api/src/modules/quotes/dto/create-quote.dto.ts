@@ -21,6 +21,11 @@ export class EventualClientInputDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(20)
+  taxId?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(300)
   address?: string;
 }

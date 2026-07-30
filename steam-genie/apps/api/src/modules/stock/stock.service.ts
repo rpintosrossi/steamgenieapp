@@ -36,6 +36,7 @@ const SUPPLIER_SELECT = {
   name: true,
   contactEmail: true,
   contactPhone: true,
+  observations: true,
   isActive: true,
   createdAt: true,
   updatedAt: true,
@@ -290,6 +291,7 @@ export class StockService {
         name,
         contactEmail: dto.contactEmail?.trim() || null,
         contactPhone: dto.contactPhone?.trim() || null,
+        observations: dto.observations?.trim() || null,
         isActive: true,
       },
       select: SUPPLIER_SELECT,
@@ -315,6 +317,9 @@ export class StockService {
           : {}),
         ...(dto.contactPhone !== undefined
           ? { contactPhone: dto.contactPhone?.trim() || null }
+          : {}),
+        ...(dto.observations !== undefined
+          ? { observations: dto.observations?.trim() || null }
           : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       },

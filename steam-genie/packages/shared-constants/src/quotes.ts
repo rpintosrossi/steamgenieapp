@@ -19,7 +19,7 @@ export const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
 export const QUOTE_VAT_RATE = 21;
 
 export const QUOTE_COMPANY = {
-  name: 'STEAMGENIE',
+  name: 'STEAM GENIE',
   address: 'REPUBLICA 5549 V BALLESTER',
   phone: '5263-2848',
   website: 'STEAMGENIE.AR',
