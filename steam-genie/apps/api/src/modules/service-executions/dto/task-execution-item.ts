@@ -32,6 +32,7 @@ export interface TaskPhotoSummary {
 
 export interface PhasePhotoSummary extends TaskPhotoSummary {
   phase: 'BEFORE' | 'DURING' | 'AFTER';
+  uploadedByName?: string | null;
 }
 
 export interface TaskExecutionDetail {

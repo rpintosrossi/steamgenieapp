@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { FormEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { APP_MODULES } from '@steam-genie/shared-constants';
 import { WorkOrderFinanceModal } from '../../../../components/WorkOrderFinanceModal';
+import { WorkOrderExecutionDetailModal } from '../../../../components/WorkOrderExecutionDetailModal';
 import { toIsoFromDatetimeLocal } from '../../../../components/LocationPicker';
 import { api } from '../../../../lib/api-client';
 import { getCurrentUserRole, hasModule } from '../../../../lib/auth';
@@ -247,6 +248,7 @@ function EventualServicesPageInner() {
   const [rescheduleMinute, setRescheduleMinute] = useState('00');
   const [savingReschedule, setSavingReschedule] = useState(false);
   const [financeWoId, setFinanceWoId] = useState<string | null>(null);
+  const [detailWoId, setDetailWoId] = useState<string | null>(null);
   const canManageFinance = hasModule(APP_MODULES.GASTOS_SERVICIOS);
 
   const loadServices = useCallback(async () => {
@@ -671,7 +673,15 @@ function EventualServicesPageInner() {
                       className={isFocused ? 'is-focused-service' : undefined}
                     >
                       <td>
-                        <div>{wo.title}</div>
+                        <button
+                          type="button"
+                          className="btn-link"
+                          onClick={() => setDetailWoId(wo.id)}
+                          title="Ver detalle de ejecución"
+                          style={{ fontWeight: 600, textAlign: 'left' }}
+                        >
+                          {wo.title}
+                        </button>
                         <div className="muted" style={{ fontSize: 12 }}>
                           {WORK_ORDER_TYPE_LABELS[wo.type] ?? wo.type}
                         </div>
@@ -689,6 +699,14 @@ function EventualServicesPageInner() {
                       <td>{formatAssignments(wo)}</td>
                       <td>
                         <div className="table-row-actions">
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => setDetailWoId(wo.id)}
+                            title="Ver limpiadores, horarios, observaciones y fotos"
+                          >
+                            Ver
+                          </button>
                           {canManageFinance ? (
                             <button
                               type="button"
@@ -1070,6 +1088,13 @@ function EventualServicesPageInner() {
 
       {financeWoId ? (
         <WorkOrderFinanceModal workOrderId={financeWoId} onClose={() => setFinanceWoId(null)} />
+      ) : null}
+
+      {detailWoId ? (
+        <WorkOrderExecutionDetailModal
+          workOrderId={detailWoId}
+          onClose={() => setDetailWoId(null)}
+        />
       ) : null}
     </>
   );

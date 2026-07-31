@@ -475,6 +475,7 @@ export class ServiceExecutionsService {
     const photos = await this.prisma.serviceExecutionPhoto.findMany({
       where: { serviceExecutionId, deletedAt: null },
       orderBy: [{ phase: 'asc' }, { createdAt: 'asc' }],
+      include: { uploadedBy: { select: { fullName: true } } },
     });
 
     return photos.map((p) => this.formatPhasePhoto(p));
@@ -598,11 +599,13 @@ export class ServiceExecutionsService {
       fileSizeBytes?: number | null;
       capturedAt?: Date | null;
       uploadedAt: Date;
+      uploadedBy?: { fullName: string } | null;
     },
   ): PhasePhotoSummary {
     return {
       ...this.formatPhoto(p),
       phase: p.phase,
+      uploadedByName: p.uploadedBy?.fullName ?? null,
     };
   }
 }

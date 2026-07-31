@@ -29,7 +29,14 @@ const EXTERNAL_VIEWER_STATUSES: WorkOrderStatus[] = [
 ];
 
 const WO_DETAIL_INCLUDE = {
-  building: { select: { id: true, name: true } },
+  building: {
+    select: {
+      id: true,
+      name: true,
+      buildingMode: true,
+      photoEvidenceMode: true,
+    },
+  },
   floor: { select: { id: true, name: true } },
   zone: { select: { id: true, name: true } },
   subzone: { select: { id: true, name: true } },
@@ -46,6 +53,7 @@ const WO_DETAIL_INCLUDE = {
     select: {
       id: true, userId: true, status: true,
       respondedAt: true, rejectionNote: true,
+      user: { select: { id: true, fullName: true, dni: true } },
     },
   },
   workOrderTasks: {
@@ -70,7 +78,12 @@ const WO_DETAIL_INCLUDE = {
     select: {
       id: true, status: true, startedAt: true, completedAt: true,
       participants: {
-        select: { id: true, userId: true, joinedAt: true },
+        select: {
+          id: true,
+          userId: true,
+          joinedAt: true,
+          user: { select: { id: true, fullName: true } },
+        },
       },
     },
   },

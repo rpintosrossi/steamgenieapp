@@ -360,6 +360,85 @@ export interface WorkOrderListItem {
   _count: { workOrderTasks: number; assignments: number };
 }
 
+export interface ServiceExecutionTaskPhoto {
+  id: string;
+  storageKey: string;
+  url: string;
+  originalFilename: string | null;
+  mimeType: string | null;
+  fileSizeBytes: number | null;
+  capturedAt: string | null;
+  uploadedAt: string;
+}
+
+export interface ServiceExecutionPhasePhoto extends ServiceExecutionTaskPhoto {
+  phase: PhotoPhase;
+  uploadedByName?: string | null;
+}
+
+export interface ServiceExecutionTaskItem {
+  workOrderTaskId: string;
+  nameSnapshot: string;
+  sortOrder: number;
+  requiresPhotoSnapshot: boolean;
+  allowsObservationSnapshot: boolean;
+  requiresRejectionReasonSnapshot: boolean;
+  zoneId: string | null;
+  subzoneId: string | null;
+  execution: {
+    id: string;
+    status: string;
+    executedById: string;
+    executedByName: string;
+    executedAt: string;
+    observation: string | null;
+    photoCount: number;
+    photos: ServiceExecutionTaskPhoto[];
+  } | null;
+}
+
+export interface WorkOrderDetail {
+  id: string;
+  type: string;
+  status: string;
+  title: string;
+  buildingId: string;
+  zoneId: string | null;
+  subzoneId: string | null;
+  scheduledDate: string | null;
+  scheduledTime: string | null;
+  completedAt?: string | null;
+  building?: {
+    id: string;
+    name: string;
+    buildingMode?: BuildingMode;
+    photoEvidenceMode?: PhotoEvidenceMode;
+  };
+  floor?: { id: string; name: string } | null;
+  zone?: { id: string; name: string } | null;
+  subzone?: { id: string; name: string } | null;
+  assignments: WorkOrderAssignmentItem[];
+  workOrderTasks?: Array<{
+    id: string;
+    nameSnapshot: string;
+    sortOrder: number;
+    requiresPhotoSnapshot: boolean;
+    allowsObservationSnapshot: boolean;
+  }>;
+  serviceExecutions?: Array<{
+    id: string;
+    status: string;
+    startedAt: string | null;
+    completedAt: string | null;
+    participants: Array<{
+      id: string;
+      userId: string;
+      joinedAt: string;
+      user?: { id: string; fullName: string };
+    }>;
+  }>;
+}
+
 export interface EventualCalendarReservation {
   id: string;
   buildingId: string;
