@@ -133,6 +133,23 @@ export class StorageService implements OnModuleInit {
     return fs.createReadStream(filePath);
   }
 
+  /** Lee un archivo desde R2/S3 o disco local (para PDFs y exportaciones). */
+  async readBuffer(key: string): Promise<Buffer | null> {
+    const fromObjectStorage = await this.getObjectBuffer(key);
+    if (fromObjectStorage) return fromObjectStorage;
+
+    if (this.objectStorage) return null;
+
+    const filePath = path.join(this.localUploadDir, key);
+    if (!fs.existsSync(filePath)) return null;
+    try {
+      return await fs.promises.readFile(filePath);
+    } catch (err) {
+      this.logger.warn(`readBuffer failed for key=${key}: ${String(err)}`);
+      return null;
+    }
+  }
+
   async delete(key: string): Promise<void> {
     if (this.objectStorage && this.s3Client) {
       await this.s3Client.send(

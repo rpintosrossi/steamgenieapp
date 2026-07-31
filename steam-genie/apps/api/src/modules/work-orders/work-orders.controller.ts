@@ -7,10 +7,12 @@ import {
   Body,
   Param,
   Query,
+  Res,
   UseGuards,
   ParseUUIDPipe,
   Request,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequiredRoles } from '../../common/decorators/required-roles.decorator';
@@ -58,6 +60,18 @@ export class WorkOrdersController {
   @RequiredRoles('admin')
   purgeAll(@Query('confirm') confirm?: string) {
     return this.workOrdersService.purgeAll(confirm ?? '');
+  }
+
+  @Get(':id/service-report')
+  @RequiredRoles('admin', 'manager')
+  async serviceReportPdf(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ) {
+    const { buffer, filename } = await this.workOrdersService.generateServiceReportPdf(id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
   }
 
   @Get(':id')

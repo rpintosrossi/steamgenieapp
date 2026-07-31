@@ -16,6 +16,14 @@ import type {
 } from '../lib/types';
 import { TaskPhotoThumb } from './TaskPhotoThumb';
 
+function buildServiceReportFilename(wo: WorkOrderDetail): string {
+  const dateKey =
+    formatStoredCalendarDate(wo.scheduledDate, 'en-CA') !== '—'
+      ? formatStoredCalendarDate(wo.scheduledDate, 'en-CA')
+      : wo.id.slice(0, 8);
+  return `resumen-servicio-${dateKey}.pdf`;
+}
+
 type Props = {
   workOrderId: string;
   onClose: () => void;
@@ -67,6 +75,8 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose }: Props) {
   const [phasePhotos, setPhasePhotos] = useState<ServiceExecutionPhasePhoto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,6 +115,22 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose }: Props) {
     void load();
   }, [load]);
 
+  async function handleDownloadPdf() {
+    if (!wo) return;
+    setDownloadingPdf(true);
+    setPdfError(null);
+    try {
+      await api.download(
+        `/work-orders/${workOrderId}/service-report`,
+        buildServiceReportFilename(wo),
+      );
+    } catch (e) {
+      setPdfError(e instanceof Error ? e.message : 'No se pudo descargar el PDF');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }
+
   const isBdaMode = resolvePhotoEvidenceMode(wo?.building) === 'BEFORE_DURING_AFTER';
   const showPhaseSection = isBdaMode || phasePhotos.length > 0;
   const se = wo?.serviceExecutions?.[0] ?? null;
@@ -121,10 +147,23 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose }: Props) {
       >
         <div className="modal-header">
           <h2 className="modal-title">Detalle del servicio</h2>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
-            Cerrar
-          </button>
+          <div className="table-row-actions">
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              disabled={loading || !wo || downloadingPdf}
+              onClick={() => void handleDownloadPdf()}
+              title="Descargar resumen PDF para el cliente"
+            >
+              {downloadingPdf ? 'Generando PDF…' : 'Descargar PDF'}
+            </button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
+              Cerrar
+            </button>
+          </div>
         </div>
+
+        {pdfError ? <div className="alert alert-error">{pdfError}</div> : null}
 
         {loading ? (
           <div className="loading-state">

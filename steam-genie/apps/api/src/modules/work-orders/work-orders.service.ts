@@ -7,10 +7,16 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PhotoEvidenceMode, PhotoPhase, WorkOrderStatus, WorkOrderType } from '@prisma/client';
-import { calendarDateFromInstant, endOfStoredCalendarDateInBusinessTz, TASK_CATEGORY_UNCATEGORIZED } from '@steam-genie/shared-constants';
+import {
+  calendarDateFromInstant,
+  endOfStoredCalendarDateInBusinessTz,
+  formatStoredCalendarDate,
+  TASK_CATEGORY_UNCATEGORIZED,
+} from '@steam-genie/shared-constants';
 import { snapshotEventualTasks } from '../../common/work-order-snapshot';
 import { resolvePhotoEvidenceMode } from '../../common/building-mode';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { StorageService } from '../../infrastructure/storage/storage.service';
 import { QueryWorkOrdersDto } from './dto/query-work-orders.dto';
 import { AssignWorkOrderDto } from './dto/assign-work-order.dto';
 import { RejectWorkOrderDto } from './dto/reject-work-order.dto';
@@ -19,7 +25,17 @@ import { CreateAdditionalRequestDto } from './dto/create-additional-request.dto'
 import { RescheduleWorkOrderDto } from './dto/reschedule-work-order.dto';
 import { WORK_ORDER_LIST_SELECT } from './work-order-list.select';
 import { NotificationsService } from '../notifications/notifications.service';
+import {
+  ServiceReportPdfService,
+  type ServiceReportPhoto,
+  type ServiceReportTask,
+} from './service-report-pdf.service';
 import type { AuthUser } from '@steam-genie/shared-types';
+
+const SERVICE_TYPE_LABELS: Record<string, string> = {
+  CHECKOUT_CLEANING: 'Limpieza checkout',
+  ADDITIONAL_REQUEST: 'Pedido adicional',
+};
 
 const EXTERNAL_VIEWER_ROLES = new Set(['client', 'provider']);
 const EXTERNAL_VIEWER_STATUSES: WorkOrderStatus[] = [
@@ -94,6 +110,8 @@ export class WorkOrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly storage: StorageService,
+    private readonly serviceReportPdf: ServiceReportPdfService,
   ) {}
 
   // ─── LIST ─────────────────────────────────────────────────────────────────
@@ -1397,6 +1415,221 @@ export class WorkOrdersService {
     });
   }
 
+  async generateServiceReportPdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
+    const wo = await this.prisma.workOrder.findFirst({
+      where: { id, deletedAt: null },
+      select: {
+        id: true,
+        title: true,
+        type: true,
+        scheduledDate: true,
+        scheduledTime: true,
+        startedAt: true,
+        completedAt: true,
+        building: {
+          select: {
+            id: true,
+            name: true,
+            buildingMode: true,
+            photoEvidenceMode: true,
+            particularClient: { select: { name: true } },
+          },
+        },
+        floor: { select: { name: true } },
+        zone: { select: { name: true } },
+        subzone: { select: { name: true } },
+        reservation: { select: { guestName: true } },
+        quote: {
+          select: {
+            particularClient: { select: { name: true } },
+            eventualClient: { select: { name: true } },
+            building: { select: { name: true } },
+          },
+        },
+        serviceExecutions: {
+          select: {
+            id: true,
+            startedAt: true,
+            completedAt: true,
+            participants: {
+              select: { user: { select: { fullName: true } } },
+            },
+          },
+          take: 1,
+          orderBy: { createdAt: 'desc' },
+        },
+        workOrderTasks: {
+          orderBy: { sortOrder: 'asc' },
+          select: {
+            id: true,
+            nameSnapshot: true,
+            taskExecutions: {
+              orderBy: { executedAt: 'desc' },
+              take: 1,
+              select: {
+                serviceExecutionId: true,
+                status: true,
+                observation: true,
+                executedAt: true,
+                executedBy: { select: { fullName: true } },
+                photos: {
+                  where: { deletedAt: null },
+                  orderBy: { createdAt: 'asc' },
+                  select: {
+                    storageKey: true,
+                    originalFilename: true,
+                    capturedAt: true,
+                    uploadedAt: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!wo) throw new NotFoundException('Work order not found');
+
+    const se = wo.serviceExecutions[0] ?? null;
+    const photoMode = resolvePhotoEvidenceMode(wo.building);
+
+    let phasePhotosRaw: Array<{
+      storageKey: string;
+      phase: PhotoPhase;
+      originalFilename: string | null;
+      capturedAt: Date | null;
+      uploadedAt: Date;
+      uploadedBy: { fullName: string } | null;
+    }> = [];
+
+    if (se && photoMode === PhotoEvidenceMode.BEFORE_DURING_AFTER) {
+      phasePhotosRaw = await this.prisma.serviceExecutionPhoto.findMany({
+        where: { serviceExecutionId: se.id, deletedAt: null },
+        orderBy: [{ phase: 'asc' }, { createdAt: 'asc' }],
+        select: {
+          storageKey: true,
+          phase: true,
+          originalFilename: true,
+          capturedAt: true,
+          uploadedAt: true,
+          uploadedBy: { select: { fullName: true } },
+        },
+      });
+    }
+
+    const loadPhoto = async (params: {
+      storageKey: string;
+      caption: string;
+      phase?: PhotoPhase;
+    }): Promise<ServiceReportPhoto | null> => {
+      const buffer = await this.storage.readBuffer(params.storageKey);
+      if (!buffer) return null;
+      return {
+        buffer,
+        caption: params.caption,
+        phase: params.phase,
+      };
+    };
+
+    const phasePhotos: ServiceReportPhoto[] = [];
+    for (const photo of phasePhotosRaw) {
+      const caption = [
+        PHASE_LABELS_REPORT[photo.phase] ?? photo.phase,
+        photo.uploadedBy?.fullName,
+        formatDateTimeEs(photo.capturedAt ?? photo.uploadedAt),
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      const loaded = await loadPhoto({
+        storageKey: photo.storageKey,
+        caption,
+        phase: photo.phase,
+      });
+      if (loaded) phasePhotos.push(loaded);
+    }
+
+    const tasks: ServiceReportTask[] = [];
+    for (const wot of wo.workOrderTasks) {
+      const exec =
+        wot.taskExecutions.find((item) => !se || item.serviceExecutionId === se.id) ??
+        wot.taskExecutions[0] ??
+        null;
+      const photos: ServiceReportPhoto[] = [];
+      if (photoMode === PhotoEvidenceMode.PER_TASK && exec) {
+        for (const photo of exec.photos) {
+          const caption = [
+            exec.executedBy.fullName,
+            formatDateTimeEs(photo.capturedAt ?? photo.uploadedAt),
+          ]
+            .filter(Boolean)
+            .join(' · ');
+          const loaded = await loadPhoto({
+            storageKey: photo.storageKey,
+            caption: caption || photo.originalFilename || 'Foto',
+          });
+          if (loaded) photos.push(loaded);
+        }
+      }
+
+      tasks.push({
+        name: wot.nameSnapshot,
+        status: exec?.status ?? null,
+        executedByName: exec?.executedBy.fullName ?? null,
+        executedAtLabel: exec ? formatDateTimeEs(exec.executedAt) : null,
+        observation: exec?.observation?.trim() || null,
+        photos,
+      });
+    }
+
+    const clientName = resolveServiceReportClientName(wo);
+    const locationParts = [
+      wo.building.name,
+      wo.floor?.name,
+      wo.zone?.name,
+      wo.subzone?.name,
+    ].filter(Boolean);
+
+    const workers = se?.participants.map((p) => p.user.fullName).filter(Boolean) ?? [];
+    const serviceDateLabel = wo.scheduledDate
+      ? [
+          formatStoredCalendarDate(wo.scheduledDate, 'es-AR'),
+          wo.scheduledTime ? formatTimeEs(wo.scheduledTime) : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      : '—';
+
+    const buffer = await this.serviceReportPdf.buildPdf({
+      title: wo.title,
+      serviceTypeLabel: SERVICE_TYPE_LABELS[wo.type] ?? wo.type,
+      reportDateLabel: formatDateEs(new Date()),
+      serviceDateLabel,
+      startedAtLabel: formatDateTimeEs(se?.startedAt ?? wo.startedAt),
+      completedAtLabel: formatDateTimeEs(se?.completedAt ?? wo.completedAt),
+      clientName,
+      locationLabel: locationParts.join(' · ') || '—',
+      workersLabel: workers.length > 0 ? workers.join(', ') : '—',
+      photoMode,
+      phasePhotos,
+      tasks,
+    });
+
+    const safeClient = clientName
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 40)
+      .toLowerCase();
+    const dateKey = wo.scheduledDate
+      ? formatStoredCalendarDate(wo.scheduledDate, 'en-CA')
+      : wo.id.slice(0, 8);
+    const filename = `resumen-servicio-${safeClient || 'cliente'}-${dateKey}.pdf`;
+
+    return { buffer, filename };
+  }
+
   private async findCategoriesUsedByEventualTasks(buildingId: string, zoneId: string) {
     const subzones = await this.prisma.subzone.findMany({
       where: { zoneId, buildingId, deletedAt: null },
@@ -1430,4 +1663,62 @@ export class WorkOrdersService {
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
   }
+}
+
+const PHASE_LABELS_REPORT: Record<string, string> = {
+  BEFORE: 'Antes',
+  DURING: 'Durante',
+  AFTER: 'Después',
+};
+
+function formatDateEs(value: Date | string | null | undefined): string {
+  if (!value) return '—';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleDateString('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
+function formatDateTimeEs(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatTimeEs(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleTimeString('es-AR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function resolveServiceReportClientName(wo: {
+  reservation: { guestName: string | null } | null;
+  building: { name: string; particularClient: { name: string } | null };
+  quote: {
+    particularClient: { name: string } | null;
+    eventualClient: { name: string } | null;
+    building: { name: string } | null;
+  } | null;
+}): string {
+  if (wo.quote?.particularClient?.name) return wo.quote.particularClient.name;
+  if (wo.quote?.eventualClient?.name) return wo.quote.eventualClient.name;
+  if (wo.building.particularClient?.name) return wo.building.particularClient.name;
+  if (wo.reservation?.guestName?.trim()) return wo.reservation.guestName.trim();
+  if (wo.quote?.building?.name) return wo.quote.building.name;
+  return wo.building.name;
 }
