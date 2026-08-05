@@ -129,6 +129,8 @@ export interface TaskItem {
   name: string;
   frequency: string;
   startDate: string;
+  /** Days of week for CUSTOM_WEEKDAYS (0=Sun … 6=Sat). */
+  weekdays?: number[];
   requiresPhoto: boolean;
   allowsObservation: boolean;
   requiresRejectionReason: boolean;

@@ -7,6 +7,11 @@ import {
   IsEnum,
   IsBoolean,
   IsDateString,
+  IsArray,
+  IsInt,
+  Min,
+  Max,
+  ArrayUnique,
 } from 'class-validator';
 import { TaskFrequency } from '@prisma/client';
 
@@ -36,6 +41,15 @@ export class CreateTaskDto {
   @IsOptional()
   @IsDateString()
   startDate?: string;
+
+  /** Days of week for CUSTOM_WEEKDAYS (0=Sun … 6=Sat). Ignored for other frequencies. */
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  @Max(6, { each: true })
+  weekdays?: number[];
 
   @IsOptional()
   @IsBoolean()

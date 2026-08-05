@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { TASK_FREQUENCIES } from '@steam-genie/shared-constants';
 import { LocationPicker } from './LocationPicker';
 import { TaskCustomFieldsDraftEditor } from './TaskCustomFieldsDraftEditor';
+import { WeekdayPicker } from './WeekdayPicker';
 import { api } from '../lib/api-client';
 import { TASK_FREQUENCY_LABELS } from '../lib/labels';
 import {
@@ -32,6 +33,7 @@ export function CreateTaskModal({ buildings, onClose, onCreated }: CreateTaskMod
   });
   const [name, setName] = useState('');
   const [frequency, setFrequency] = useState<string>(TASK_FREQUENCIES.EVENTUAL);
+  const [weekdays, setWeekdays] = useState<number[]>([]);
   const [categoryId, setCategoryId] = useState('');
   const [categories, setCategories] = useState<TaskCategoryItem[]>([]);
   const [requiresPhoto, setRequiresPhoto] = useState(false);
@@ -62,6 +64,11 @@ export function CreateTaskModal({ buildings, onClose, onCreated }: CreateTaskMod
       return;
     }
 
+    if (frequency === TASK_FREQUENCIES.CUSTOM_WEEKDAYS && weekdays.length === 0) {
+      setError('Seleccioná al menos un día de la semana.');
+      return;
+    }
+
     for (const field of customFields) {
       const validationError = validateCustomFieldDraft(field);
       if (validationError) {
@@ -83,6 +90,7 @@ export function CreateTaskModal({ buildings, onClose, onCreated }: CreateTaskMod
           : {}),
         name: name.trim(),
         frequency,
+        ...(frequency === TASK_FREQUENCIES.CUSTOM_WEEKDAYS ? { weekdays } : {}),
         requiresPhoto,
         allowsObservation,
         requiresRejectionReason,
@@ -149,6 +157,7 @@ export function CreateTaskModal({ buildings, onClose, onCreated }: CreateTaskMod
                     const next = e.target.value;
                     setFrequency(next);
                     if (next !== TASK_FREQUENCIES.EVENTUAL) setCategoryId('');
+                    if (next !== TASK_FREQUENCIES.CUSTOM_WEEKDAYS) setWeekdays([]);
                   }}
                 >
                   {Object.values(TASK_FREQUENCIES).map((f) => (
@@ -159,6 +168,10 @@ export function CreateTaskModal({ buildings, onClose, onCreated }: CreateTaskMod
                 </select>
               </div>
             </div>
+
+            {frequency === TASK_FREQUENCIES.CUSTOM_WEEKDAYS ? (
+              <WeekdayPicker value={weekdays} onChange={setWeekdays} />
+            ) : null}
 
             {frequency === TASK_FREQUENCIES.EVENTUAL ? (
               <div className="form-field">

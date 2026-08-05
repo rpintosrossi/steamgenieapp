@@ -23,6 +23,7 @@ const FREQ_LABELS: Record<string, string> = {
   QUARTERLY: 'Trimestral',
   BIANNUAL: 'Semestral',
   ANNUAL: 'Anual',
+  CUSTOM_WEEKDAYS: 'Días específicos',
   EVENTUAL: 'Eventual',
 };
 

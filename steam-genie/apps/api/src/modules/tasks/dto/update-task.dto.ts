@@ -7,6 +7,11 @@ import {
   IsBoolean,
   IsISO8601,
   ValidateIf,
+  IsArray,
+  IsInt,
+  Min,
+  Max,
+  ArrayUnique,
 } from 'class-validator';
 
 export class UpdateTaskDto {
@@ -33,6 +38,15 @@ export class UpdateTaskDto {
   @ValidateIf((_, value) => value !== null)
   @IsUUID()
   categoryId?: string | null;
+
+  /** Days of week for CUSTOM_WEEKDAYS (0=Sun … 6=Sat). Only valid for that frequency. */
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  @Max(6, { each: true })
+  weekdays?: number[];
 
   @IsOptional()
   @IsBoolean()

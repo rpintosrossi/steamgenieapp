@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { TASK_FREQUENCIES } from '@steam-genie/shared-constants';
 import { LocationPicker } from './LocationPicker';
 import { TaskCustomFieldsEditor } from './TaskCustomFieldsEditor';
+import { WeekdayPicker } from './WeekdayPicker';
 import type { TaskCustomField } from '../lib/task-custom-fields';
 import { api } from '../lib/api-client';
 import { TASK_FREQUENCY_LABELS } from '../lib/labels';
@@ -30,6 +31,7 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
   });
   const [name, setName] = useState('');
   const [frequency, setFrequency] = useState<string>(TASK_FREQUENCIES.EVENTUAL);
+  const [weekdays, setWeekdays] = useState<number[]>([]);
   const [categoryId, setCategoryId] = useState('');
   const [categories, setCategories] = useState<TaskCategoryItem[]>([]);
   const [requiresPhoto, setRequiresPhoto] = useState(false);
@@ -55,6 +57,7 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
         setTask(data);
         setName(data.name);
         setFrequency(data.frequency);
+        setWeekdays(data.weekdays ?? []);
         setCategoryId(data.categoryId ?? '');
         setRequiresPhoto(data.requiresPhoto);
         setAllowsObservation(data.allowsObservation);
@@ -89,6 +92,11 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
       return;
     }
 
+    if (frequency === TASK_FREQUENCIES.CUSTOM_WEEKDAYS && weekdays.length === 0) {
+      setError('Seleccioná al menos un día de la semana.');
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -100,6 +108,7 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
         ...(frequency === TASK_FREQUENCIES.EVENTUAL
           ? { categoryId: categoryId || null }
           : {}),
+        ...(frequency === TASK_FREQUENCIES.CUSTOM_WEEKDAYS ? { weekdays } : {}),
         requiresPhoto,
         allowsObservation,
         requiresRejectionReason,
@@ -157,6 +166,10 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
                   </p>
                 </div>
               </div>
+
+              {frequency === TASK_FREQUENCIES.CUSTOM_WEEKDAYS ? (
+                <WeekdayPicker value={weekdays} onChange={setWeekdays} />
+              ) : null}
 
               {frequency === TASK_FREQUENCIES.EVENTUAL ? (
                 <div className="form-field">

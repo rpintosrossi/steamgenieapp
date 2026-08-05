@@ -71,6 +71,7 @@ const TASK_SELECT = {
   name: true,
   frequency: true,
   startDate: true,
+  weekdays: true,
   requiresPhoto: true,
   allowsObservation: true,
   requiresRejectionReason: true,
@@ -247,6 +248,8 @@ export class TasksService {
       await this.assertCategoryExists(categoryId);
     }
 
+    const weekdays = this.resolveWeekdays(dto.frequency, dto.weekdays);
+
     return this.prisma.task.create({
       data: {
         buildingId: dto.buildingId,
@@ -256,6 +259,7 @@ export class TasksService {
         name: dto.name,
         frequency: dto.frequency,
         startDate: startOfDay(dto.startDate),
+        weekdays,
         requiresPhoto: dto.requiresPhoto ?? false,
         allowsObservation: dto.allowsObservation ?? false,
         requiresRejectionReason: dto.requiresRejectionReason ?? false,
@@ -301,6 +305,9 @@ export class TasksService {
     if (dto.allowsObservation !== undefined) data.allowsObservation = dto.allowsObservation;
     if (dto.requiresRejectionReason !== undefined) data.requiresRejectionReason = dto.requiresRejectionReason;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    if (dto.weekdays !== undefined) {
+      data.weekdays = this.resolveWeekdays(existing.frequency, dto.weekdays);
+    }
 
     return this.prisma.task.update({ where: { id }, data, select: TASK_SELECT });
   }
@@ -622,7 +629,7 @@ export class TasksService {
 
     // Filter tasks that are actually due today based on frequency
     const dueTasks = tasks.filter((t) =>
-      this.isTaskDueToday(t.frequency, t.startDate, todayDate),
+      this.isTaskDueToday(t.frequency, t.startDate, todayDate, t.weekdays),
     );
 
     const instances = await this.loadPeriodicInstances(dueTasks, todayDate, {
@@ -1150,7 +1157,30 @@ export class TasksService {
     }
   }
 
-  private isTaskDueToday(frequency: TaskFrequency, startDate: Date, today: Date): boolean {
+  private resolveWeekdays(frequency: TaskFrequency, weekdays?: number[]): number[] {
+    if (frequency === TaskFrequency.CUSTOM_WEEKDAYS) {
+      const unique = [...new Set(weekdays ?? [])].sort((a, b) => a - b);
+      if (unique.length === 0) {
+        throw new BadRequestException(
+          'Seleccioná al menos un día de la semana para la frecuencia Días específicos.',
+        );
+      }
+      return unique;
+    }
+    if (weekdays !== undefined && weekdays.length > 0) {
+      throw new BadRequestException(
+        'Los días de la semana solo aplican a la frecuencia Días específicos.',
+      );
+    }
+    return [];
+  }
+
+  private isTaskDueToday(
+    frequency: TaskFrequency,
+    startDate: Date,
+    today: Date,
+    weekdays: number[] = [],
+  ): boolean {
     const start = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate()));
     if (today < start) return false;
 
@@ -1162,6 +1192,9 @@ export class TasksService {
 
       case TaskFrequency.MON_FRI:
         return dayOfWeek >= 1 && dayOfWeek <= 5;
+
+      case TaskFrequency.CUSTOM_WEEKDAYS:
+        return weekdays.includes(dayOfWeek);
 
       case TaskFrequency.WEEKLY: {
         const startDay = start.getUTCDay();
@@ -1195,6 +1228,7 @@ export class TasksService {
     switch (frequency) {
       case TaskFrequency.DAILY:
       case TaskFrequency.MON_FRI:
+      case TaskFrequency.CUSTOM_WEEKDAYS:
         return `${y}-${m}-${d}`;
 
       case TaskFrequency.WEEKLY: {
@@ -1236,7 +1270,8 @@ export class TasksService {
 
     switch (frequency) {
       case TaskFrequency.DAILY:
-      case TaskFrequency.MON_FRI: {
+      case TaskFrequency.MON_FRI:
+      case TaskFrequency.CUSTOM_WEEKDAYS: {
         const day = new Date(Date.UTC(y, m, d));
         return { start: day, end: day };
       }

@@ -1,0 +1,5 @@
+-- AlterEnum
+ALTER TYPE "TaskFrequency" ADD VALUE 'CUSTOM_WEEKDAYS';
+
+-- AlterTable
+ALTER TABLE "tasks" ADD COLUMN "weekdays" INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[];

@@ -41,6 +41,7 @@ const FREQUENCY_LABELS: Record<string, string> = {
   QUARTERLY: 'Trimestral',
   BIANNUAL: 'Semestral',
   ANNUAL: 'Anual',
+  CUSTOM_WEEKDAYS: 'Días específicos',
 };
 
 export function frequencyLabel(code: string): string {

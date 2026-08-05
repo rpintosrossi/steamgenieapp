@@ -13,6 +13,7 @@ export const TASK_FREQUENCIES = {
   QUARTERLY: 'QUARTERLY',
   BIANNUAL: 'BIANNUAL',
   ANNUAL: 'ANNUAL',
+  CUSTOM_WEEKDAYS: 'CUSTOM_WEEKDAYS',
 } as const;
 
 export type TaskFrequency = (typeof TASK_FREQUENCIES)[keyof typeof TASK_FREQUENCIES];
