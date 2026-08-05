@@ -72,7 +72,7 @@ type QuoteFormProps = {
 
 export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
   const router = useRouter();
-  const itemsLocked = Boolean(initialQuote?.workOrderId);
+  const itemsLocked = Boolean(initialQuote?.workOrders?.length);
   const [clientKind, setClientKind] = useState<ClientKind>(
     initialQuote ? clientKindFromQuote(initialQuote) : 'particular',
   );

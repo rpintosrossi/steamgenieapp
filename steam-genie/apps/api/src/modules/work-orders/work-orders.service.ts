@@ -210,7 +210,10 @@ export class WorkOrdersService {
 
   // ─── CREATE CHECKOUT CLEANING (manual, sin reserva) ───────────────────────
 
-  async createCheckoutCleaning(dto: CreateCheckoutCleaningDto, createdById: string) {
+  async createCheckoutCleaning(
+    dto: CreateCheckoutCleaningDto & { quoteId?: string },
+    createdById: string,
+  ) {
     const scheduledAt = new Date(dto.scheduledAt);
     if (Number.isNaN(scheduledAt.getTime())) {
       throw new BadRequestException('scheduledAt is invalid');
@@ -285,6 +288,7 @@ export class WorkOrdersService {
           scheduledTime: scheduledAt,
           deadlineAt,
           status: WorkOrderStatus.UNASSIGNED,
+          quoteId: dto.quoteId ?? null,
           createdById,
         },
       });
@@ -317,6 +321,7 @@ export class WorkOrdersService {
       title: string;
       description?: string | null;
       clientAmountCharged?: number | string | null;
+      quoteId?: string | null;
     },
     createdById: string,
   ) {
@@ -344,6 +349,7 @@ export class WorkOrdersService {
         deadlineAt: null,
         status: WorkOrderStatus.QUOTE_ACCEPTED,
         clientAmountCharged: dto.clientAmountCharged ?? null,
+        quoteId: dto.quoteId ?? null,
         createdById,
       },
     });
@@ -737,7 +743,7 @@ export class WorkOrdersService {
   // ─── REJECT ───────────────────────────────────────────────────────────────
 
   async reject(id: string, dto: RejectWorkOrderDto, user: AuthUser) {
-    await this.assertWorkOrderExists(id);
+    const wo = await this.assertWorkOrderExists(id);
 
     const assignment = await this.prisma.workOrderAssignment.findFirst({
       where: { workOrderId: id, userId: user.id, status: 'PENDING' },
@@ -773,14 +779,10 @@ export class WorkOrdersService {
       where: { workOrderId: id, status: { in: ['PENDING', 'ACCEPTED'] } },
     });
     if (remaining === 0) {
-      const linkedQuote = await this.prisma.quote.findFirst({
-        where: { workOrderId: id, deletedAt: null },
-        select: { id: true },
-      });
       await this.prisma.workOrder.update({
         where: { id },
         data: {
-          status: linkedQuote
+          status: wo.quoteId
             ? WorkOrderStatus.QUOTE_ACCEPTED
             : WorkOrderStatus.UNASSIGNED,
         },
@@ -1241,6 +1243,7 @@ export class WorkOrdersService {
         buildingId: true,
         scheduledDate: true,
         deadlineAt: true,
+        quoteId: true,
       },
     });
     if (!wo) throw new NotFoundException('Work order not found');

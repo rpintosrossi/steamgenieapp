@@ -633,7 +633,6 @@ export interface Quote {
   vatRate: string | number;
   vatAmount: string | number;
   total: string | number;
-  workOrderId?: string | null;
   createdAt: string;
   updatedAt: string;
   items: QuoteItem[];
@@ -643,12 +642,13 @@ export interface Quote {
   > | null;
   building?: Pick<Building, 'id' | 'name' | 'taxId' | 'address' | 'city' | 'province'> | null;
   eventualClient?: Pick<EventualClientItem, 'id' | 'name' | 'taxId' | 'address'> | null;
-  workOrder?: {
+  workOrders?: Array<{
     id: string;
     title: string;
     status: string;
     scheduledDate?: string | null;
-  } | null;
+    scheduledTime?: string | null;
+  }>;
   createdBy?: { id: string; fullName: string };
 }
 

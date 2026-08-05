@@ -54,7 +54,9 @@ export default function QuoteDetailPage() {
   const [savingContact, setSavingContact] = useState(false);
   const [sharing, setSharing] = useState<'whatsapp' | 'email' | null>(null);
   const [convertOpen, setConvertOpen] = useState(false);
-  const [scheduledAt, setScheduledAt] = useState('');
+  const [serviceTime, setServiceTime] = useState('09:00');
+  const [dateToAdd, setDateToAdd] = useState('');
+  const [selectedDates, setSelectedDates] = useState<string[]>([]);
   const [converting, setConverting] = useState(false);
   const [clientMatches, setClientMatches] = useState<
     Array<{
@@ -212,9 +214,36 @@ export default function QuoteDetailPage() {
     }
   }
 
+  function addSelectedDate() {
+    const day = dateToAdd.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      setError('Elegí una fecha válida para agregar.');
+      return;
+    }
+    if (selectedDates.includes(day)) {
+      setError('Esa fecha ya está en la lista.');
+      return;
+    }
+    setError(null);
+    setSelectedDates((prev) => [...prev, day].sort());
+    setDateToAdd('');
+  }
+
+  function removeSelectedDate(day: string) {
+    setSelectedDates((prev) => prev.filter((d) => d !== day));
+  }
+
   async function handleConvert(e: FormEvent) {
     e.preventDefault();
-    if (!quote || !scheduledAt) return;
+    if (!quote) return;
+    if (selectedDates.length === 0) {
+      setError('Agregá al menos una fecha de servicio.');
+      return;
+    }
+    if (!serviceTime) {
+      setError('Indicá la hora del servicio.');
+      return;
+    }
     if (
       quote.eventualClient &&
       clientMatches.length > 0 &&
@@ -229,8 +258,19 @@ export default function QuoteDetailPage() {
     setError(null);
     setSuccess(null);
     try {
-      const iso = new Date(scheduledAt).toISOString();
-      const body: Record<string, string> = { scheduledAt: iso };
+      const scheduledAts = selectedDates.map((day) => {
+        const local = new Date(`${day}T${serviceTime}:00`);
+        if (Number.isNaN(local.getTime())) {
+          throw new Error(`Fecha/hora inválida: ${day} ${serviceTime}`);
+        }
+        return local.toISOString();
+      });
+
+      const body: {
+        scheduledAts: string[];
+        particularClientAction?: string;
+        particularClientId?: string;
+      } = { scheduledAts };
       if (quote.eventualClient && clientMatches.length > 0) {
         body.particularClientAction = particularAction;
         if (particularAction === 'USE_EXISTING') {
@@ -240,15 +280,19 @@ export default function QuoteDetailPage() {
 
       const result = await api.post<{
         quote: Quote;
+        workOrders: Array<{ id: string }>;
         workOrder: { id: string };
         warning?: string;
       }>(`/quotes/${quote.id}/convert-to-work-order`, body);
       setQuote(result.quote);
       setConvertOpen(false);
+      const count = result.workOrders?.length ?? 1;
       setSuccess(
         result.warning
-          ? `Servicio creado. ${result.warning}`
-          : 'Servicio eventual creado desde el presupuesto.',
+          ? result.warning
+          : count > 1
+            ? `Se crearon ${count} servicios eventuales desde el presupuesto.`
+            : 'Servicio eventual creado desde el presupuesto.',
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo crear el servicio');
@@ -261,6 +305,9 @@ export default function QuoteDetailPage() {
     if (!quote) return;
     setConvertOpen(true);
     setError(null);
+    setServiceTime('09:00');
+    setDateToAdd('');
+    setSelectedDates([]);
     setClientMatches([]);
     setParticularAction('CREATE_NEW');
     setSelectedParticularId('');
@@ -309,7 +356,8 @@ export default function QuoteDetailPage() {
     );
   }
 
-  const canConvert = quote.status === 'ACEPTADO' && !quote.workOrderId;
+  const linkedWorkOrders = quote.workOrders ?? [];
+  const canConvert = quote.status === 'ACEPTADO' && linkedWorkOrders.length === 0;
 
   return (
     <>
@@ -438,12 +486,14 @@ export default function QuoteDetailPage() {
           >
             {savingStatus ? 'Guardando…' : 'Actualizar condición'}
           </button>
-          {quote.workOrder ? (
+          {linkedWorkOrders.length > 0 ? (
             <Link
               href="/trabajos-eventuales/servicios"
               className="btn btn-ghost"
             >
-              Ver servicio asociado
+              {linkedWorkOrders.length === 1
+                ? 'Ver servicio asociado'
+                : `Ver ${linkedWorkOrders.length} servicios asociados`}
             </Link>
           ) : null}
         </div>
@@ -499,6 +549,22 @@ export default function QuoteDetailPage() {
         </div>
       </div>
 
+      {linkedWorkOrders.length > 0 ? (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <h2 className="card-title" style={{ marginTop: 0 }}>
+            Servicios asociados ({linkedWorkOrders.length})
+          </h2>
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {linkedWorkOrders.map((wo) => (
+              <li key={wo.id}>
+                {wo.title}
+                {wo.scheduledDate ? ` · ${formatDate(wo.scheduledDate)}` : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       <div className="card">
         <h2 className="card-title" style={{ marginTop: 0 }}>
           Ítems
@@ -551,21 +617,93 @@ export default function QuoteDetailPage() {
             </div>
             <p className="muted">
               {quote.eventualClient
-                ? 'Se crea un cliente particular (si corresponde) y un servicio en estado Presupuesto aceptado. El checklist se define al asignar el limpiador.'
-                : 'Se crea un trabajo eventual en el sitio del cliente/edificio, con monto y descripción del presupuesto.'}
+                ? 'Se crea un cliente particular (si corresponde) y un servicio por cada día elegido, en estado Presupuesto aceptado. El checklist se define al asignar el limpiador.'
+                : 'Se crea un trabajo eventual por cada día elegido en el sitio del cliente/edificio, con monto y descripción del presupuesto.'}
             </p>
             <form onSubmit={handleConvert} className="stack">
               <div className="form-field">
-                <label htmlFor="q-scheduled">Fecha y hora del servicio *</label>
+                <label htmlFor="q-time">Hora del servicio *</label>
                 <input
-                  id="q-scheduled"
+                  id="q-time"
                   className="input"
-                  type="datetime-local"
-                  value={scheduledAt}
-                  onChange={(e) => setScheduledAt(e.target.value)}
+                  type="time"
+                  value={serviceTime}
+                  onChange={(e) => setServiceTime(e.target.value)}
                   required
                 />
+                <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                  Se aplica la misma hora a todos los días.
+                </p>
               </div>
+
+              <div className="form-field">
+                <label htmlFor="q-date-add">Días de servicio *</label>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <input
+                    id="q-date-add"
+                    className="input"
+                    type="date"
+                    value={dateToAdd}
+                    onChange={(e) => setDateToAdd(e.target.value)}
+                    style={{ flex: '1 1 160px' }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={addSelectedDate}
+                    disabled={!dateToAdd}
+                  >
+                    Agregar día
+                  </button>
+                </div>
+                <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                  Podés agregar varios días sueltos (ej. martes y jueves de esta semana y la próxima).
+                </p>
+              </div>
+
+              {selectedDates.length > 0 ? (
+                <ul
+                  style={{
+                    listStyle: 'none',
+                    margin: 0,
+                    padding: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                  }}
+                >
+                  {selectedDates.map((day) => (
+                    <li
+                      key={day}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        padding: '6px 10px',
+                        border: '1px solid var(--border, #e5e7eb)',
+                        borderRadius: 6,
+                      }}
+                    >
+                      <span>
+                        {formatDate(day)}
+                        {serviceTime ? ` · ${serviceTime}` : ''}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => removeSelectedDate(day)}
+                      >
+                        Quitar
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="muted" style={{ margin: 0 }}>
+                  Todavía no hay días cargados.
+                </p>
+              )}
 
               {quote.eventualClient ? (
                 <div className="stack" style={{ gap: 8 }}>
@@ -651,9 +789,13 @@ export default function QuoteDetailPage() {
                 <button
                   type="submit"
                   className="btn btn-primary"
-                  disabled={converting || loadingMatches}
+                  disabled={converting || loadingMatches || selectedDates.length === 0}
                 >
-                  {converting ? 'Creando…' : 'Crear servicio'}
+                  {converting
+                    ? 'Creando…'
+                    : selectedDates.length > 1
+                      ? `Crear ${selectedDates.length} servicios`
+                      : 'Crear servicio'}
                 </button>
               </div>
             </form>

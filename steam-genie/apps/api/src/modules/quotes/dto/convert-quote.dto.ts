@@ -1,4 +1,5 @@
 import {
+  ArrayMinSize,
   IsArray,
   IsEnum,
   IsISO8601,
@@ -15,8 +16,14 @@ export enum ParticularClientAction {
 }
 
 export class ConvertQuoteDto {
-  @IsISO8601()
-  scheduledAt!: string;
+  /**
+   * Una o más fechas/horas ISO del servicio.
+   * Cada entrada genera un WorkOrder (útil para trabajos multi-día no consecutivos).
+   */
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsISO8601({}, { each: true })
+  scheduledAts!: string[];
 
   @IsOptional()
   @IsUUID()

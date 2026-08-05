@@ -5,7 +5,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { BuildingMode, Prisma, QuoteStatus } from '@prisma/client';
-import { QUOTE_STATUS_LABELS, QUOTE_VAT_RATE, QUOTE_DEFAULT_SERVICE_INCLUDES } from '@steam-genie/shared-constants';
+import {
+  QUOTE_STATUS_LABELS,
+  QUOTE_VAT_RATE,
+  QUOTE_DEFAULT_SERVICE_INCLUDES,
+  calendarDateKeyInBusinessTz,
+} from '@steam-genie/shared-constants';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { WorkOrdersService } from '../work-orders/work-orders.service';
 import { CreateQuoteDto } from './dto/create-quote.dto';
@@ -47,12 +52,15 @@ const QUOTE_INCLUDE = {
       address: true,
     },
   },
-  workOrder: {
+  workOrders: {
+    where: { deletedAt: null },
+    orderBy: { scheduledDate: 'asc' as const },
     select: {
       id: true,
       title: true,
       status: true,
       scheduledDate: true,
+      scheduledTime: true,
     },
   },
   createdBy: {
@@ -205,7 +213,7 @@ export class QuotesService {
   async update(id: string, dto: UpdateQuoteDto) {
     const existing = await this.assertExists(id);
 
-    if (existing.workOrderId && dto.items) {
+    if (existing.workOrders.length > 0 && dto.items) {
       throw new BadRequestException(
         'No se pueden editar los ítems de un presupuesto ya convertido a servicio.',
       );
@@ -442,13 +450,15 @@ export class QuotesService {
     if (quote.status !== QuoteStatus.ACEPTADO) {
       throw new BadRequestException('Solo se pueden convertir presupuestos Aceptados.');
     }
-    if (quote.workOrderId) {
-      throw new ConflictException('Este presupuesto ya tiene un servicio eventual asociado.');
+    if (quote.workOrders.length > 0) {
+      throw new ConflictException('Este presupuesto ya tiene servicios eventuales asociados.');
     }
+
+    const scheduledAts = this.normalizeScheduledAts(dto.scheduledAts);
 
     // ── Cliente eventual → particular + servicio QUOTE_ACCEPTED ──────────────
     if (quote.eventualClient) {
-      return this.convertEventualQuoteToWorkOrder(quote, dto, createdById);
+      return this.convertEventualQuoteToWorkOrder(quote, dto, createdById, scheduledAts);
     }
 
     const siteBuildingId =
@@ -463,7 +473,7 @@ export class QuotesService {
       dto.zoneId,
     );
 
-    const title =
+    const baseTitle =
       dto.title?.trim() ||
       quote.serviceType?.trim() ||
       `Presupuesto ${String(quote.number).padStart(8, '0')}`;
@@ -473,38 +483,64 @@ export class QuotesService {
       quote.clientDetails?.trim(),
       quote.items.map((i) => `${i.quantity} × ${i.description}`).join('\n'),
       `Origen: presupuesto ${String(quote.number).padStart(8, '0')}`,
+      scheduledAts.length > 1
+        ? `Servicio multi-día (${scheduledAts.length} visitas). Monto del presupuesto cargado en la primera visita.`
+        : null,
     ].filter(Boolean);
 
-    const result = await this.workOrdersService.createCheckoutCleaning(
-      {
-        buildingId: siteBuildingId,
-        floorId: hierarchy.floorId,
-        zoneId: hierarchy.zoneId,
-        scheduledAt: dto.scheduledAt,
-        title,
-        description: descriptionParts.join('\n\n'),
-      },
-      createdById,
-    );
+    const description = descriptionParts.join('\n\n');
+    const workOrders = [];
+    let warning: string | undefined;
 
-    await this.prisma.workOrder.update({
-      where: { id: result.workOrder.id },
-      data: { clientAmountCharged: quote.total },
-    });
+    for (let i = 0; i < scheduledAts.length; i++) {
+      const scheduledAt = scheduledAts[i];
+      const title =
+        scheduledAts.length > 1
+          ? `${baseTitle} · ${formatVisitLabel(scheduledAt)}`
+          : baseTitle;
 
-    const updated = await this.prisma.quote.update({
+      const result = await this.workOrdersService.createCheckoutCleaning(
+        {
+          buildingId: siteBuildingId,
+          floorId: hierarchy.floorId,
+          zoneId: hierarchy.zoneId,
+          scheduledAt,
+          title,
+          description,
+          quoteId: quote.id,
+        },
+        createdById,
+      );
+
+      if (i === 0) {
+        await this.prisma.workOrder.update({
+          where: { id: result.workOrder.id },
+          data: { clientAmountCharged: quote.total },
+        });
+        warning = result.warning;
+      }
+
+      workOrders.push(result.workOrder);
+    }
+
+    const updated = await this.prisma.quote.findFirstOrThrow({
       where: { id },
-      data: {
-        workOrderId: result.workOrder.id,
-        status: QuoteStatus.ACEPTADO,
-      },
       include: QUOTE_INCLUDE,
     });
 
     return {
       quote: updated,
-      workOrder: result.workOrder,
-      warning: result.warning,
+      workOrders,
+      workOrder: workOrders[0],
+      warning:
+        scheduledAts.length > 1
+          ? [
+              `Se crearon ${scheduledAts.length} servicios (uno por día).`,
+              warning,
+            ]
+              .filter(Boolean)
+              .join(' ')
+          : warning,
     };
   }
 
@@ -512,6 +548,7 @@ export class QuotesService {
     quote: Awaited<ReturnType<QuotesService['assertExists']>>,
     dto: ConvertQuoteDto,
     createdById: string,
+    scheduledAts: string[],
   ) {
     const eventual = quote.eventualClient!;
     const address = eventual.address?.trim() || null;
@@ -566,7 +603,7 @@ export class QuotesService {
       dto.zoneId,
     );
 
-    const title =
+    const baseTitle =
       dto.title?.trim() ||
       quote.serviceType?.trim() ||
       `Presupuesto ${String(quote.number).padStart(8, '0')}`;
@@ -577,36 +614,83 @@ export class QuotesService {
       quote.items.map((i) => `${i.quantity} × ${i.description}`).join('\n'),
       `Origen: presupuesto ${String(quote.number).padStart(8, '0')}`,
       `Cliente eventual: ${eventual.name}${address ? ` · ${address}` : ''}`,
+      scheduledAts.length > 1
+        ? `Servicio multi-día (${scheduledAts.length} visitas). Monto del presupuesto cargado en la primera visita.`
+        : null,
     ].filter(Boolean);
 
-    const result = await this.workOrdersService.createQuoteAcceptedService(
-      {
-        buildingId: siteBuildingId,
-        floorId: hierarchy.floorId,
-        zoneId: hierarchy.zoneId,
-        scheduledAt: dto.scheduledAt,
-        title,
-        description: descriptionParts.join('\n\n'),
-        clientAmountCharged: toNumber(quote.total),
-      },
-      createdById,
-    );
+    const description = descriptionParts.join('\n\n');
+    const workOrders = [];
 
-    const updated = await this.prisma.quote.update({
+    for (let i = 0; i < scheduledAts.length; i++) {
+      const scheduledAt = scheduledAts[i];
+      const title =
+        scheduledAts.length > 1
+          ? `${baseTitle} · ${formatVisitLabel(scheduledAt)}`
+          : baseTitle;
+
+      const result = await this.workOrdersService.createQuoteAcceptedService(
+        {
+          buildingId: siteBuildingId,
+          floorId: hierarchy.floorId,
+          zoneId: hierarchy.zoneId,
+          scheduledAt,
+          title,
+          description,
+          clientAmountCharged: i === 0 ? toNumber(quote.total) : null,
+          quoteId: quote.id,
+        },
+        createdById,
+      );
+      workOrders.push(result.workOrder);
+    }
+
+    const updated = await this.prisma.quote.findFirstOrThrow({
       where: { id: quote.id },
-      data: {
-        workOrderId: result.workOrder.id,
-        status: QuoteStatus.ACEPTADO,
-      },
       include: QUOTE_INCLUDE,
     });
 
     return {
       quote: updated,
-      workOrder: result.workOrder,
+      workOrders,
+      workOrder: workOrders[0],
       warning:
-        'Servicio en estado Presupuesto aceptado. Al asignar el limpiador deberás definir el checklist de tareas.',
+        scheduledAts.length > 1
+          ? `Se crearon ${scheduledAts.length} servicios en estado Presupuesto aceptado (uno por día). Al asignar cada uno deberás definir el checklist de tareas.`
+          : 'Servicio en estado Presupuesto aceptado. Al asignar el limpiador deberás definir el checklist de tareas.',
     };
+  }
+
+  /** Valida, ordena y deduplica por día de calendario (TZ negocio). */
+  private normalizeScheduledAts(raw: string[]): string[] {
+    if (!raw?.length) {
+      throw new BadRequestException('Indicá al menos una fecha/hora de servicio.');
+    }
+
+    const parsed = raw.map((value) => {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        throw new BadRequestException(`Fecha/hora inválida: ${value}`);
+      }
+      return date;
+    });
+
+    parsed.sort((a, b) => a.getTime() - b.getTime());
+
+    const seen = new Set<string>();
+    const unique: string[] = [];
+    for (const date of parsed) {
+      const key = calendarDateKeyInBusinessTz(date);
+      if (seen.has(key)) {
+        throw new BadRequestException(
+          `Hay fechas duplicadas para el mismo día (${key}). Cada visita debe ser en un día distinto.`,
+        );
+      }
+      seen.add(key);
+      unique.push(date.toISOString());
+    }
+
+    return unique;
   }
 
   private async findParticularClientsByAddress(address: string) {
@@ -864,6 +948,13 @@ function normalizeAddress(value: string): string {
 
 function formatDate(value: Date): string {
   return value.toISOString().slice(0, 10).split('-').reverse().join('/');
+}
+
+/** Etiqueta corta dd/mm para títulos de visitas multi-día. */
+function formatVisitLabel(iso: string): string {
+  const key = calendarDateKeyInBusinessTz(new Date(iso));
+  const [, m, d] = key.split('-');
+  return `${d}/${m}`;
 }
 
 function toNumber(value: Prisma.Decimal | number): number {
