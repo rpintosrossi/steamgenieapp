@@ -311,11 +311,11 @@ export class ServiceReportPdfService {
     contentWidth: number,
     ensureSpace: (needed: number) => void,
   ) {
-    const gap = 10;
-    const cols = 2;
-    const cellW = (contentWidth - gap) / cols;
-    const cellH = 150;
-    const captionH = 18;
+    const gap = 14;
+    const cols = 1;
+    const cellW = contentWidth;
+    const cellH = 320;
+    const captionH = 20;
     const rowH = cellH + captionH + gap;
 
     let col = 0;
@@ -346,8 +346,8 @@ export class ServiceReportPdfService {
         });
       }
 
-      doc.fillColor(COLORS.muted).font('Helvetica').fontSize(7);
-      doc.text(photo.caption, x, y + cellH + 2, {
+      doc.fillColor(COLORS.muted).font('Helvetica').fontSize(8);
+      doc.text(photo.caption, x, y + cellH + 4, {
         width: cellW,
         align: 'center',
         lineBreak: false,
