@@ -810,6 +810,7 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
                   onChange={(e) => updateItem(index, { description: e.target.value })}
                   required
                   disabled={itemsLocked}
+                  maxLength={5000}
                   rows={5}
                   style={{
                     minHeight: 120,
@@ -817,6 +818,9 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
                     lineHeight: 1.4,
                   }}
                 />
+                <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>
+                  {item.description.length}/5000
+                </p>
               </div>
               <div
                 style={{

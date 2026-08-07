@@ -9,7 +9,7 @@ export class QuoteItemDto {
 
   @IsString()
   @MinLength(1)
-  @MaxLength(1000)
+  @MaxLength(5000)
   description!: string;
 
   @Type(() => Number)
