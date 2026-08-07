@@ -202,8 +202,8 @@ function readStoredBuildingIds(list: Array<{ id: string }>): string[] {
     return [legacy];
   }
 
-  // Sin preferencia guardada: marcar todos los edificios accesibles.
-  return list.map((b) => b.id);
+  // Sin preferencia guardada: un solo edificio (el primero) para no saturar la URL.
+  return list.length > 0 ? [list[0]!.id] : [];
 }
 
 function shiftMonth(monthValue: string, delta: number): string {
@@ -304,17 +304,20 @@ export default function EventualCalendarPage() {
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ from, to });
-      for (const id of ids) {
-        params.append('buildingIds', id);
-      }
-      if (floorId) params.set('floorId', floorId);
-      if (zoneId) params.set('zoneId', zoneId);
-      if (workerId) params.set('workerId', workerId);
-
-      const res = await api.get<EventualCalendarResponse>(`/eventual-calendar?${params}`, {
-        signal,
-      });
+      // POST con body: con muchos edificios el GET rompía la URL y el mes
+      // quedaba en blanco sin eventos.
+      const res = await api.post<EventualCalendarResponse>(
+        '/eventual-calendar/query',
+        {
+          from,
+          to,
+          buildingIds: ids,
+          ...(floorId ? { floorId } : {}),
+          ...(zoneId ? { zoneId } : {}),
+          ...(workerId ? { workerId } : {}),
+        },
+        { signal },
+      );
       if (signal?.aborted) return;
       setData(res);
     } catch (e) {

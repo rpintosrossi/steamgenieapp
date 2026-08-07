@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequiredRoles } from '../../common/decorators/required-roles.decorator';
@@ -14,5 +14,12 @@ export class EventualCalendarController {
   @RequiredRoles('admin', 'manager')
   getEvents(@Query() query: QueryEventualCalendarDto) {
     return this.eventualCalendarService.getEvents(query);
+  }
+
+  /** Misma consulta por body: evita URLs enormes con muchos edificios. */
+  @Post('query')
+  @RequiredRoles('admin', 'manager')
+  queryEvents(@Body() body: QueryEventualCalendarDto) {
+    return this.eventualCalendarService.getEvents(body);
   }
 }

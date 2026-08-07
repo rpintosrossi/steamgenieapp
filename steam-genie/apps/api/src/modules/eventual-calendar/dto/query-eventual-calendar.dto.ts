@@ -28,6 +28,13 @@ function toStringArray(value: unknown): string[] {
   return [];
 }
 
+function toBooleanFlag(value: unknown, defaultValue: boolean): boolean {
+  if (value === undefined || value === null || value === '') return defaultValue;
+  if (value === true || value === 'true' || value === '1') return true;
+  if (value === false || value === 'false' || value === '0') return false;
+  return defaultValue;
+}
+
 export class QueryEventualCalendarDto {
   /** Primer día del rango (YYYY-MM-DD, inclusive). */
   @IsDateString()
@@ -42,7 +49,7 @@ export class QueryEventualCalendarDto {
   @IsUUID()
   buildingId?: string;
 
-  /** Edificios a incluir. Si viene vacío, el calendario responde sin eventos. */
+  /** Edificios a incluir (UUID sueltos o separados por coma). */
   @Transform(({ value, obj }) => {
     const ids = toStringArray(value);
     if (ids.length > 0) return ids;
@@ -68,12 +75,12 @@ export class QueryEventualCalendarDto {
   workerId?: string;
 
   @IsOptional()
-  @Transform(({ value }) => value !== 'false' && value !== false)
+  @Transform(({ value }) => toBooleanFlag(value, true))
   @IsBoolean()
   includeReservations?: boolean = true;
 
   @IsOptional()
-  @Transform(({ value }) => value !== 'false' && value !== false)
+  @Transform(({ value }) => toBooleanFlag(value, true))
   @IsBoolean()
   includeServices?: boolean = true;
 
@@ -81,6 +88,6 @@ export class QueryEventualCalendarDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(1000)
-  limit?: number = 1000;
+  @Max(5000)
+  limit?: number = 2000;
 }

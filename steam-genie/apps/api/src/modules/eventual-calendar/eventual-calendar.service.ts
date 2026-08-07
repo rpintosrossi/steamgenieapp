@@ -25,16 +25,17 @@ export class EventualCalendarService {
     const {
       from,
       to,
-      buildingIds,
       floorId,
       zoneId,
       workerId,
       includeReservations = true,
       includeServices = true,
-      limit = 1000,
+      limit = 2000,
     } = query;
 
-    if (!buildingIds?.length) {
+    const buildingIds = query.buildingIds ?? [];
+
+    if (!buildingIds.length) {
       return {
         reservations: [],
         services: [],
