@@ -35,7 +35,14 @@ export class EventualCalendarService {
     } = query;
 
     if (!buildingIds?.length) {
-      throw new BadRequestException('buildingIds is required');
+      return {
+        reservations: [],
+        services: [],
+        from,
+        to,
+        totals: { reservations: 0, services: 0 },
+        truncated: { reservations: false, services: false },
+      };
     }
 
     const buildingFilter =

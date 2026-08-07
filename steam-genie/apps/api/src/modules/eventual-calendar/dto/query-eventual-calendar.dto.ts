@@ -1,5 +1,4 @@
 import {
-  ArrayMinSize,
   ArrayUnique,
   IsArray,
   IsUUID,
@@ -43,7 +42,7 @@ export class QueryEventualCalendarDto {
   @IsUUID()
   buildingId?: string;
 
-  /** Edificios a incluir (al menos uno). */
+  /** Edificios a incluir. Si viene vacío, el calendario responde sin eventos. */
   @Transform(({ value, obj }) => {
     const ids = toStringArray(value);
     if (ids.length > 0) return ids;
@@ -51,10 +50,10 @@ export class QueryEventualCalendarDto {
     return [];
   })
   @IsArray()
-  @ArrayMinSize(1)
   @ArrayUnique()
   @IsUUID('4', { each: true })
-  buildingIds!: string[];
+  @IsOptional()
+  buildingIds?: string[];
 
   @IsOptional()
   @IsUUID()

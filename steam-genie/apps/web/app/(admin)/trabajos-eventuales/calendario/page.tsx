@@ -187,9 +187,10 @@ function readStoredBuildingIds(list: Array<{ id: string }>): string[] {
     if (stored) {
       const parsed = JSON.parse(stored) as unknown;
       if (Array.isArray(parsed)) {
-        return parsed.filter(
+        const matched = parsed.filter(
           (id): id is string => typeof id === 'string' && list.some((b) => b.id === id),
         );
+        if (matched.length > 0) return matched;
       }
     }
   } catch {
@@ -201,7 +202,8 @@ function readStoredBuildingIds(list: Array<{ id: string }>): string[] {
     return [legacy];
   }
 
-  return [];
+  // Sin preferencia guardada: marcar todos los edificios accesibles.
+  return list.map((b) => b.id);
 }
 
 function shiftMonth(monthValue: string, delta: number): string {
@@ -291,7 +293,8 @@ export default function EventualCalendarPage() {
   }, [data, gridDays, showReservations, showServices]);
 
   const loadCalendar = useCallback(async (signal?: AbortSignal) => {
-    if (buildingIds.length === 0) {
+    const ids = buildingIds.filter((id) => typeof id === 'string' && id.length > 0);
+    if (ids.length === 0) {
       setData(null);
       setLoading(false);
       setError(null);
@@ -302,7 +305,7 @@ export default function EventualCalendarPage() {
     setError(null);
     try {
       const params = new URLSearchParams({ from, to });
-      for (const id of buildingIds) {
+      for (const id of ids) {
         params.append('buildingIds', id);
       }
       if (floorId) params.set('floorId', floorId);
@@ -316,7 +319,12 @@ export default function EventualCalendarPage() {
       setData(res);
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return;
-      setError(e instanceof Error ? e.message : 'Error al cargar calendario');
+      const raw = e instanceof Error ? e.message : 'Error al cargar calendario';
+      const friendly =
+        /buildingIds must contain at least/i.test(raw)
+          ? 'Elegí al menos un edificio para cargar el calendario.'
+          : raw;
+      setError(friendly);
       setData(null);
     } finally {
       if (!signal?.aborted) setLoading(false);
@@ -327,7 +335,12 @@ export default function EventualCalendarPage() {
     void fetchBuildingsList()
       .then((list) => {
         setBuildings(list);
-        setBuildingIds(readStoredBuildingIds(list));
+        const ids = readStoredBuildingIds(list);
+        setBuildingIds(ids);
+        if (ids.length > 0) {
+          localStorage.setItem(CALENDAR_BUILDING_KEY, JSON.stringify(ids));
+          localStorage.removeItem(CALENDAR_BUILDING_KEY_LEGACY);
+        }
       })
       .catch(() => setBuildings([]))
       .finally(() => setBuildingReady(true));

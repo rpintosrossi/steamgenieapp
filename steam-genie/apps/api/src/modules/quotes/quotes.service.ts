@@ -250,12 +250,6 @@ export class QuotesService {
   async update(id: string, dto: UpdateQuoteDto) {
     const existing = await this.assertExists(id);
 
-    if (existing.workOrders.length > 0 && dto.items) {
-      throw new BadRequestException(
-        'No se pueden editar los ítems de un presupuesto ya convertido a servicio.',
-      );
-    }
-
     const switchingClient =
       dto.particularClientId !== undefined ||
       dto.buildingId !== undefined ||
@@ -418,6 +412,23 @@ export class QuotesService {
               : {}),
           },
         });
+      }
+
+      // Si cambian los ítems y ya hay servicios, actualizar el monto cobrado vinculado.
+      if (computed && existing.workOrders.length > 0) {
+        const linked = await tx.workOrder.findMany({
+          where: { quoteId: id, deletedAt: null },
+          orderBy: [{ scheduledDate: 'asc' }, { createdAt: 'asc' }],
+          select: { id: true, clientAmountCharged: true },
+        });
+        const target =
+          linked.find((wo) => wo.clientAmountCharged != null) ?? linked[0];
+        if (target) {
+          await tx.workOrder.update({
+            where: { id: target.id },
+            data: { clientAmountCharged: computed.total },
+          });
+        }
       }
 
       return updated;

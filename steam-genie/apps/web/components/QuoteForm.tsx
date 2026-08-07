@@ -101,7 +101,7 @@ type QuoteFormProps = {
 
 export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
   const router = useRouter();
-  const itemsLocked = Boolean(initialQuote?.workOrders?.length);
+  const hasLinkedServices = Boolean(initialQuote?.workOrders?.length);
   const [clientKind, setClientKind] = useState<ClientKind>(
     initialQuote ? clientKindFromQuote(initialQuote) : 'particular',
   );
@@ -258,35 +258,33 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
     }
 
     const payloadItems: QuoteItemInput[] = [];
-    if (!itemsLocked) {
-      for (const item of items) {
-        if (!item.description.trim()) {
-          setError('Cada ítem necesita descripción.');
-          return;
-        }
-        const quantity = Number(item.quantity);
-        const unitPrice = Number(item.unitPrice);
-        if (
-          !Number.isFinite(quantity) ||
-          quantity <= 0 ||
-          !Number.isFinite(unitPrice) ||
-          unitPrice < 0
-        ) {
-          setError('Revisá cantidad y precio de los ítems.');
-          return;
-        }
-        const discountPercent = item.discountPercent.trim()
-          ? Number(item.discountPercent)
-          : undefined;
-        payloadItems.push({
-          quantity,
-          description: item.description.trim(),
-          unitPrice,
-          ...(discountPercent != null && Number.isFinite(discountPercent)
-            ? { discountPercent }
-            : {}),
-        });
+    for (const item of items) {
+      if (!item.description.trim()) {
+        setError('Cada ítem necesita descripción.');
+        return;
       }
+      const quantity = Number(item.quantity);
+      const unitPrice = Number(item.unitPrice);
+      if (
+        !Number.isFinite(quantity) ||
+        quantity <= 0 ||
+        !Number.isFinite(unitPrice) ||
+        unitPrice < 0
+      ) {
+        setError('Revisá cantidad y precio de los ítems.');
+        return;
+      }
+      const discountPercent = item.discountPercent.trim()
+        ? Number(item.discountPercent)
+        : undefined;
+      payloadItems.push({
+        quantity,
+        description: item.description.trim(),
+        unitPrice,
+        ...(discountPercent != null && Number.isFinite(discountPercent)
+          ? { discountPercent }
+          : {}),
+      });
     }
 
     const paymentsPayload = buildPaymentsPayload();
@@ -331,7 +329,7 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
         internalNotes: internalNotes.trim() || null,
         serviceIncludes: serviceIncludes.trim() || null,
         payments: paymentsPayload,
-        ...(!itemsLocked ? { items: payloadItems } : {}),
+        items: payloadItems,
       };
 
       if (mode === 'edit' && initialQuote) {
@@ -391,8 +389,8 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
       : 'Nuevo presupuesto';
   const subtitle =
     mode === 'edit'
-      ? itemsLocked
-        ? 'Podés editar los datos del presupuesto. Los ítems están bloqueados porque ya se convirtió a servicio.'
+      ? hasLinkedServices
+        ? 'Podés editar los datos e ítems. Si cambiás precios, se actualiza el monto del servicio asociado.'
         : 'Modificá cliente, datos e ítems del presupuesto.'
       : 'Asociá un cliente particular, un edificio o un cliente eventual e ingresá los ítems del servicio.';
 
@@ -774,20 +772,19 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
             <h2 className="card-title" style={{ margin: 0 }}>
               Ítems
             </h2>
-            {!itemsLocked ? (
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => setItems((prev) => [...prev, { ...EMPTY_ITEM }])}
-              >
-                Agregar ítem
-              </button>
-            ) : null}
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setItems((prev) => [...prev, { ...EMPTY_ITEM }])}
+            >
+              Agregar ítem
+            </button>
           </div>
 
-          {itemsLocked ? (
+          {hasLinkedServices ? (
             <p className="muted" style={{ margin: 0 }}>
-              Ítems bloqueados: el presupuesto ya tiene un servicio asociado.
+              Este presupuesto ya tiene servicio asociado: al guardar, el monto cobrado del
+              servicio se actualiza con el nuevo total.
             </p>
           ) : null}
 
@@ -809,7 +806,6 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
                   value={item.description}
                   onChange={(e) => updateItem(index, { description: e.target.value })}
                   required
-                  disabled={itemsLocked}
                   maxLength={5000}
                   rows={5}
                   style={{
@@ -837,7 +833,6 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
                     value={item.quantity}
                     onChange={(e) => updateItem(index, { quantity: e.target.value })}
                     required
-                    disabled={itemsLocked}
                   />
                 </div>
                 <div className="form-field" style={{ margin: 0 }}>
@@ -847,7 +842,6 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
                     value={item.unitPrice}
                     onChange={(e) => updateItem(index, { unitPrice: e.target.value })}
                     required
-                    disabled={itemsLocked}
                   />
                 </div>
                 <div className="form-field" style={{ margin: 0 }}>
@@ -856,22 +850,17 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
                     className="input"
                     value={item.discountPercent}
                     onChange={(e) => updateItem(index, { discountPercent: e.target.value })}
-                    disabled={itemsLocked}
                   />
                 </div>
-                {!itemsLocked ? (
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    disabled={items.length === 1}
-                    onClick={() => setItems((prev) => prev.filter((_, i) => i !== index))}
-                    style={{ marginBottom: 2 }}
-                  >
-                    Quitar
-                  </button>
-                ) : (
-                  <span />
-                )}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={items.length === 1}
+                  onClick={() => setItems((prev) => prev.filter((_, i) => i !== index))}
+                  style={{ marginBottom: 2 }}
+                >
+                  Quitar
+                </button>
               </div>
             </div>
           ))}
