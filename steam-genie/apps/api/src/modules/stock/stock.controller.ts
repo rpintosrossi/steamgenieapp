@@ -8,13 +8,19 @@ import {
   Patch,
   Post,
   Query,
+  Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequiredRoles } from '../../common/decorators/required-roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUser } from '@steam-genie/shared-types';
+import { StorageService } from '../../infrastructure/storage/storage.service';
 import { StockService } from './stock.service';
 import { QueryStockProductsDto } from './dto/query-stock-products.dto';
 import { QueryStockCatalogDto } from './dto/query-stock-catalog.dto';
@@ -34,7 +40,10 @@ const STOCK_ROLES = ['admin', 'manager', 'stock'] as const;
 @Controller('stock')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class StockController {
-  constructor(private readonly stockService: StockService) {}
+  constructor(
+    private readonly stockService: StockService,
+    private readonly storage: StorageService,
+  ) {}
 
   @Get('stats')
   @RequiredRoles(...STOCK_ROLES)
@@ -127,10 +136,58 @@ export class StockController {
     );
   }
 
+  @Post('products/:id/datasheet')
+  @RequiredRoles(...STOCK_ROLES)
+  @UseInterceptors(FileInterceptor('file'))
+  uploadDatasheet(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.stockService.uploadDatasheet(id, file);
+  }
+
+  @Get('products/:id/datasheet')
+  @RequiredRoles(...STOCK_ROLES)
+  async downloadDatasheet(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ) {
+    const meta = await this.stockService.streamDatasheet(id);
+    const asciiName = meta.fileName.replace(/[^\x20-\x7E]/g, '_');
+    res.setHeader('Content-Type', meta.mimeType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(meta.fileName)}`,
+    );
+
+    const localStream = this.storage.getLocalStream(meta.storageKey);
+    if (localStream) {
+      localStream.pipe(res);
+      return;
+    }
+
+    const buffer = await this.storage.getObjectBuffer(meta.storageKey);
+    if (buffer) {
+      res.send(buffer);
+      return;
+    }
+
+    res.redirect(302, this.storage.getPublicUrl(meta.storageKey));
+  }
+
+  @Delete('products/:id/datasheet')
+  @RequiredRoles(...STOCK_ROLES)
+  removeDatasheet(@Param('id', ParseUUIDPipe) id: string) {
+    return this.stockService.removeDatasheet(id);
+  }
+
   @Delete('products/:id')
   @RequiredRoles(...STOCK_ROLES)
-  removeProduct(@Param('id', ParseUUIDPipe) id: string) {
-    return this.stockService.removeProduct(id);
+  removeProduct(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('warehouseId') warehouseId?: string,
+  ) {
+    return this.stockService.removeProduct(id, warehouseId);
   }
 
   @Get('categories')

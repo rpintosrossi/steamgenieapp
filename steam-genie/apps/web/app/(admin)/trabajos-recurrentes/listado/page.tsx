@@ -21,6 +21,7 @@ import type {
   RecurringWorkListItem,
 } from '../../../../lib/types';
 import { LocationDisplay } from '../../../../components/LocationDisplay';
+import type { TaskPhotoGalleryItem } from '../../../../components/TaskPhotoLightbox';
 import { TaskPhotoThumb } from '../../../../components/TaskPhotoThumb';
 
 const GROUP_PAGE_SIZE = 20;
@@ -81,6 +82,43 @@ function RecurringTaskDetailList({ tasks }: { tasks: RecurringWorkListItem[] }) 
           item.execution?.status === 'DONE' &&
           photos.length === 0;
 
+        const location = {
+          buildingName: item.building?.name ?? null,
+          floor: item.floor,
+          zone: item.zone,
+          subzone: item.subzone,
+        };
+
+        const gallery: TaskPhotoGalleryItem[] = isBda
+          ? phasePhotos.map((photo) => ({
+              id: photo.id,
+              photoId: photo.id,
+              photoUrl: photo.url,
+              title: photo.originalFilename ?? PHASE_LABELS[photo.phase] ?? 'Foto',
+              context: {
+                capturedAt: photo.capturedAt,
+                uploadedAt: photo.uploadedAt,
+                uploadedByName:
+                  photo.uploadedBy?.fullName ?? item.execution?.executedBy.fullName ?? null,
+                taskName: `${item.taskName} · ${PHASE_LABELS[photo.phase] ?? photo.phase}`,
+                ...location,
+              },
+            }))
+          : photos.map((photo) => ({
+              id: photo.id,
+              photoId: photo.id,
+              photoUrl: photo.url,
+              title: photo.originalFilename ?? 'Ver foto',
+              context: {
+                capturedAt: photo.capturedAt,
+                uploadedAt: photo.uploadedAt,
+                uploadedByName:
+                  photo.uploadedBy?.fullName ?? item.execution?.executedBy.fullName ?? null,
+                taskName: item.taskName,
+                ...location,
+              },
+            }));
+
         return (
           <article key={item.id} className="recurring-task-card">
             <div className="recurring-task-card-header">
@@ -130,27 +168,29 @@ function RecurringTaskDetailList({ tasks }: { tasks: RecurringWorkListItem[] }) 
                                 {PHASE_LABELS[phase]}
                               </div>
                               <div className="photo-thumbs">
-                                {phaseItems.map((photo) => (
-                                  <TaskPhotoThumb
-                                    key={photo.id}
-                                    photoId={photo.id}
-                                    photoUrl={photo.url}
-                                    title={photo.originalFilename ?? PHASE_LABELS[phase]}
-                                    context={{
-                                      capturedAt: photo.capturedAt,
-                                      uploadedAt: photo.uploadedAt,
-                                      uploadedByName:
-                                        photo.uploadedBy?.fullName ??
-                                        item.execution?.executedBy.fullName ??
-                                        null,
-                                      taskName: item.taskName,
-                                      buildingName: item.building?.name ?? null,
-                                      floor: item.floor,
-                                      zone: item.zone,
-                                      subzone: item.subzone,
-                                    }}
-                                  />
-                                ))}
+                                {phaseItems.map((photo) => {
+                                  const galleryIndex = gallery.findIndex((g) => g.id === photo.id);
+                                  return (
+                                    <TaskPhotoThumb
+                                      key={photo.id}
+                                      photoId={photo.id}
+                                      photoUrl={photo.url}
+                                      title={photo.originalFilename ?? PHASE_LABELS[phase]}
+                                      gallery={gallery}
+                                      galleryIndex={galleryIndex >= 0 ? galleryIndex : 0}
+                                      context={{
+                                        capturedAt: photo.capturedAt,
+                                        uploadedAt: photo.uploadedAt,
+                                        uploadedByName:
+                                          photo.uploadedBy?.fullName ??
+                                          item.execution?.executedBy.fullName ??
+                                          null,
+                                        taskName: item.taskName,
+                                        ...location,
+                                      }}
+                                    />
+                                  );
+                                })}
                               </div>
                             </div>
                           );
@@ -163,12 +203,14 @@ function RecurringTaskDetailList({ tasks }: { tasks: RecurringWorkListItem[] }) 
                     )
                   ) : photos.length > 0 ? (
                     <div className="photo-thumbs">
-                      {photos.map((photo) => (
+                      {photos.map((photo, photoIndex) => (
                         <TaskPhotoThumb
                           key={photo.id}
                           photoId={photo.id}
                           photoUrl={photo.url}
                           title={photo.originalFilename ?? 'Ver foto'}
+                          gallery={gallery}
+                          galleryIndex={photoIndex}
                           context={{
                             capturedAt: photo.capturedAt,
                             uploadedAt: photo.uploadedAt,
@@ -177,10 +219,7 @@ function RecurringTaskDetailList({ tasks }: { tasks: RecurringWorkListItem[] }) 
                               item.execution?.executedBy.fullName ??
                               null,
                             taskName: item.taskName,
-                            buildingName: item.building?.name ?? null,
-                            floor: item.floor,
-                            zone: item.zone,
-                            subzone: item.subzone,
+                            ...location,
                           }}
                         />
                       ))}

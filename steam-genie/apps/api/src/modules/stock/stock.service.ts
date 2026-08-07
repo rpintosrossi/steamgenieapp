@@ -10,6 +10,7 @@ import {
   type StockStatus,
 } from '@steam-genie/shared-constants';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { StorageService } from '../../infrastructure/storage/storage.service';
 import { ensureStockBalance } from '../stock-logistics/stock-logistics.helpers';
 import { recordStockMovement } from '../stock-logistics/stock-movements.record';
 import { StockMovementsService } from '../stock-logistics/stock-movements.service';
@@ -24,6 +25,21 @@ import { AdjustStockProductDto } from './dto/adjust-stock-product.dto';
 import { BulkAdjustStockDto } from './dto/bulk-adjust-stock.dto';
 import { CreateStockWarehouseDto } from './dto/create-stock-warehouse.dto';
 import { UpdateStockWarehouseDto } from './dto/update-stock-warehouse.dto';
+
+const DATASHEET_MAX_BYTES = 15 * 1024 * 1024;
+const DATASHEET_ALLOWED_MIME = new Set([
+  'application/pdf',
+  'text/plain',
+  'text/csv',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'application/octet-stream',
+]);
 
 const CATEGORY_SELECT = {
   id: true,
@@ -65,6 +81,9 @@ const PRODUCT_BASE_SELECT = {
   categoryId: true,
   supplierId: true,
   unitType: true,
+  datasheetStorageKey: true,
+  datasheetFileName: true,
+  datasheetMimeType: true,
   isActive: true,
   createdAt: true,
   updatedAt: true,
@@ -86,6 +105,7 @@ export class StockService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly movementsService: StockMovementsService,
+    private readonly storage: StorageService,
   ) {}
 
   async listProductMovements(productId: string, limit?: number, warehouseId?: string) {
@@ -241,48 +261,48 @@ export class StockService {
   async getStats(warehouseId?: string) {
     if (warehouseId) {
       await this.assertWarehouseExists(warehouseId);
-    }
 
-    const products = await this.prisma.stockProduct.findMany({
-      where: { deletedAt: null, isActive: true },
-      select: { id: true },
-    });
-    const balances = await this.prisma.stockBalance.findMany({
-      where: {
-        ...(warehouseId ? { warehouseId } : {}),
-        productId: { in: products.map((p) => p.id) },
-        warehouse: { deletedAt: null, isActive: true },
-      },
-      select: {
-        productId: true,
-        quantity: true,
-        reservedQuantity: true,
-        minQuantity: true,
-      },
-    });
+      const balances = await this.prisma.stockBalance.findMany({
+        where: {
+          warehouseId,
+          product: { deletedAt: null, isActive: true },
+          warehouse: { deletedAt: null, isActive: true },
+        },
+        select: {
+          quantity: true,
+          reservedQuantity: true,
+          minQuantity: true,
+        },
+      });
 
-    if (warehouseId) {
-      const byProduct = new Map(balances.map((b) => [b.productId, b]));
       let lowStock = 0;
       let outOfStock = 0;
-
-      for (const product of products) {
-        const balance = byProduct.get(product.id);
-        const qty = balance
-          ? this.toNumber(balance.quantity) - this.toNumber(balance.reservedQuantity)
-          : 0;
-        const min = balance ? this.toNumber(balance.minQuantity) : 5;
-        const status = computeStockStatus(qty, min);
+      for (const balance of balances) {
+        const qty =
+          this.toNumber(balance.quantity) - this.toNumber(balance.reservedQuantity);
+        const status = computeStockStatus(qty, this.toNumber(balance.minQuantity));
         if (status === 'OUT') outOfStock += 1;
         else if (status === 'LOW') lowStock += 1;
       }
 
       return {
-        totalProducts: products.length,
+        totalProducts: balances.length,
         lowStock,
         outOfStock,
       };
     }
+
+    const balances = await this.prisma.stockBalance.findMany({
+      where: {
+        product: { deletedAt: null, isActive: true },
+        warehouse: { deletedAt: null, isActive: true },
+      },
+      select: {
+        quantity: true,
+        reservedQuantity: true,
+        minQuantity: true,
+      },
+    });
 
     let lowStock = 0;
     let outOfStock = 0;
@@ -795,13 +815,135 @@ export class StockService {
     return { updated: mapped };
   }
 
-  async removeProduct(id: string) {
+  async removeProduct(id: string, warehouseId?: string) {
     await this.assertProductExists(id);
+
+    if (warehouseId) {
+      await this.assertWarehouseExists(warehouseId);
+      const balance = await this.prisma.stockBalance.findUnique({
+        where: { warehouseId_productId: { warehouseId, productId: id } },
+      });
+      if (!balance) {
+        throw new NotFoundException('El producto no está en este depósito.');
+      }
+
+      await this.prisma.stockBalance.delete({ where: { id: balance.id } });
+
+      const remaining = await this.prisma.stockBalance.count({
+        where: { productId: id },
+      });
+      if (remaining === 0) {
+        await this.prisma.stockProduct.update({
+          where: { id },
+          data: { deletedAt: new Date(), isActive: false },
+        });
+      }
+
+      return { message: 'Producto eliminado de este depósito' };
+    }
+
     await this.prisma.stockProduct.update({
       where: { id },
       data: { deletedAt: new Date(), isActive: false },
     });
     return { message: 'Producto eliminado' };
+  }
+
+  async uploadDatasheet(id: string, file: Express.Multer.File) {
+    await this.assertProductExists(id);
+    if (!file) {
+      throw new BadRequestException('Archivo requerido (campo: file)');
+    }
+    if (file.size > DATASHEET_MAX_BYTES) {
+      throw new BadRequestException(
+        `Archivo demasiado grande (${(file.size / 1024 / 1024).toFixed(1)} MB). Máximo: 15 MB.`,
+      );
+    }
+    const mime = file.mimetype || 'application/octet-stream';
+    if (!DATASHEET_ALLOWED_MIME.has(mime)) {
+      throw new BadRequestException(
+        `Tipo de archivo no permitido (${mime}). Usá PDF, texto, Word, Excel o imagen.`,
+      );
+    }
+
+    const existing = await this.prisma.stockProduct.findFirst({
+      where: { id, deletedAt: null },
+      select: { datasheetStorageKey: true },
+    });
+
+    const safeName = file.originalname.replace(/[^\w.\-()+ ]+/g, '_').slice(0, 200);
+    const storageKey = `stock-datasheets/${id}/${Date.now()}-${safeName}`;
+    await this.storage.upload(storageKey, file.buffer, mime);
+
+    if (existing?.datasheetStorageKey) {
+      try {
+        await this.storage.delete(existing.datasheetStorageKey);
+      } catch {
+        // best-effort cleanup
+      }
+    }
+
+    const product = await this.prisma.stockProduct.update({
+      where: { id },
+      data: {
+        datasheetStorageKey: storageKey,
+        datasheetFileName: safeName,
+        datasheetMimeType: mime,
+      },
+      select: PRODUCT_BASE_SELECT,
+    });
+
+    return {
+      id: product.id,
+      hasDatasheet: true,
+      datasheetFileName: product.datasheetFileName,
+      datasheetMimeType: product.datasheetMimeType,
+      datasheetUrl: `/stock/products/${product.id}/datasheet`,
+    };
+  }
+
+  async removeDatasheet(id: string) {
+    const product = await this.assertProductExists(id);
+    if (!product.datasheetStorageKey) {
+      return { message: 'El producto no tiene ficha técnica' };
+    }
+
+    try {
+      await this.storage.delete(product.datasheetStorageKey);
+    } catch {
+      // best-effort
+    }
+
+    await this.prisma.stockProduct.update({
+      where: { id },
+      data: {
+        datasheetStorageKey: null,
+        datasheetFileName: null,
+        datasheetMimeType: null,
+      },
+    });
+
+    return { message: 'Ficha técnica eliminada' };
+  }
+
+  async streamDatasheet(id: string) {
+    const product = await this.prisma.stockProduct.findFirst({
+      where: { id, deletedAt: null },
+      select: {
+        datasheetStorageKey: true,
+        datasheetFileName: true,
+        datasheetMimeType: true,
+      },
+    });
+    if (!product?.datasheetStorageKey) {
+      throw new NotFoundException('Ficha técnica no encontrada');
+    }
+
+    return {
+      storageKey: product.datasheetStorageKey,
+      fileName: product.datasheetFileName ?? 'ficha-tecnica',
+      mimeType: product.datasheetMimeType ?? 'application/octet-stream',
+    };
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -812,6 +954,11 @@ export class StockService {
     if (!query.includeInactive) where.isActive = true;
     if (query.categoryId) where.categoryId = query.categoryId;
     if (query.supplierId) where.supplierId = query.supplierId;
+
+    // Solo productos habilitados en este depósito (con saldo propio).
+    if (query.warehouseId) {
+      where.balances = { some: { warehouseId: query.warehouseId } };
+    }
 
     if (query.search?.trim()) {
       const term = query.search.trim();
@@ -897,6 +1044,7 @@ export class StockService {
     const available = quantity - reservedQuantity;
     const minQuantity = this.toNumber(balance.minQuantity);
     const status = computeStockStatus(available, minQuantity);
+    const hasDatasheet = Boolean(product.datasheetStorageKey);
 
     return {
       id: product.id,
@@ -912,6 +1060,10 @@ export class StockService {
       unitType: product.unitType,
       isActive: product.isActive,
       status: status as StockStatus,
+      hasDatasheet,
+      datasheetFileName: product.datasheetFileName,
+      datasheetMimeType: product.datasheetMimeType,
+      datasheetUrl: hasDatasheet ? `/stock/products/${product.id}/datasheet` : null,
       stockUpdatedAt: balance.stockUpdatedAt,
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,

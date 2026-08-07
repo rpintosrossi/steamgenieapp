@@ -1,4 +1,4 @@
-import { formatQuoteNumber } from '@steam-genie/shared-constants';
+import { buildQuotePdfFilename, formatQuoteNumber } from '@steam-genie/shared-constants';
 import { api } from './api-client';
 
 export function normalizePhoneForWhatsApp(phone: string): string {
@@ -29,8 +29,8 @@ function triggerDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-async function loadQuotePdf(quoteId: string, number: number) {
-  const filename = `presupuesto-${formatQuoteNumber(number)}.pdf`;
+async function loadQuotePdf(quoteId: string, number: number, clientName: string) {
+  const filename = buildQuotePdfFilename(clientName, number);
   const blob = await api.fetchBlob(`/quotes/${quoteId}/pdf`);
   const file = new File([blob], filename, { type: 'application/pdf' });
   return { blob, file, filename };
@@ -40,6 +40,7 @@ type ShareQuoteInput = {
   id: string;
   number: number;
   total: string | number;
+  clientName: string;
   contactPhone?: string | null;
   contactEmail?: string | null;
 };
@@ -52,7 +53,11 @@ export async function shareQuoteWhatsApp(quote: ShareQuoteInput): Promise<string
   }
 
   const text = `Hola! Te envío el presupuesto N° ${formatQuoteNumber(quote.number)} de STEAMGENIE. Total: ${money(quote.total)}.`;
-  const { blob, file, filename } = await loadQuotePdf(quote.id, quote.number);
+  const { blob, file, filename } = await loadQuotePdf(
+    quote.id,
+    quote.number,
+    quote.clientName,
+  );
   const waUrl = `https://wa.me/${normalizePhoneForWhatsApp(phone)}?text=${encodeURIComponent(text)}`;
 
   const nav = navigator as Navigator & {
@@ -89,7 +94,11 @@ export async function shareQuoteEmail(quote: ShareQuoteInput): Promise<string> {
 
   const subject = `Presupuesto ${formatQuoteNumber(quote.number)} — STEAMGENIE`;
   const body = `Hola,\n\nTe envío el presupuesto N° ${formatQuoteNumber(quote.number)}.\nTotal: ${money(quote.total)}.\n\nEl PDF se descargó en tu equipo: adjuntarlo a este correo.\n\nSaludos,\nSTEAMGENIE`;
-  const { blob, file, filename } = await loadQuotePdf(quote.id, quote.number);
+  const { blob, file, filename } = await loadQuotePdf(
+    quote.id,
+    quote.number,
+    quote.clientName,
+  );
 
   const nav = navigator as Navigator & {
     canShare?: (data?: ShareData) => boolean;

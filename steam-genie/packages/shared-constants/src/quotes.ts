@@ -45,3 +45,30 @@ export const QUOTE_COMPANY = {
 export function formatQuoteNumber(number: number): string {
   return String(number).padStart(8, '0');
 }
+
+/** Nombre de archivo seguro para PDF: NOMBRE-NUMERO.pdf */
+export function buildClientPdfFilename(
+  clientName: string,
+  numberPart: string | number,
+): string {
+  const name = sanitizeQuoteFilenamePart(clientName);
+  const number =
+    typeof numberPart === 'number'
+      ? formatQuoteNumber(numberPart)
+      : sanitizeQuoteFilenamePart(String(numberPart)) || '00000000';
+  return `${name}-${number}.pdf`;
+}
+
+export function buildQuotePdfFilename(clientName: string, number: number): string {
+  return buildClientPdfFilename(clientName, number);
+}
+
+function sanitizeQuoteFilenamePart(value: string): string {
+  const cleaned = value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+  return cleaned || 'Cliente';
+}

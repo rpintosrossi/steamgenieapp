@@ -278,14 +278,22 @@ export default function StockWarehouseInventoryPage() {
         ...(editing ? { isActive: form.isActive } : {}),
       };
 
+      let productId = editing?.id;
       if (editing) {
         await api.patch(`/stock/products/${editing.id}`, payload);
-        setSuccess('Producto actualizado.');
       } else {
-        await api.post('/stock/products', payload);
-        setSuccess('Producto creado.');
+        const created = await api.post<{ id: string }>('/stock/products', payload);
+        productId = created.id;
       }
 
+      if (productId && form.removeDatasheet && editing?.hasDatasheet) {
+        await api.delete(`/stock/products/${productId}/datasheet`);
+      }
+      if (productId && form.datasheetFile) {
+        await api.upload(`/stock/products/${productId}/datasheet`, form.datasheetFile);
+      }
+
+      setSuccess(editing ? 'Producto actualizado.' : 'Producto creado.');
       setModalOpen(false);
       setEditing(null);
       await loadInventory(true);
@@ -298,19 +306,30 @@ export default function StockWarehouseInventoryPage() {
   }
 
   async function removeProduct(product: StockProductItem) {
-    if (!window.confirm(`¿Eliminar "${product.name}" del inventario?`)) return;
+    if (!window.confirm(`¿Eliminar "${product.name}" de este depósito?`)) return;
 
     setAdjustingId(product.id);
     setError(null);
     setSuccess(null);
     try {
-      await api.delete(`/stock/products/${product.id}`);
-      setSuccess('Producto eliminado.');
+      await api.delete(`/stock/products/${product.id}?warehouseId=${warehouseId}`);
+      setSuccess('Producto eliminado de este depósito.');
       await loadInventory(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo eliminar el producto');
     } finally {
       setAdjustingId(null);
+    }
+  }
+
+  async function downloadDatasheet(product: StockProductItem) {
+    try {
+      await api.download(
+        `/stock/products/${product.id}/datasheet`,
+        product.datasheetFileName ?? 'ficha-tecnica',
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo descargar la ficha técnica');
     }
   }
 
@@ -477,6 +496,7 @@ export default function StockWarehouseInventoryPage() {
                     <th>Stock</th>
                     <th>Estado</th>
                     <th>Proveedor</th>
+                    <th>Ficha</th>
                     <th>Última actualización</th>
                     <th>Ajuste rápido</th>
                     <th style={{ width: 100 }} />
@@ -513,6 +533,20 @@ export default function StockWarehouseInventoryPage() {
                           </span>
                         </td>
                         <td>{product.supplier?.name ?? '—'}</td>
+                        <td>
+                          {product.hasDatasheet ? (
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => void downloadDatasheet(product)}
+                              title={product.datasheetFileName ?? 'Ficha técnica'}
+                            >
+                              Ver ficha
+                            </button>
+                          ) : (
+                            <span className="muted">—</span>
+                          )}
+                        </td>
                         <td>{formatDateTime(product.stockUpdatedAt)}</td>
                         <td>
                           <div className="stock-quick-adjust">
@@ -621,6 +655,7 @@ export default function StockWarehouseInventoryPage() {
           setEditing(null);
         }}
         onSubmit={saveProduct}
+        onDownloadDatasheet={(product) => void downloadDatasheet(product)}
       />
 
       {bulkOpen ? (

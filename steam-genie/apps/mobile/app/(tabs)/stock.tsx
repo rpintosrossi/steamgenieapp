@@ -23,6 +23,7 @@ import { apiService } from '../../src/services/api.service';
 import { SyncStatusBar } from '../../src/components/SyncStatusBar';
 import { BrandedScreenHeader } from '../../src/components/BrandedScreenHeader';
 import { COLORS } from '../../src/constants/colors';
+import { isNetworkError } from '../../src/utils/network';
 import { formatStoredCalendarDate } from '@steam-genie/shared-constants';
 
 const ALERT_TYPE_LABELS: Record<string, string> = {
@@ -84,7 +85,7 @@ function formatDate(iso: string | null) {
 export default function StockScreen() {
   const insets = useSafeAreaInsets();
   const modalScrollRef = useRef<ScrollView>(null);
-  const { selectedBuilding, prefetchData } = useBuildingStore();
+  const { selectedBuilding, prefetchData, syncActiveAttendance } = useBuildingStore();
   const activeAttendance = prefetchData?.activeAttendance ?? null;
   const isCheckedIn =
     activeAttendance != null && activeAttendance.buildingId === selectedBuilding?.id;
@@ -92,9 +93,10 @@ export default function StockScreen() {
   const [data, setData] = useState<MobileStockResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resolvingAttendance, setResolvingAttendance] = useState(false);
 
   const [alertModal, setAlertModal] = useState(false);
-  const [alertProductId, setAlertProductId] = useState('');
+  const [alertProductIds, setAlertProductIds] = useState<string[]>([]);
   const [alertProductSearch, setAlertProductSearch] = useState('');
   const [alertType, setAlertType] = useState<'LOW_STOCK' | 'OUT_OF_STOCK' | 'OBSERVATION'>(
     'LOW_STOCK',
@@ -107,10 +109,28 @@ export default function StockScreen() {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const loadStock = useCallback(async (options?: { silent?: boolean }) => {
-    if (!selectedBuilding || !isCheckedIn) {
+    if (!selectedBuilding) {
       setData(null);
       return;
     }
+
+    // Revalidar fichaje en servidor: el prefetch puede estar desactualizado.
+    if (!options?.silent) setResolvingAttendance(true);
+    let checkedIn = isCheckedIn;
+    try {
+      const active = await syncActiveAttendance();
+      checkedIn = active != null && active.buildingId === selectedBuilding.id;
+    } catch {
+      // Si falla la red, usar el estado local.
+    } finally {
+      if (!options?.silent) setResolvingAttendance(false);
+    }
+
+    if (!checkedIn) {
+      setData(null);
+      return;
+    }
+
     if (!options?.silent) setLoading(true);
     setError(null);
     try {
@@ -119,12 +139,14 @@ export default function StockScreen() {
       );
       setData(res);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo cargar el stock');
-      if (!options?.silent) setData(null);
+      if (!options?.silent) {
+        setError(err instanceof Error ? err.message : 'No se pudo cargar el stock');
+        setData(null);
+      }
     } finally {
       if (!options?.silent) setLoading(false);
     }
-  }, [isCheckedIn, selectedBuilding]);
+  }, [isCheckedIn, selectedBuilding, syncActiveAttendance]);
 
   useEffect(() => {
     if (!successMessage) return;
@@ -163,11 +185,17 @@ export default function StockScreen() {
   function closeAlertModal() {
     Keyboard.dismiss();
     setAlertProductSearch('');
+    setAlertProductIds([]);
     setAlertModal(false);
   }
 
   const alertModalBottomInset =
     keyboardHeight > 0 ? Math.max(0, keyboardHeight - insets.bottom) : 0;
+
+  const alertByProduct = useMemo(
+    () => new Map((data?.alerts ?? []).map((a) => [a.productId, a])),
+    [data?.alerts],
+  );
 
   const filteredAlertProducts = useMemo(() => {
     const items = data?.items ?? [];
@@ -180,14 +208,23 @@ export default function StockScreen() {
     );
   }, [alertProductSearch, data?.items]);
 
-  const selectedAlertProduct = useMemo(
-    () => (data?.items ?? []).find((item) => item.product.id === alertProductId) ?? null,
-    [alertProductId, data?.items],
+  const selectedAlertProducts = useMemo(
+    () =>
+      (data?.items ?? []).filter((item) => alertProductIds.includes(item.product.id)),
+    [alertProductIds, data?.items],
   );
+
+  function toggleAlertProduct(productId: string) {
+    setAlertProductIds((prev) =>
+      prev.includes(productId)
+        ? prev.filter((id) => id !== productId)
+        : [...prev, productId],
+    );
+  }
 
   function openAlertModal() {
     setAlertProductSearch('');
-    setAlertProductId('');
+    setAlertProductIds([]);
     setAlertType('LOW_STOCK');
     setAlertNote('');
     setAlertPhoto(null);
@@ -216,14 +253,14 @@ export default function StockScreen() {
   }
 
   async function submitAlert() {
-    if (!selectedBuilding || !alertProductId) {
-      Alert.alert('Datos incompletos', 'Seleccioná un producto.');
+    if (!selectedBuilding || alertProductIds.length === 0) {
+      Alert.alert('Datos incompletos', 'Seleccioná al menos un producto.');
       return;
     }
     setSubmitting(true);
     try {
       const formData = new FormData();
-      formData.append('productId', alertProductId);
+      formData.append('productIds', JSON.stringify(alertProductIds));
       formData.append('alertType', alertType);
       if (alertNote.trim()) formData.append('note', alertNote.trim());
       if (alertPhoto) {
@@ -237,11 +274,14 @@ export default function StockScreen() {
         `/stock-logistics/mobile/buildings/${selectedBuilding.id}/alerts`,
         formData,
       );
-      setAlertModal(false);
-      setAlertProductId('');
-      setAlertNote('');
-      setAlertPhoto(null);
-      Alert.alert('Alerta enviada', 'El equipo de logística fue notificado.');
+      const count = alertProductIds.length;
+      closeAlertModal();
+      Alert.alert(
+        count === 1 ? 'Alerta enviada' : 'Alertas enviadas',
+        count === 1
+          ? 'El equipo de logística fue notificado.'
+          : `Se reportaron ${count} productos. El equipo de logística fue notificado.`,
+      );
       await loadStock();
     } catch (err) {
       Alert.alert('Error', err instanceof Error ? err.message : 'No se pudo crear la alerta');
@@ -264,24 +304,58 @@ export default function StockScreen() {
             void (async () => {
               setConfirmingDeliveryId(delivery.id);
               setError(null);
+
+              const markConfirmed = (next?: MobileStockResponse | null) => {
+                if (next) {
+                  setData(next);
+                } else {
+                  setData((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          pendingDeliveries: prev.pendingDeliveries.filter(
+                            (item) => item.id !== delivery.id,
+                          ),
+                        }
+                      : prev,
+                  );
+                }
+                setSuccessMessage('Entrega confirmada. El stock se actualizó.');
+                void loadStock({ silent: true });
+              };
+
+              const reconcileDelivered = async (): Promise<boolean> => {
+                if (!selectedBuilding) return false;
+                try {
+                  const res = await apiService.get<MobileStockResponse>(
+                    `/stock-logistics/mobile/buildings/${selectedBuilding.id}`,
+                  );
+                  const stillPending = res.pendingDeliveries.some(
+                    (item) => item.id === delivery.id,
+                  );
+                  if (!stillPending) {
+                    markConfirmed(res);
+                    return true;
+                  }
+                } catch {
+                  // Seguir con el error original.
+                }
+                return false;
+              };
+
               try {
                 await apiService.postOk(
                   `/stock-logistics/shipments/destinations/${delivery.id}/deliver`,
                   {},
                 );
-                setData((prev) =>
-                  prev
-                    ? {
-                        ...prev,
-                        pendingDeliveries: prev.pendingDeliveries.filter(
-                          (item) => item.id !== delivery.id,
-                        ),
-                      }
-                    : prev,
-                );
-                setSuccessMessage('Entrega confirmada. El stock se actualizó.');
-                void loadStock({ silent: true });
+                markConfirmed();
               } catch (err) {
+                const alreadyDone =
+                  err instanceof Error &&
+                  err.message.toLowerCase().includes('ya fue procesado');
+                if (isNetworkError(err) || alreadyDone) {
+                  if (await reconcileDelivered()) return;
+                }
                 Alert.alert(
                   'Error',
                   err instanceof Error ? err.message : 'No se pudo confirmar',
@@ -296,10 +370,6 @@ export default function StockScreen() {
     );
   }
 
-  const alertByProduct = new Map(
-    (data?.alerts ?? []).map((a) => [a.productId, a]),
-  );
-
   return (
     <View style={styles.container}>
       <SyncStatusBar />
@@ -313,17 +383,17 @@ export default function StockScreen() {
           <Ionicons name="business-outline" size={48} color={COLORS.disabled} />
           <Text style={styles.emptyTitle}>Sin edificio seleccionado</Text>
         </View>
-      ) : !isCheckedIn ? (
+      ) : resolvingAttendance || (loading && !data) ? (
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+        </View>
+      ) : !isCheckedIn && !data ? (
         <View style={styles.center}>
           <Ionicons name="time-outline" size={48} color={COLORS.disabled} />
           <Text style={styles.emptyTitle}>Fichaje requerido</Text>
           <Text style={styles.emptyText}>
             Para ver y reportar stock tenés que estar fichado en este edificio.
           </Text>
-        </View>
-      ) : loading && !data ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
         </View>
       ) : (
         <ScrollView
@@ -352,7 +422,11 @@ export default function StockScreen() {
           </View>
 
           {(data?.items ?? []).length === 0 ? (
-            <Text style={styles.muted}>No hay productos habilitados en este edificio.</Text>
+            <Text style={styles.muted}>
+              No hay productos habilitados. Creá un envío a este edificio (o despachalo si ya
+              existe) y volvé a refrescar. Las entregas en camino solo se ven con la orden
+              despachada.
+            </Text>
           ) : (
             (data?.items ?? []).map((item) => {
               const alert = alertByProduct.get(item.product.id);
@@ -445,7 +519,7 @@ export default function StockScreen() {
             >
               <Text style={styles.modalTitle}>Reportar alerta</Text>
 
-              <Text style={styles.label}>Producto</Text>
+              <Text style={styles.label}>Productos</Text>
               <View style={styles.productSearchBar}>
                 <Ionicons name="search" size={18} color={COLORS.textMuted} />
                 <TextInput
@@ -469,19 +543,34 @@ export default function StockScreen() {
                 ) : null}
               </View>
 
-              {selectedAlertProduct ? (
-                <View style={styles.selectedProductChip}>
-                  <Ionicons name="checkmark-circle" size={16} color={COLORS.primary} />
-                  <Text style={styles.selectedProductChipText} numberOfLines={2}>
-                    {selectedAlertProduct.product.name}
-                    {selectedAlertProduct.product.sku
-                      ? ` · ${selectedAlertProduct.product.sku}`
-                      : ''}
+              {selectedAlertProducts.length > 0 ? (
+                <View style={styles.selectedProductsWrap}>
+                  <Text style={styles.selectedProductsCount}>
+                    {selectedAlertProducts.length === 1
+                      ? '1 producto seleccionado'
+                      : `${selectedAlertProducts.length} productos seleccionados`}
                   </Text>
-                  <Text style={styles.selectedProductQty}>{selectedAlertProduct.quantity}</Text>
+                  {selectedAlertProducts.map((item) => (
+                    <View key={item.id} style={styles.selectedProductChip}>
+                      <Ionicons name="checkmark-circle" size={16} color={COLORS.primary} />
+                      <Text style={styles.selectedProductChipText} numberOfLines={2}>
+                        {item.product.name}
+                        {item.product.sku ? ` · ${item.product.sku}` : ''}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => toggleAlertProduct(item.product.id)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityLabel={`Quitar ${item.product.name}`}
+                      >
+                        <Ionicons name="close-circle" size={18} color={COLORS.disabled} />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
                 </View>
               ) : (
-                <Text style={styles.productSearchHint}>Seleccioná un producto de la lista.</Text>
+                <Text style={styles.productSearchHint}>
+                  Seleccioná uno o más productos de la lista.
+                </Text>
               )}
 
               <ScrollView
@@ -498,24 +587,43 @@ export default function StockScreen() {
                   </Text>
                 ) : (
                   filteredAlertProducts.map((item) => {
-                    const isSelected = alertProductId === item.product.id;
+                    const isSelected = alertProductIds.includes(item.product.id);
+                    const existingAlert = alertByProduct.get(item.product.id);
+                    const disabled = Boolean(existingAlert);
                     return (
                       <TouchableOpacity
                         key={item.id}
                         style={[
                           styles.productPickerRow,
                           isSelected && styles.productPickerRowActive,
+                          disabled && styles.productPickerRowDisabled,
                         ]}
-                        onPress={() => {
-                          setAlertProductId(item.product.id);
-                          Keyboard.dismiss();
-                        }}
+                        disabled={disabled}
+                        onPress={() => toggleAlertProduct(item.product.id)}
                       >
+                        <Ionicons
+                          name={
+                            disabled
+                              ? 'alert-circle'
+                              : isSelected
+                                ? 'checkbox'
+                                : 'square-outline'
+                          }
+                          size={20}
+                          color={
+                            disabled
+                              ? '#d97706'
+                              : isSelected
+                                ? COLORS.primary
+                                : COLORS.disabled
+                          }
+                        />
                         <View style={styles.productPickerRowMain}>
                           <Text
                             style={[
                               styles.productPickerName,
                               isSelected && styles.productPickerNameActive,
+                              disabled && styles.productPickerNameDisabled,
                             ]}
                             numberOfLines={2}
                           >
@@ -524,11 +632,17 @@ export default function StockScreen() {
                           {item.product.sku ? (
                             <Text style={styles.productPickerSku}>SKU {item.product.sku}</Text>
                           ) : null}
+                          {existingAlert ? (
+                            <Text style={styles.productPickerSku}>
+                              Ya tiene alerta ({ALERT_STATUS_LABELS[existingAlert.status] ?? existingAlert.status})
+                            </Text>
+                          ) : null}
                         </View>
                         <Text
                           style={[
                             styles.productPickerQty,
                             isSelected && styles.productPickerQtyActive,
+                            disabled && styles.productPickerNameDisabled,
                           ]}
                         >
                           {item.quantity}
@@ -582,7 +696,13 @@ export default function StockScreen() {
                   disabled={submitting}
                   onPress={() => void submitAlert()}
                 >
-                  <Text style={styles.saveBtnText}>{submitting ? 'Enviando...' : 'Enviar'}</Text>
+                  <Text style={styles.saveBtnText}>
+                    {submitting
+                      ? 'Enviando...'
+                      : alertProductIds.length > 1
+                        ? `Enviar (${alertProductIds.length})`
+                        : 'Enviar'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -721,7 +841,15 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
+  },
+  selectedProductsWrap: {
+    gap: 8,
     marginBottom: 8,
+  },
+  selectedProductsCount: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textMuted,
   },
   selectedProductChipText: {
     flex: 1,
@@ -754,6 +882,9 @@ const styles = StyleSheet.create({
   productPickerRowActive: {
     backgroundColor: '#eff6ff',
   },
+  productPickerRowDisabled: {
+    opacity: 0.55,
+  },
   productPickerRowMain: {
     flex: 1,
     gap: 2,
@@ -765,6 +896,9 @@ const styles = StyleSheet.create({
   },
   productPickerNameActive: {
     color: COLORS.primary,
+  },
+  productPickerNameDisabled: {
+    color: COLORS.textMuted,
   },
   productPickerSku: {
     fontSize: 11,

@@ -26,8 +26,10 @@ import {
   enrichWorkOrdersWithAssignments,
   excludeExpiredWorkOrders,
   filterWorkOrdersAssignedToUser,
+  formatWorkOrderActionError,
   formatWorkOrderScheduledDate,
   getWorkOrderTaskCount,
+  isAlreadyRespondedAssignmentError,
   normalizeWorkOrdersList,
   sortWorkOrdersByDate,
 } from '../../src/utils/work-orders';
@@ -413,7 +415,24 @@ export default function FichajeScreen() {
             all={all}
             pending={pending}
             accepted={accepted}
+            isOnline={isOnline}
             onPressItem={(id) => router.push(`/service/${id}`)}
+            onAcceptedLocally={(ids) => {
+              const idSet = new Set(ids);
+              setWorkOrders((prev) =>
+                prev.map((wo) => {
+                  if (!idSet.has(wo.id)) return wo;
+                  return {
+                    ...wo,
+                    status: 'ACCEPTED',
+                    assignments: (wo.assignments ?? []).map((a) =>
+                      user?.id && a.userId === user.id ? { ...a, status: 'ACCEPTED' } : a,
+                    ),
+                  };
+                }),
+              );
+              void refreshPrefetch();
+            }}
           />
         )}
       </ScrollView>
@@ -425,15 +444,21 @@ function WorkOrderTabbedList({
   all,
   pending,
   accepted,
+  isOnline,
   onPressItem,
+  onAcceptedLocally,
 }: {
   all: WorkOrderCached[];
   pending: WorkOrderCached[];
   accepted: WorkOrderCached[];
+  isOnline: boolean;
   onPressItem: (id: string) => void;
+  onAcceptedLocally: (ids: string[]) => void;
 }) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<ServiceTab>('all');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [accepting, setAccepting] = useState(false);
 
   const tabs: { key: ServiceTab; label: string; count: number }[] = [
     { key: 'all', label: 'Todas', count: all.length },
@@ -451,6 +476,82 @@ function WorkOrderTabbedList({
   };
 
   const pendingIds = useMemo(() => new Set(pending.map((wo) => wo.id)), [pending]);
+  const canSelectPending = activeTab === 'pending' && pending.length > 0;
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [activeTab]);
+
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set([...prev].filter((id) => pendingIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [pendingIds]);
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === pending.length) {
+      setSelectedIds(new Set());
+      return;
+    }
+    setSelectedIds(new Set(pending.map((wo) => wo.id)));
+  }
+
+  async function acceptSelected() {
+    const ids = [...selectedIds];
+    if (ids.length === 0 || accepting) return;
+    if (!isOnline) {
+      Alert.alert('Sin conexión', 'No es posible aceptar servicios sin conexión.');
+      return;
+    }
+
+    setAccepting(true);
+    const acceptedOk: string[] = [];
+    const failed: string[] = [];
+
+    try {
+      for (const id of ids) {
+        try {
+          await apiService.postOk(`/work-orders/${id}/accept`, {});
+          acceptedOk.push(id);
+        } catch (e) {
+          if (isAlreadyRespondedAssignmentError(e)) {
+            acceptedOk.push(id);
+            continue;
+          }
+          failed.push(id);
+        }
+      }
+
+      if (acceptedOk.length > 0) {
+        onAcceptedLocally(acceptedOk);
+        setSelectedIds(new Set());
+      }
+
+      if (failed.length > 0 && acceptedOk.length === 0) {
+        Alert.alert('Error', 'No se pudieron aceptar los servicios seleccionados.');
+      } else if (failed.length > 0) {
+        Alert.alert(
+          'Aceptación parcial',
+          `Se aceptaron ${acceptedOk.length} de ${ids.length}. Revisá los que quedaron pendientes.`,
+        );
+      }
+    } catch (e) {
+      Alert.alert('Error', formatWorkOrderActionError(e, 'No se pudieron aceptar'));
+    } finally {
+      setAccepting(false);
+    }
+  }
 
   return (
     <View style={styles.servicesPanel}>
@@ -487,53 +588,108 @@ function WorkOrderTabbedList({
         })}
       </View>
 
+      {canSelectPending ? (
+        <View style={styles.bulkBar}>
+          <TouchableOpacity onPress={toggleSelectAll} hitSlop={8}>
+            <Text style={styles.bulkLink}>
+              {selectedIds.size === pending.length ? 'Quitar selección' : 'Seleccionar todos'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.bulkAcceptBtn,
+              (selectedIds.size === 0 || accepting) && styles.bulkAcceptBtnDisabled,
+            ]}
+            disabled={selectedIds.size === 0 || accepting}
+            onPress={() => void acceptSelected()}
+          >
+            {accepting ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.bulkAcceptText}>
+                Aceptar{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
       <View style={styles.listCard}>
         {items.length === 0 ? (
           <Text style={styles.sectionEmpty}>{emptyMessages[activeTab]}</Text>
         ) : (
-          items.map((item) => (
-            <TouchableOpacity
-              key={item.id}
-              style={styles.serviceRow}
-              onPress={() => onPressItem(item.id)}
-              activeOpacity={0.85}
-            >
-              <View style={styles.serviceRowMain}>
-                <View style={styles.serviceRowTitleRow}>
-                  <Text style={styles.serviceRowTitle} numberOfLines={2}>
-                    {item.title}
-                  </Text>
-                  {activeTab === 'all' && (
-                    <View
-                      style={[
-                        styles.statusPill,
-                        pendingIds.has(item.id) ? styles.statusPillPending : styles.statusPillAccepted,
-                      ]}
-                    >
-                      <Text
+          items.map((item) => {
+            const selected = selectedIds.has(item.id);
+            return (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.serviceRow}
+                onPress={() => {
+                  if (canSelectPending) {
+                    toggleSelect(item.id);
+                    return;
+                  }
+                  onPressItem(item.id);
+                }}
+                onLongPress={() => onPressItem(item.id)}
+                activeOpacity={0.85}
+              >
+                {canSelectPending ? (
+                  <Ionicons
+                    name={selected ? 'checkbox' : 'square-outline'}
+                    size={22}
+                    color={selected ? COLORS.primary : COLORS.textMuted}
+                  />
+                ) : null}
+                <View style={styles.serviceRowMain}>
+                  <View style={styles.serviceRowTitleRow}>
+                    <Text style={styles.serviceRowTitle} numberOfLines={2}>
+                      {item.title}
+                    </Text>
+                    {activeTab === 'all' && (
+                      <View
                         style={[
-                          styles.statusPillText,
+                          styles.statusPill,
                           pendingIds.has(item.id)
-                            ? styles.statusPillTextPending
-                            : styles.statusPillTextAccepted,
+                            ? styles.statusPillPending
+                            : styles.statusPillAccepted,
                         ]}
                       >
-                        {pendingIds.has(item.id) ? 'Pendiente' : 'Aceptada'}
-                      </Text>
-                    </View>
-                  )}
+                        <Text
+                          style={[
+                            styles.statusPillText,
+                            pendingIds.has(item.id)
+                              ? styles.statusPillTextPending
+                              : styles.statusPillTextAccepted,
+                          ]}
+                        >
+                          {pendingIds.has(item.id) ? 'Pendiente' : 'Aceptada'}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.serviceRowMeta}>
+                    {formatScheduledDate(item.scheduledDate)}
+                    {' · '}
+                    {TYPE_LABELS[item.type] ?? item.type}
+                    {' · '}
+                    {getWorkOrderTaskCount(item)} tareas
+                  </Text>
                 </View>
-                <Text style={styles.serviceRowMeta}>
-                  {formatScheduledDate(item.scheduledDate)}
-                  {' · '}
-                  {TYPE_LABELS[item.type] ?? item.type}
-                  {' · '}
-                  {getWorkOrderTaskCount(item)} tareas
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
-            </TouchableOpacity>
-          ))
+                {!canSelectPending ? (
+                  <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => onPressItem(item.id)}
+                    hitSlop={10}
+                    accessibilityLabel="Abrir detalle"
+                  >
+                    <Ionicons name="open-outline" size={18} color={COLORS.textMuted} />
+                  </TouchableOpacity>
+                )}
+              </TouchableOpacity>
+            );
+          })
         )}
       </View>
     </View>
@@ -744,6 +900,34 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     overflow: 'hidden',
+  },
+  bulkBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 10,
+  },
+  bulkLink: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
+  bulkAcceptBtn: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    minWidth: 120,
+    alignItems: 'center',
+  },
+  bulkAcceptBtnDisabled: {
+    opacity: 0.45,
+  },
+  bulkAcceptText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
   },
   sectionEmpty: {
     padding: 16,

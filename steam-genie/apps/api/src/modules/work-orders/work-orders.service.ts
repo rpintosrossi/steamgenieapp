@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { PhotoEvidenceMode, PhotoPhase, WorkOrderStatus, WorkOrderType } from '@prisma/client';
 import {
+  buildClientPdfFilename,
   calendarDateFromInstant,
   endOfStoredCalendarDateInBusinessTz,
   formatStoredCalendarDate,
@@ -31,11 +32,6 @@ import {
   type ServiceReportTask,
 } from './service-report-pdf.service';
 import type { AuthUser } from '@steam-genie/shared-types';
-
-const SERVICE_TYPE_LABELS: Record<string, string> = {
-  CHECKOUT_CLEANING: 'Limpieza checkout',
-  ADDITIONAL_REQUEST: 'Pedido adicional',
-};
 
 const EXTERNAL_VIEWER_ROLES = new Set(['client', 'provider']);
 const EXTERNAL_VIEWER_STATUSES: WorkOrderStatus[] = [
@@ -75,7 +71,8 @@ const WO_DETAIL_INCLUDE = {
   workOrderTasks: {
     select: {
       id: true, taskId: true, nameSnapshot: true,
-      requiresPhotoSnapshot: true, allowsObservationSnapshot: true,
+      allowsPhotoSnapshot: true, requiresPhotoSnapshot: true,
+      allowsObservationSnapshot: true,
       requiresRejectionReasonSnapshot: true, sortOrder: true,
       task: { select: { zoneId: true, subzoneId: true } },
       customFieldSnapshots: {
@@ -616,6 +613,8 @@ export class WorkOrdersService {
             workOrderId: id,
             taskId: null,
             nameSnapshot: task.name.trim(),
+            allowsPhotoSnapshot:
+              task.requiresPhoto === true || task.allowsPhoto === true,
             requiresPhotoSnapshot: task.requiresPhoto === true,
             allowsObservationSnapshot: true,
             requiresRejectionReasonSnapshot: false,
@@ -1444,6 +1443,7 @@ export class WorkOrdersService {
         reservation: { select: { guestName: true } },
         quote: {
           select: {
+            number: true,
             particularClient: { select: { name: true } },
             eventualClient: { select: { name: true } },
             building: { select: { name: true } },
@@ -1605,7 +1605,6 @@ export class WorkOrdersService {
 
     const buffer = await this.serviceReportPdf.buildPdf({
       title: wo.title,
-      serviceTypeLabel: SERVICE_TYPE_LABELS[wo.type] ?? wo.type,
       reportDateLabel: formatDateEs(new Date()),
       serviceDateLabel,
       startedAtLabel: formatDateTimeEs(se?.startedAt ?? wo.startedAt),
@@ -1618,17 +1617,11 @@ export class WorkOrdersService {
       tasks,
     });
 
-    const safeClient = clientName
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-zA-Z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 40)
-      .toLowerCase();
     const dateKey = wo.scheduledDate
-      ? formatStoredCalendarDate(wo.scheduledDate, 'en-CA')
+      ? formatStoredCalendarDate(wo.scheduledDate, 'en-CA').replace(/-/g, '')
       : wo.id.slice(0, 8);
-    const filename = `resumen-servicio-${safeClient || 'cliente'}-${dateKey}.pdf`;
+    const numberPart = wo.quote?.number ?? dateKey;
+    const filename = buildClientPdfFilename(clientName, numberPart);
 
     return { buffer, filename };
   }
@@ -1713,6 +1706,7 @@ function resolveServiceReportClientName(wo: {
   reservation: { guestName: string | null } | null;
   building: { name: string; particularClient: { name: string } | null };
   quote: {
+    number?: number;
     particularClient: { name: string } | null;
     eventualClient: { name: string } | null;
     building: { name: string } | null;

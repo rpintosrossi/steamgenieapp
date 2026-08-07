@@ -45,6 +45,7 @@ export interface TemplateRowData {
   frequencyRaw?: string;
   startDateRaw?: string;
   requiresPhoto?: boolean;
+  allowsPhoto?: boolean;
   allowsObservation?: boolean;
   requiresRejectionReason?: boolean;
 }
@@ -69,6 +70,7 @@ export interface ParsedImportRow {
   frequencyRaw?: string;
   startDateRaw?: unknown;
   requiresPhoto?: boolean;
+  allowsPhoto?: boolean;
   allowsObservation?: boolean;
   requiresRejectionReason?: boolean;
 }

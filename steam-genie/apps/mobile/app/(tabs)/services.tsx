@@ -7,6 +7,7 @@ import {
   StyleSheet,
   RefreshControl,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,8 +21,11 @@ import { COLORS } from '../../src/constants/colors';
 import { getWorkOrderTypeLabel } from '../../src/constants/work-order-types';
 import {
   filterWorkOrdersAssignedToUser,
+  formatWorkOrderActionError,
   formatWorkOrderScheduledDate,
+  getUserAssignment,
   getWorkOrderTaskCount,
+  isAlreadyRespondedAssignmentError,
   isWorkOrderActive,
   isWorkOrderExpired,
   normalizeWorkOrdersList,
@@ -74,6 +78,8 @@ export default function ServicesScreen() {
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isUserRefreshing, setIsUserRefreshing] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'active' | 'all'>('active');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [accepting, setAccepting] = useState(false);
 
   const loadFromApi = useCallback(
     async (options?: { userRefresh?: boolean }) => {
@@ -152,21 +158,138 @@ export default function ServicesScreen() {
     return sortWorkOrdersByDate(filtered);
   }, [workOrders, activeFilter]);
 
+  const pendingAcceptIds = useMemo(() => {
+    if (!user?.id) return new Set<string>();
+    return new Set(
+      displayedWOs
+        .filter((wo) => getUserAssignment(wo, user.id)?.status === 'PENDING')
+        .map((wo) => wo.id),
+    );
+  }, [displayedWOs, user?.id]);
+
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set([...prev].filter((id) => pendingAcceptIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [pendingAcceptIds]);
+
   const activeCount = workOrders.filter(isWorkOrderActive).length;
+  const pendingCount = pendingAcceptIds.size;
+
+  function toggleSelect(id: string) {
+    if (!pendingAcceptIds.has(id)) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllPending() {
+    if (selectedIds.size === pendingAcceptIds.size) {
+      setSelectedIds(new Set());
+      return;
+    }
+    setSelectedIds(new Set(pendingAcceptIds));
+  }
+
+  async function acceptSelected() {
+    const ids = [...selectedIds];
+    if (ids.length === 0 || accepting) return;
+    if (!isOnline) {
+      Alert.alert('Sin conexión', 'No es posible aceptar servicios sin conexión.');
+      return;
+    }
+
+    setAccepting(true);
+    const acceptedOk: string[] = [];
+    const failed: string[] = [];
+
+    try {
+      for (const id of ids) {
+        try {
+          await apiService.postOk(`/work-orders/${id}/accept`, {});
+          acceptedOk.push(id);
+        } catch (e) {
+          if (isAlreadyRespondedAssignmentError(e)) {
+            acceptedOk.push(id);
+            continue;
+          }
+          failed.push(id);
+        }
+      }
+
+      if (acceptedOk.length > 0) {
+        const idSet = new Set(acceptedOk);
+        setWorkOrders((prev) =>
+          prev.map((wo) => {
+            if (!idSet.has(wo.id)) return wo;
+            return {
+              ...wo,
+              status: 'ACCEPTED',
+              assignments: (wo.assignments ?? []).map((a) =>
+                user?.id && a.userId === user.id ? { ...a, status: 'ACCEPTED' } : a,
+              ),
+            };
+          }),
+        );
+        setSelectedIds(new Set());
+        void refreshPrefetch();
+      }
+
+      if (failed.length > 0 && acceptedOk.length === 0) {
+        Alert.alert('Error', 'No se pudieron aceptar los servicios seleccionados.');
+      } else if (failed.length > 0) {
+        Alert.alert(
+          'Aceptación parcial',
+          `Se aceptaron ${acceptedOk.length} de ${ids.length}. Revisá los que quedaron pendientes.`,
+        );
+      }
+    } catch (e) {
+      Alert.alert('Error', formatWorkOrderActionError(e, 'No se pudieron aceptar'));
+    } finally {
+      setAccepting(false);
+    }
+  }
 
   function renderItem({ item }: { item: WorkOrderCached }) {
     const { label, color } = getStatusDisplay(item);
     const taskCount = getWorkOrderTaskCount(item);
+    const canSelect = pendingAcceptIds.has(item.id);
+    const selected = selectedIds.has(item.id);
 
     return (
       <TouchableOpacity
-        style={styles.card}
-        onPress={() => router.push(`/service/${item.id}`)}
+        style={[styles.card, selected && styles.cardSelected]}
+        onPress={() => {
+          if (canSelect && selectedIds.size > 0) {
+            toggleSelect(item.id);
+            return;
+          }
+          router.push(`/service/${item.id}`);
+        }}
+        onLongPress={() => {
+          if (canSelect) toggleSelect(item.id);
+        }}
         activeOpacity={0.85}
       >
         <View style={styles.cardHeader}>
-          <View style={[styles.statusBadge, { backgroundColor: color }]}>
-            <Text style={styles.statusBadgeText}>{label}</Text>
+          <View style={styles.cardHeaderLeft}>
+            {canSelect ? (
+              <TouchableOpacity onPress={() => toggleSelect(item.id)} hitSlop={8}>
+                <Ionicons
+                  name={selected ? 'checkbox' : 'square-outline'}
+                  size={22}
+                  color={selected ? COLORS.primary : COLORS.textMuted}
+                />
+              </TouchableOpacity>
+            ) : null}
+            <View style={[styles.statusBadge, { backgroundColor: color }]}>
+              <Text style={styles.statusBadgeText}>{label}</Text>
+            </View>
           </View>
           <Text style={styles.cardType}>{getWorkOrderTypeLabel(item.type)}</Text>
         </View>
@@ -242,6 +365,32 @@ export default function ServicesScreen() {
         </TouchableOpacity>
       </View>
 
+      {pendingCount > 0 ? (
+        <View style={styles.bulkBar}>
+          <TouchableOpacity onPress={toggleSelectAllPending} hitSlop={8}>
+            <Text style={styles.bulkLink}>
+              {selectedIds.size === pendingCount ? 'Quitar selección' : 'Seleccionar pendientes'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.bulkAcceptBtn,
+              (selectedIds.size === 0 || accepting) && styles.bulkAcceptBtnDisabled,
+            ]}
+            disabled={selectedIds.size === 0 || accepting}
+            onPress={() => void acceptSelected()}
+          >
+            {accepting ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.bulkAcceptText}>
+                Aceptar{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
       <FlatList
         data={displayedWOs}
         keyExtractor={(item) => item.id}
@@ -283,6 +432,38 @@ const styles = StyleSheet.create({
   filterTabActive: { borderBottomColor: COLORS.primary },
   filterTabText: { fontSize: 13, color: COLORS.textMuted, fontWeight: '500' },
   filterTabTextActive: { color: COLORS.primary, fontWeight: '700' },
+  bulkBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: COLORS.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  bulkLink: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
+  bulkAcceptBtn: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    minWidth: 120,
+    alignItems: 'center',
+  },
+  bulkAcceptBtnDisabled: {
+    opacity: 0.45,
+  },
+  bulkAcceptText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   list: { padding: 16, paddingBottom: 24 },
   listEmpty: { flexGrow: 1, padding: 16, justifyContent: 'center' },
   separator: { height: 12 },
@@ -296,8 +477,15 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
     gap: 6,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  cardSelected: {
+    borderColor: COLORS.primary,
+    backgroundColor: '#eff6ff',
   },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  cardHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   statusBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   cardType: { fontSize: 11, color: COLORS.textMuted, fontWeight: '500' },

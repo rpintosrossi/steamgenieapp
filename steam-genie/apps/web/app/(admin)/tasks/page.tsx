@@ -323,7 +323,13 @@ export default function TasksPage() {
                           subzone={task.subzone}
                         />
                       </td>
-                      <td>{task.requiresPhoto ? 'Sí' : 'No'}</td>
+                      <td>
+                        {task.requiresPhoto
+                          ? 'Obligatoria'
+                          : task.allowsPhoto
+                            ? 'Opcional'
+                            : 'No'}
+                      </td>
                       <td>
                         <span className={`badge ${task.isActive ? 'badge-success' : 'badge-warning'}`}>
                           {task.isActive ? 'Activa' : 'No activa'}

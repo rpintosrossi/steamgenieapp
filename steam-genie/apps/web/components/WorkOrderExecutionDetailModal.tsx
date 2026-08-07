@@ -1,27 +1,29 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api-client';
 import {
   TASK_EXECUTION_STATUS_LABELS,
   WORK_ORDER_STATUS_LABELS,
   WORK_ORDER_TYPE_LABELS,
 } from '../lib/labels';
-import { formatStoredCalendarDate } from '@steam-genie/shared-constants';
+import { formatStoredCalendarDate, buildClientPdfFilename } from '@steam-genie/shared-constants';
 import type {
   PhotoEvidenceMode,
   ServiceExecutionPhasePhoto,
   ServiceExecutionTaskItem,
   WorkOrderDetail,
 } from '../lib/types';
+import type { TaskPhotoGalleryItem } from './TaskPhotoLightbox';
 import { TaskPhotoThumb } from './TaskPhotoThumb';
 
 function buildServiceReportFilename(wo: WorkOrderDetail): string {
+  const clientName = wo.building?.name ?? 'Cliente';
   const dateKey =
     formatStoredCalendarDate(wo.scheduledDate, 'en-CA') !== '—'
-      ? formatStoredCalendarDate(wo.scheduledDate, 'en-CA')
+      ? formatStoredCalendarDate(wo.scheduledDate, 'en-CA').replace(/-/g, '')
       : wo.id.slice(0, 8);
-  return `resumen-servicio-${dateKey}.pdf`;
+  return buildClientPdfFilename(clientName, dateKey);
 }
 
 type Props = {
@@ -139,6 +141,60 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose }: Props) {
       .map((p) => p.user?.fullName)
       .filter((name): name is string => Boolean(name)) ?? [];
 
+  const serviceGallery = useMemo((): TaskPhotoGalleryItem[] => {
+    if (!wo) return [];
+
+    const location = {
+      buildingName: wo.building?.name ?? null,
+      floor: wo.floor ?? null,
+      zone: wo.zone ?? null,
+      subzone: wo.subzone ?? null,
+    };
+
+    const phaseItems: TaskPhotoGalleryItem[] = phasePhotos.map((photo) => ({
+      id: photo.id,
+      photoId: photo.id,
+      photoUrl: photo.url,
+      title: photo.originalFilename ?? PHASE_LABELS[photo.phase] ?? 'Foto de fase',
+      context: {
+        capturedAt: photo.capturedAt,
+        uploadedAt: photo.uploadedAt,
+        uploadedByName: photo.uploadedByName ?? participants[0] ?? null,
+        taskName: `${wo.title} · ${PHASE_LABELS[photo.phase] ?? photo.phase}`,
+        ...location,
+      },
+    }));
+
+    if (isBdaMode) return phaseItems;
+
+    const taskItems: TaskPhotoGalleryItem[] = [];
+    for (const item of tasks) {
+      for (const photo of item.execution?.photos ?? []) {
+        taskItems.push({
+          id: photo.id,
+          photoId: photo.id,
+          photoUrl: photo.url,
+          title: photo.originalFilename ?? item.nameSnapshot,
+          context: {
+            capturedAt: photo.capturedAt,
+            uploadedAt: photo.uploadedAt,
+            uploadedByName: item.execution?.executedByName ?? null,
+            taskName: item.nameSnapshot,
+            ...location,
+          },
+        });
+      }
+    }
+
+    return [...phaseItems, ...taskItems];
+  }, [wo, phasePhotos, tasks, isBdaMode, participants]);
+
+  const galleryIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    serviceGallery.forEach((item, index) => map.set(item.id, index));
+    return map;
+  }, [serviceGallery]);
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
@@ -250,6 +306,8 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose }: Props) {
                                     photoId={photo.id}
                                     photoUrl={photo.url}
                                     title={photo.originalFilename ?? PHASE_LABELS[phase]}
+                                    gallery={serviceGallery}
+                                    galleryIndex={galleryIndexById.get(photo.id) ?? 0}
                                     context={{
                                       capturedAt: photo.capturedAt,
                                       uploadedAt: photo.uploadedAt,
@@ -331,6 +389,8 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose }: Props) {
                                           photoId={photo.id}
                                           photoUrl={photo.url}
                                           title={photo.originalFilename ?? 'Ver foto'}
+                                          gallery={serviceGallery}
+                                          galleryIndex={galleryIndexById.get(photo.id) ?? 0}
                                           context={{
                                             capturedAt: photo.capturedAt,
                                             uploadedAt: photo.uploadedAt,

@@ -10,4 +10,8 @@ export class UpdateRejectionReasonDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  allowsFreeText?: boolean;
 }

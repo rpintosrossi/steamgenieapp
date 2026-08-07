@@ -15,6 +15,7 @@ import {
 import { QuoteStatus } from '@prisma/client';
 import { EventualClientInputDto } from './create-quote.dto';
 import { QuoteItemDto } from './quote-item.dto';
+import { QuotePaymentInputDto } from './payment-method.dto';
 
 export class UpdateQuoteDto {
   @IsOptional()
@@ -98,6 +99,12 @@ export class UpdateQuoteDto {
   @ValidateIf((_, v) => v !== null)
   @IsString()
   @MaxLength(2000)
+  internalNotes?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(2000)
   serviceIncludes?: string | null;
 
   @IsOptional()
@@ -111,4 +118,10 @@ export class UpdateQuoteDto {
   @ValidateNested({ each: true })
   @Type(() => QuoteItemDto)
   items?: QuoteItemDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => QuotePaymentInputDto)
+  payments?: QuotePaymentInputDto[];
 }

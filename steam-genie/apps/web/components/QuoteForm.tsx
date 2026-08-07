@@ -9,8 +9,10 @@ import type {
   Building,
   Paginated,
   ParticularClientItem,
+  PaymentMethodItem,
   Quote,
   QuoteItemInput,
+  QuotePaymentInput,
   UserItem,
 } from '../lib/types';
 
@@ -23,11 +25,25 @@ type DraftItem = {
   discountPercent: string;
 };
 
+type DraftPayment = {
+  paymentMethodId: string;
+  isPending: boolean;
+  percent: string;
+  note: string;
+};
+
 const EMPTY_ITEM: DraftItem = {
   quantity: '1',
   description: '',
   unitPrice: '',
   discountPercent: '',
+};
+
+const EMPTY_PAYMENT: DraftPayment = {
+  paymentMethodId: '',
+  isPending: false,
+  percent: '',
+  note: '',
 };
 
 function todayIso() {
@@ -56,6 +72,19 @@ function quoteToDraftItems(quote: Quote): DraftItem[] {
       item.discountPercent != null && item.discountPercent !== ''
         ? String(item.discountPercent)
         : '',
+  }));
+}
+
+function quoteToDraftPayments(quote: Quote): DraftPayment[] {
+  if (!quote.payments?.length) return [];
+  return quote.payments.map((payment) => ({
+    paymentMethodId: payment.paymentMethodId,
+    isPending: payment.isPending,
+    percent:
+      payment.percent != null && payment.percent !== ''
+        ? String(payment.percent)
+        : '',
+    note: payment.note ?? '',
   }));
 }
 
@@ -108,6 +137,7 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
   const [observations, setObservations] = useState(
     initialQuote?.observations ?? 'ESTE PRESUPUESTO ES VALIDO POR UN MES',
   );
+  const [internalNotes, setInternalNotes] = useState(initialQuote?.internalNotes ?? '');
   const [serviceIncludes, setServiceIncludes] = useState(
     initialQuote?.serviceIncludes?.trim()
       ? initialQuote.serviceIncludes
@@ -116,6 +146,10 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
   const [items, setItems] = useState<DraftItem[]>(
     initialQuote ? quoteToDraftItems(initialQuote) : [{ ...EMPTY_ITEM }],
   );
+  const [payments, setPayments] = useState<DraftPayment[]>(
+    initialQuote ? quoteToDraftPayments(initialQuote) : [],
+  );
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [contactPrefillDone, setContactPrefillDone] = useState(mode === 'edit');
@@ -139,6 +173,10 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
       .get<Paginated<Building>>('/buildings?limit=100')
       .then((res) => setBuildings(res.data))
       .catch(() => setBuildings([]));
+    void api
+      .get<PaymentMethodItem[]>('/payment-methods?includeInactive=false')
+      .then(setPaymentMethods)
+      .catch(() => setPaymentMethods([]));
   }, []);
 
   useEffect(() => {
@@ -157,6 +195,49 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
 
   function updateItem(index: number, patch: Partial<DraftItem>) {
     setItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  }
+
+  function updatePayment(index: number, patch: Partial<DraftPayment>) {
+    setPayments((prev) =>
+      prev.map((payment, i) => (i === index ? { ...payment, ...patch } : payment)),
+    );
+  }
+
+  function buildPaymentsPayload(): QuotePaymentInput[] | null {
+    const payload: QuotePaymentInput[] = [];
+    for (const payment of payments) {
+      if (!payment.paymentMethodId) {
+        setError('Cada línea de pago necesita un método.');
+        return null;
+      }
+      if (payment.isPending) {
+        payload.push({
+          paymentMethodId: payment.paymentMethodId,
+          isPending: true,
+          ...(payment.note.trim() ? { note: payment.note.trim() } : {}),
+        });
+        continue;
+      }
+      const percent = Number(payment.percent);
+      if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
+        setError('Cada pago abonado necesita un % entre 0.01 y 100.');
+        return null;
+      }
+      payload.push({
+        paymentMethodId: payment.paymentMethodId,
+        isPending: false,
+        percent,
+        ...(payment.note.trim() ? { note: payment.note.trim() } : {}),
+      });
+    }
+    const percentSum = payload
+      .filter((p) => !p.isPending)
+      .reduce((acc, p) => acc + (p.percent ?? 0), 0);
+    if (percentSum > 100.001) {
+      setError(`La suma de porcentajes abonados no puede superar 100% (ahora ${percentSum}%).`);
+      return null;
+    }
+    return payload;
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -208,6 +289,9 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
       }
     }
 
+    const paymentsPayload = buildPaymentsPayload();
+    if (paymentsPayload === null) return;
+
     setSaving(true);
     try {
       const clientPayload =
@@ -244,7 +328,9 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
         paymentCondition: paymentCondition.trim() || null,
         paymentTerms: paymentTerms.trim() || null,
         observations: observations.trim() || null,
+        internalNotes: internalNotes.trim() || null,
         serviceIncludes: serviceIncludes.trim() || null,
+        payments: paymentsPayload,
         ...(!itemsLocked ? { items: payloadItems } : {}),
       };
 
@@ -275,7 +361,9 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
           paymentCondition: paymentCondition.trim() || undefined,
           paymentTerms: paymentTerms.trim() || undefined,
           observations: observations.trim() || undefined,
+          internalNotes: internalNotes.trim() || undefined,
           serviceIncludes: serviceIncludes.trim() || undefined,
+          payments: paymentsPayload,
           items: payloadItems,
         });
         router.push(`/presupuestos/${quote.id}`);
@@ -545,12 +633,23 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
             />
           </div>
           <div className="form-field">
-            <label htmlFor="q-obs">Observaciones</label>
+            <label htmlFor="q-obs">Observaciones (cliente / PDF)</label>
             <input
               id="q-obs"
               className="input"
               value={observations}
               onChange={(e) => setObservations(e.target.value)}
+            />
+          </div>
+          <div className="form-field">
+            <label htmlFor="q-internal">Observaciones internas</label>
+            <textarea
+              id="q-internal"
+              className="input"
+              rows={3}
+              value={internalNotes}
+              onChange={(e) => setInternalNotes(e.target.value)}
+              placeholder="Solo visibles en el panel, no van al PDF ni al cliente"
             />
           </div>
           <div className="form-field">
@@ -567,6 +666,107 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
               Una línea por punto. Aparece en el PDF bajo “EL SERVICIO INCLUYE”.
             </p>
           </div>
+        </div>
+
+        <div className="card stack">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2 className="card-title" style={{ margin: 0 }}>
+              Pagos / medios
+            </h2>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setPayments((prev) => [...prev, { ...EMPTY_PAYMENT }])}
+              disabled={paymentMethods.length === 0}
+            >
+              Agregar medio
+            </button>
+          </div>
+          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+            Registrá % ya abonado por medio, o marcá un medio como pendiente. No aparece en el PDF.
+          </p>
+          {paymentMethods.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>
+              No hay métodos activos. Creálos en{' '}
+              <Link href="/presupuestos/metodos-pago">Métodos de pago</Link>.
+            </p>
+          ) : null}
+          {payments.map((payment, index) => (
+            <div
+              key={index}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1.4fr 110px 100px 1fr auto',
+                gap: 8,
+                alignItems: 'end',
+              }}
+            >
+              <div className="form-field" style={{ margin: 0 }}>
+                <label>Método</label>
+                <select
+                  className="input"
+                  value={payment.paymentMethodId}
+                  onChange={(e) =>
+                    updatePayment(index, { paymentMethodId: e.target.value })
+                  }
+                >
+                  <option value="">Seleccionar…</option>
+                  {paymentMethods.map((method) => (
+                    <option key={method.id} value={method.id}>
+                      {method.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-field" style={{ margin: 0 }}>
+                <label htmlFor={`pay-pending-${index}`}>Pendiente</label>
+                <label className="checkbox-label" style={{ marginTop: 8 }}>
+                  <input
+                    id={`pay-pending-${index}`}
+                    type="checkbox"
+                    checked={payment.isPending}
+                    onChange={(e) =>
+                      updatePayment(index, {
+                        isPending: e.target.checked,
+                        percent: e.target.checked ? '' : payment.percent,
+                      })
+                    }
+                  />
+                  Sí
+                </label>
+              </div>
+              <div className="form-field" style={{ margin: 0 }}>
+                <label>% abonado</label>
+                <input
+                  className="input"
+                  type="number"
+                  min={0.01}
+                  max={100}
+                  step={0.01}
+                  value={payment.percent}
+                  disabled={payment.isPending}
+                  onChange={(e) => updatePayment(index, { percent: e.target.value })}
+                  placeholder="50"
+                />
+              </div>
+              <div className="form-field" style={{ margin: 0 }}>
+                <label>Nota</label>
+                <input
+                  className="input"
+                  value={payment.note}
+                  onChange={(e) => updatePayment(index, { note: e.target.value })}
+                  placeholder="Opcional"
+                />
+              </div>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setPayments((prev) => prev.filter((_, i) => i !== index))}
+              >
+                Quitar
+              </button>
+            </div>
+          ))}
         </div>
 
         <div className="card stack">
@@ -594,65 +794,81 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
           {items.map((item, index) => (
             <div
               key={index}
+              className="stack"
               style={{
-                display: 'grid',
-                gridTemplateColumns: '80px 1fr 120px 90px auto',
                 gap: 8,
-                alignItems: 'end',
+                paddingBottom: 12,
+                borderBottom: '1px solid var(--color-border)',
               }}
             >
               <div className="form-field" style={{ margin: 0 }}>
-                <label>Cant.</label>
-                <input
-                  className="input"
-                  value={item.quantity}
-                  onChange={(e) => updateItem(index, { quantity: e.target.value })}
-                  required
-                  disabled={itemsLocked}
-                />
-              </div>
-              <div className="form-field" style={{ margin: 0 }}>
-                <label>Descripción</label>
-                <input
+                <label htmlFor={`quote-item-desc-${index}`}>Descripción</label>
+                <textarea
+                  id={`quote-item-desc-${index}`}
                   className="input"
                   value={item.description}
                   onChange={(e) => updateItem(index, { description: e.target.value })}
                   required
                   disabled={itemsLocked}
+                  rows={5}
+                  style={{
+                    minHeight: 120,
+                    resize: 'vertical',
+                    lineHeight: 1.4,
+                  }}
                 />
               </div>
-              <div className="form-field" style={{ margin: 0 }}>
-                <label>Precio</label>
-                <input
-                  className="input"
-                  value={item.unitPrice}
-                  onChange={(e) => updateItem(index, { unitPrice: e.target.value })}
-                  required
-                  disabled={itemsLocked}
-                />
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '80px 120px 90px auto',
+                  gap: 8,
+                  alignItems: 'end',
+                }}
+              >
+                <div className="form-field" style={{ margin: 0 }}>
+                  <label>Cant.</label>
+                  <input
+                    className="input"
+                    value={item.quantity}
+                    onChange={(e) => updateItem(index, { quantity: e.target.value })}
+                    required
+                    disabled={itemsLocked}
+                  />
+                </div>
+                <div className="form-field" style={{ margin: 0 }}>
+                  <label>Precio</label>
+                  <input
+                    className="input"
+                    value={item.unitPrice}
+                    onChange={(e) => updateItem(index, { unitPrice: e.target.value })}
+                    required
+                    disabled={itemsLocked}
+                  />
+                </div>
+                <div className="form-field" style={{ margin: 0 }}>
+                  <label>% Bonif.</label>
+                  <input
+                    className="input"
+                    value={item.discountPercent}
+                    onChange={(e) => updateItem(index, { discountPercent: e.target.value })}
+                    disabled={itemsLocked}
+                  />
+                </div>
+                {!itemsLocked ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    disabled={items.length === 1}
+                    onClick={() => setItems((prev) => prev.filter((_, i) => i !== index))}
+                    style={{ marginBottom: 2 }}
+                  >
+                    Quitar
+                  </button>
+                ) : (
+                  <span />
+                )}
               </div>
-              <div className="form-field" style={{ margin: 0 }}>
-                <label>% Bonif.</label>
-                <input
-                  className="input"
-                  value={item.discountPercent}
-                  onChange={(e) => updateItem(index, { discountPercent: e.target.value })}
-                  disabled={itemsLocked}
-                />
-              </div>
-              {!itemsLocked ? (
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  disabled={items.length === 1}
-                  onClick={() => setItems((prev) => prev.filter((_, i) => i !== index))}
-                  style={{ marginBottom: 2 }}
-                >
-                  Quitar
-                </button>
-              ) : (
-                <span />
-              )}
             </div>
           ))}
 

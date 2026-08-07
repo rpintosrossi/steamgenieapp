@@ -57,6 +57,7 @@ interface WorkOrderDetail extends Omit<WorkOrderCached, 'workOrderTasks'> {
     nameSnapshot: string;
     sortOrder: number;
     requiresPhotoSnapshot: boolean;
+    allowsPhotoSnapshot?: boolean;
     task?: { zoneId: string | null; subzoneId: string | null } | null;
   }>;
   serviceExecutions: Array<{

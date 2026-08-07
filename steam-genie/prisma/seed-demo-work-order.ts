@@ -167,6 +167,7 @@ async function main() {
           workOrderId: workOrder.id,
           taskId: task.id,
           nameSnapshot: spec.name,
+          allowsPhotoSnapshot: spec.requiresPhoto,
           requiresPhotoSnapshot: spec.requiresPhoto,
           allowsObservationSnapshot: spec.allowsObservation,
           requiresRejectionReasonSnapshot: spec.requiresRejectionReason,

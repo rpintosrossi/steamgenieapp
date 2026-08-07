@@ -53,6 +53,10 @@ export class CreateTaskDto {
 
   @IsOptional()
   @IsBoolean()
+  allowsPhoto?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   requiresPhoto?: boolean;
 
   @IsOptional()

@@ -119,6 +119,10 @@ const NAV_ITEMS: NavItem[] = [
         <line x1="10" y1="9" x2="8" y2="9" />
       </svg>
     ),
+    children: [
+      { href: '/presupuestos', label: 'Listado', module: APP_MODULES.PRESUPUESTOS },
+      { href: '/presupuestos/metodos-pago', label: 'Métodos de pago', module: APP_MODULES.PRESUPUESTOS },
+    ],
   },
   {
     href: '/trabajos-eventuales',

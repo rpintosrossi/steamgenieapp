@@ -9,6 +9,7 @@ import {
   type QuoteStatus as SharedQuoteStatus,
 } from '@steam-genie/shared-constants';
 import { api } from '../../../lib/api-client';
+import { QuotesSubnav } from '../../../components/QuotesSubnav';
 import type { Paginated, Quote, QuoteStatus } from '../../../lib/types';
 
 function money(value: string | number) {
@@ -37,16 +38,13 @@ function formatDate(value: string) {
   return `${day}/${m}/${y}`;
 }
 
-function currentMonth() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-}
-
 export default function QuotesPage() {
   const [items, setItems] = useState<Quote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [month, setMonth] = useState(currentMonth());
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [month, setMonth] = useState('');
   const [status, setStatus] = useState<QuoteStatus | ''>('');
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
@@ -60,6 +58,7 @@ export default function QuotesPage() {
         page: String(page),
         limit: '20',
       });
+      if (search.trim()) params.set('search', search.trim());
       if (month) params.set('month', month);
       if (status) params.set('status', status);
       const res = await api.get<Paginated<Quote>>(`/quotes?${params}`);
@@ -71,7 +70,7 @@ export default function QuotesPage() {
     } finally {
       setLoading(false);
     }
-  }, [month, status, page]);
+  }, [search, month, status, page]);
 
   useEffect(() => {
     void load();
@@ -79,8 +78,8 @@ export default function QuotesPage() {
 
   function applyFilters(e: FormEvent) {
     e.preventDefault();
+    setSearch(searchInput.trim());
     setPage(1);
-    void load();
   }
 
   return (
@@ -98,6 +97,8 @@ export default function QuotesPage() {
         </Link>
       </div>
 
+      <QuotesSubnav />
+
       <form onSubmit={applyFilters} className="card" style={{ marginBottom: 16 }}>
         <div
           style={{
@@ -107,8 +108,19 @@ export default function QuotesPage() {
             alignItems: 'flex-end',
           }}
         >
+          <div className="form-field" style={{ margin: 0, flex: '1 1 220px' }}>
+            <label htmlFor="q-search">Buscar</label>
+            <input
+              id="q-search"
+              className="input"
+              type="search"
+              placeholder="N° presupuesto o cliente…"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+          </div>
           <div className="form-field" style={{ margin: 0 }}>
-            <label htmlFor="q-month">Mes</label>
+            <label htmlFor="q-month">Mes (opcional)</label>
             <input
               id="q-month"
               className="input"
@@ -142,6 +154,18 @@ export default function QuotesPage() {
           <button type="submit" className="btn btn-secondary">
             Filtrar
           </button>
+          {month ? (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => {
+                setMonth('');
+                setPage(1);
+              }}
+            >
+              Ver todos
+            </button>
+          ) : null}
         </div>
       </form>
 
@@ -201,28 +225,42 @@ export default function QuotesPage() {
           </div>
         )}
 
-        {total > 0 ? (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12 }}>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Anterior
-            </button>
+        {!loading && pages > 1 ? (
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginTop: 16,
+              gap: 12,
+            }}
+          >
             <span className="muted">
               Página {page} de {pages} · {total} presupuestos
             </span>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              disabled={page >= pages}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Siguiente
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Anterior
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={page >= pages}
+                onClick={() => setPage((p) => Math.min(pages, p + 1))}
+              >
+                Siguiente
+              </button>
+            </div>
           </div>
+        ) : !loading && total > 0 ? (
+          <p className="muted" style={{ marginTop: 16 }}>
+            {total} presupuestos
+          </p>
         ) : null}
       </div>
     </>

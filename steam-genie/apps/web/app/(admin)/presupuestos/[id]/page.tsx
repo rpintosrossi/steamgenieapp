@@ -6,6 +6,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import {
   QUOTE_STATUSES,
   QUOTE_STATUS_LABELS,
+  buildQuotePdfFilename,
   formatQuoteNumber,
   parseQuoteServiceIncludes,
   type QuoteStatus as SharedQuoteStatus,
@@ -50,8 +51,10 @@ export default function QuoteDetailPage() {
   const [status, setStatus] = useState<QuoteStatus>('COTIZADO');
   const [contactPhone, setContactPhone] = useState('');
   const [contactEmail, setContactEmail] = useState('');
+  const [internalNotes, setInternalNotes] = useState('');
   const [savingStatus, setSavingStatus] = useState(false);
   const [savingContact, setSavingContact] = useState(false);
+  const [savingInternalNotes, setSavingInternalNotes] = useState(false);
   const [sharing, setSharing] = useState<'whatsapp' | 'email' | null>(null);
   const [convertOpen, setConvertOpen] = useState(false);
   const [serviceTime, setServiceTime] = useState('09:00');
@@ -73,6 +76,9 @@ export default function QuoteDetailPage() {
     'CREATE_NEW',
   );
   const [selectedParticularId, setSelectedParticularId] = useState('');
+  const [eventualSiteKind, setEventualSiteKind] = useState<'PARTICULAR' | 'BUILDING'>(
+    'PARTICULAR',
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,6 +89,7 @@ export default function QuoteDetailPage() {
       setStatus(data.status);
       setContactPhone(data.contactPhone ?? data.particularClient?.phone ?? '');
       setContactEmail(data.contactEmail ?? data.particularClient?.email ?? '');
+      setInternalNotes(data.internalNotes ?? '');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo cargar el presupuesto');
       setQuote(null);
@@ -136,12 +143,31 @@ export default function QuoteDetailPage() {
     }
   }
 
+  async function saveInternalNotes() {
+    if (!quote) return;
+    setSavingInternalNotes(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const updated = await api.patch<Quote>(`/quotes/${quote.id}`, {
+        internalNotes: internalNotes.trim() || null,
+      });
+      setQuote(updated);
+      setInternalNotes(updated.internalNotes ?? '');
+      setSuccess('Observaciones internas guardadas.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudieron guardar las observaciones');
+    } finally {
+      setSavingInternalNotes(false);
+    }
+  }
+
   async function downloadPdf() {
     if (!quote) return;
     try {
       await api.download(
         `/quotes/${quote.id}/pdf`,
-        `presupuesto-${formatQuoteNumber(quote.number)}.pdf`,
+        buildQuotePdfFilename(clientLabel(quote), quote.number),
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo descargar el PDF');
@@ -168,6 +194,7 @@ export default function QuoteDetailPage() {
         id: quote.id,
         number: quote.number,
         total: quote.total,
+        clientName: clientLabel(quote),
         contactPhone: contactPhone.trim(),
         contactEmail: contactEmail.trim(),
       });
@@ -203,6 +230,7 @@ export default function QuoteDetailPage() {
         id: quote.id,
         number: quote.number,
         total: quote.total,
+        clientName: clientLabel(quote),
         contactPhone: contactPhone.trim(),
         contactEmail: contactEmail.trim(),
       });
@@ -246,6 +274,7 @@ export default function QuoteDetailPage() {
     }
     if (
       quote.eventualClient &&
+      eventualSiteKind === 'PARTICULAR' &&
       clientMatches.length > 0 &&
       particularAction === 'USE_EXISTING' &&
       !selectedParticularId
@@ -268,13 +297,17 @@ export default function QuoteDetailPage() {
 
       const body: {
         scheduledAts: string[];
+        eventualSiteKind?: string;
         particularClientAction?: string;
         particularClientId?: string;
       } = { scheduledAts };
-      if (quote.eventualClient && clientMatches.length > 0) {
-        body.particularClientAction = particularAction;
-        if (particularAction === 'USE_EXISTING') {
-          body.particularClientId = selectedParticularId;
+      if (quote.eventualClient) {
+        body.eventualSiteKind = eventualSiteKind;
+        if (eventualSiteKind === 'PARTICULAR' && clientMatches.length > 0) {
+          body.particularClientAction = particularAction;
+          if (particularAction === 'USE_EXISTING') {
+            body.particularClientId = selectedParticularId;
+          }
         }
       }
 
@@ -295,6 +328,24 @@ export default function QuoteDetailPage() {
             : 'Servicio eventual creado desde el presupuesto.',
       );
     } catch (err) {
+      // El servidor puede haber creado los servicios aunque el cliente no lea la respuesta.
+      try {
+        const refreshed = await api.get<Quote>(`/quotes/${quote.id}`);
+        if ((refreshed.workOrders?.length ?? 0) > 0) {
+          setQuote(refreshed);
+          setConvertOpen(false);
+          const count = refreshed.workOrders!.length;
+          setSuccess(
+            count > 1
+              ? `Se crearon ${count} servicios eventuales desde el presupuesto.`
+              : 'Servicio eventual creado desde el presupuesto.',
+          );
+          setError(null);
+          return;
+        }
+      } catch {
+        // ignore refresh error; show original
+      }
       setError(err instanceof Error ? err.message : 'No se pudo crear el servicio');
     } finally {
       setConverting(false);
@@ -311,6 +362,7 @@ export default function QuoteDetailPage() {
     setClientMatches([]);
     setParticularAction('CREATE_NEW');
     setSelectedParticularId('');
+    setEventualSiteKind('PARTICULAR');
     if (!quote.eventualClient) return;
 
     setLoadingMatches(true);
@@ -454,6 +506,38 @@ export default function QuoteDetailPage() {
         </div>
       </div>
 
+      <div className="card stack" style={{ marginBottom: 16 }}>
+        <div>
+          <h2 className="card-title" style={{ marginTop: 0, marginBottom: 6 }}>
+            Observaciones internas
+          </h2>
+          <p className="muted" style={{ margin: 0 }}>
+            Solo para uso interno. No aparecen en el PDF ni se envían al cliente.
+          </p>
+        </div>
+        <div className="form-field" style={{ margin: 0 }}>
+          <textarea
+            id="q-internal-notes"
+            className="input"
+            rows={4}
+            value={internalNotes}
+            onChange={(e) => setInternalNotes(e.target.value)}
+            placeholder="Notas del equipo, acuerdos, seguimiento…"
+            style={{ width: '100%', display: 'block', resize: 'vertical' }}
+          />
+        </div>
+        <div className="form-actions" style={{ marginTop: 0 }}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={savingInternalNotes || internalNotes === (quote.internalNotes ?? '')}
+            onClick={() => void saveInternalNotes()}
+          >
+            {savingInternalNotes ? 'Guardando…' : 'Guardar observaciones'}
+          </button>
+        </div>
+      </div>
+
       <div className="card" style={{ marginBottom: 16 }}>
         <div
           style={{
@@ -487,14 +571,26 @@ export default function QuoteDetailPage() {
             {savingStatus ? 'Guardando…' : 'Actualizar condición'}
           </button>
           {linkedWorkOrders.length > 0 ? (
-            <Link
-              href="/trabajos-eventuales/servicios"
-              className="btn btn-ghost"
-            >
-              {linkedWorkOrders.length === 1
-                ? 'Ver servicio asociado'
-                : `Ver ${linkedWorkOrders.length} servicios asociados`}
-            </Link>
+            linkedWorkOrders.length === 1 ? (
+              <Link
+                href={`/trabajos-eventuales/servicios?id=${linkedWorkOrders[0].id}`}
+                className="btn btn-ghost"
+              >
+                Ver servicio asociado
+              </Link>
+            ) : (
+              <>
+                {linkedWorkOrders.map((wo, index) => (
+                  <Link
+                    key={wo.id}
+                    href={`/trabajos-eventuales/servicios?id=${wo.id}`}
+                    className="btn btn-ghost"
+                  >
+                    Ver servicio {index + 1}
+                  </Link>
+                ))}
+              </>
+            )
           ) : null}
         </div>
       </div>
@@ -538,6 +634,28 @@ export default function QuoteDetailPage() {
             <span className="muted">Detalles: </span>
             {quote.clientDetails}
           </p>
+        ) : null}
+        {quote.observations ? (
+          <p style={{ marginTop: 12 }}>
+            <span className="muted">Observaciones (cliente): </span>
+            {quote.observations}
+          </p>
+        ) : null}
+        {(quote.payments?.length ?? 0) > 0 ? (
+          <div style={{ marginTop: 12 }}>
+            <div className="muted">Pagos / medios</div>
+            <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+              {quote.payments!.map((payment) => (
+                <li key={payment.id}>
+                  {payment.paymentMethod?.name ?? 'Método'}
+                  {payment.isPending
+                    ? ' · Pendiente'
+                    : ` · ${Number(payment.percent)}% abonado`}
+                  {payment.note ? ` · ${payment.note}` : ''}
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : null}
         <div style={{ marginTop: 12 }}>
           <div className="muted">El servicio incluye</div>
@@ -713,7 +831,36 @@ export default function QuoteDetailPage() {
                       ? ` · ${quote.eventualClient.address}`
                       : ''}
                   </div>
-                  {loadingMatches ? (
+                  <div className="stack" style={{ gap: 6 }}>
+                    <p style={{ margin: 0 }}>
+                      ¿Querés crear un <strong>cliente particular</strong> o un{' '}
+                      <strong>edificio</strong> con estos datos?
+                    </p>
+                    <label className="checkbox-label">
+                      <input
+                        type="radio"
+                        name="eventualSiteKind"
+                        checked={eventualSiteKind === 'PARTICULAR'}
+                        onChange={() => setEventualSiteKind('PARTICULAR')}
+                      />
+                      Cliente particular
+                    </label>
+                    <label className="checkbox-label">
+                      <input
+                        type="radio"
+                        name="eventualSiteKind"
+                        checked={eventualSiteKind === 'BUILDING'}
+                        onChange={() => setEventualSiteKind('BUILDING')}
+                      />
+                      Edificio
+                    </label>
+                  </div>
+                  {eventualSiteKind === 'BUILDING' ? (
+                    <p className="muted" style={{ margin: 0 }}>
+                      Se creará un edificio con este nombre y dirección (sin cliente
+                      particular).
+                    </p>
+                  ) : loadingMatches ? (
                     <p className="muted">Buscando clientes con la misma dirección…</p>
                   ) : clientMatches.length > 0 ? (
                     <div

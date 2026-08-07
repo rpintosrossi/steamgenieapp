@@ -38,7 +38,7 @@ const ASSIGNABLE_STATUSES = new Set([
 
 type ChecklistDraft = {
   name: string;
-  requiresPhoto: boolean;
+  photoMode: 'none' | 'optional' | 'required';
 };
 const PAGE_SIZE = 20;
 type ScheduleSortDir = 'asc' | 'desc';
@@ -291,6 +291,7 @@ function EventualServicesPageInner() {
 
   useEffect(() => {
     if (!focusId || loading || items.length === 0) return;
+    setDetailWoId(focusId);
     focusRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [focusId, loading, items]);
 
@@ -325,9 +326,9 @@ function EventualServicesPageInner() {
       const suggested =
         wo.quote?.items?.map((item) => ({
           name: String(item.description ?? '').trim(),
-          requiresPhoto: false,
+          photoMode: 'none' as const,
         })).filter((t) => t.name) ?? [];
-      setChecklistTasks(suggested.length > 0 ? suggested : [{ name: '', requiresPhoto: false }]);
+      setChecklistTasks(suggested.length > 0 ? suggested : [{ name: '', photoMode: 'none' }]);
     } else {
       setChecklistTasks([]);
     }
@@ -379,13 +380,14 @@ function EventualServicesPageInner() {
       assigningWo.status === 'QUOTE_ACCEPTED' && assigningWo._count.workOrderTasks === 0;
 
     let checklistPayload:
-      | Array<{ name: string; requiresPhoto: boolean }>
+      | Array<{ name: string; allowsPhoto: boolean; requiresPhoto: boolean }>
       | undefined;
     if (needsChecklist) {
       const cleaned = checklistTasks
         .map((t) => ({
           name: t.name.trim(),
-          requiresPhoto: t.requiresPhoto,
+          allowsPhoto: t.photoMode !== 'none',
+          requiresPhoto: t.photoMode === 'required',
         }))
         .filter((t) => t.name.length > 0);
       if (cleaned.length === 0) {
@@ -844,16 +846,21 @@ function EventualServicesPageInner() {
                       placeholder={`Tarea ${index + 1}`}
                       required
                     />
-                    <label className="checkbox-label" style={{ whiteSpace: 'nowrap' }}>
-                      <input
-                        type="checkbox"
-                        checked={task.requiresPhoto}
-                        onChange={(e) =>
-                          updateChecklistTask(index, { requiresPhoto: e.target.checked })
-                        }
-                      />
-                      Foto
-                    </label>
+                    <select
+                      className="input"
+                      value={task.photoMode}
+                      onChange={(e) =>
+                        updateChecklistTask(index, {
+                          photoMode: e.target.value as ChecklistDraft['photoMode'],
+                        })
+                      }
+                      style={{ width: 'auto' }}
+                      aria-label="Modo de foto"
+                    >
+                      <option value="none">Sin foto</option>
+                      <option value="optional">Foto opcional</option>
+                      <option value="required">Foto obligatoria</option>
+                    </select>
                     <button
                       type="button"
                       className="btn btn-ghost btn-sm"
@@ -872,7 +879,7 @@ function EventualServicesPageInner() {
                   type="button"
                   className="btn btn-secondary btn-sm"
                   onClick={() =>
-                    setChecklistTasks((prev) => [...prev, { name: '', requiresPhoto: false }])
+                    setChecklistTasks((prev) => [...prev, { name: '', photoMode: 'none' }])
                   }
                 >
                   + Agregar tarea
@@ -1093,7 +1100,10 @@ function EventualServicesPageInner() {
       {detailWoId ? (
         <WorkOrderExecutionDetailModal
           workOrderId={detailWoId}
-          onClose={() => setDetailWoId(null)}
+          onClose={() => {
+            setDetailWoId(null);
+            if (focusId) clearFocus();
+          }}
         />
       ) : null}
     </>

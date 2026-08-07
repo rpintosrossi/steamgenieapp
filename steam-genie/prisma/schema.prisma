@@ -423,6 +423,8 @@ model Quote {
   paymentCondition   String?   @db.VarChar(100)
   paymentTerms       String?   @db.VarChar(500)
   observations       String?   @db.VarChar(1000)
+  /// Notas internas (solo panel admin; no van al PDF ni al cliente).
+  internalNotes      String?   @db.VarChar(2000)
   /// Texto “El servicio incluye” (una línea por ítem). Null = default del sistema.
   serviceIncludes    String?   @db.VarChar(2000)
   validUntil         DateTime? @db.Date
@@ -441,6 +443,7 @@ model Quote {
   updatedAt DateTime  @updatedAt
 
   items      QuoteItem[]
+  payments   QuotePayment[]
   workOrders WorkOrder[]
 
   @@index([status, requestDate])
@@ -466,6 +469,42 @@ model QuoteItem {
 
   @@index([quoteId, sortOrder])
   @@map("quote_items")
+}
+
+/// Catálogo de medios de pago para presupuestos.
+model PaymentMethod {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String    @db.VarChar(100)
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  quotePayments QuotePayment[]
+
+  @@index([deletedAt, sortOrder])
+  @@map("payment_methods")
+}
+
+/// Pago / asignación por medio en un presupuesto (% abonado o pendiente).
+model QuotePayment {
+  id              String        @id @default(uuid()) @db.Uuid
+  quote           Quote         @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  quoteId         String        @db.Uuid
+  paymentMethod   PaymentMethod @relation(fields: [paymentMethodId], references: [id])
+  paymentMethodId String        @db.Uuid
+  /// true = medio marcado como pendiente (sin %). false = ya abonó `percent`.
+  isPending       Boolean       @default(false)
+  percent         Decimal?      @db.Decimal(5, 2)
+  note            String?       @db.VarChar(300)
+  sortOrder       Int           @default(0)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([quoteId, sortOrder])
+  @@index([paymentMethodId])
+  @@map("quote_payments")
 }
 
 model Floor {
@@ -562,6 +601,8 @@ model Task {
   startDate  DateTime      @db.Date
   /// Days of week for CUSTOM_WEEKDAYS (JS: 0=Sun … 6=Sat). Empty for other frequencies.
   weekdays   Int[]         @default([])
+  /// Si true, se pueden adjuntar fotos (aunque no sean obligatorias).
+  allowsPhoto             Boolean @default(false)
   requiresPhoto           Boolean @default(false)
   allowsObservation       Boolean @default(false)
   requiresRejectionReason Boolean @default(false)
@@ -688,19 +729,23 @@ model StockBalance {
 }
 
 model StockProduct {
-  id          String         @id @default(uuid()) @db.Uuid
-  name        String         @db.VarChar(300)
-  sku         String?        @db.VarChar(100)
-  description String?        @db.VarChar(500)
-  category    StockCategory  @relation(fields: [categoryId], references: [id])
-  categoryId  String         @db.Uuid
-  supplier    StockSupplier? @relation(fields: [supplierId], references: [id])
-  supplierId  String?        @db.Uuid
-  unitType    StockUnitType  @default(UNIT)
-  isActive    Boolean        @default(true)
-  deletedAt   DateTime?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id                   String         @id @default(uuid()) @db.Uuid
+  name                 String         @db.VarChar(300)
+  sku                  String?        @db.VarChar(100)
+  description          String?        @db.VarChar(500)
+  category             StockCategory  @relation(fields: [categoryId], references: [id])
+  categoryId           String         @db.Uuid
+  supplier             StockSupplier? @relation(fields: [supplierId], references: [id])
+  supplierId           String?        @db.Uuid
+  unitType             StockUnitType  @default(UNIT)
+  /// Ficha técnica (PDF, texto u otro archivo).
+  datasheetStorageKey  String?        @db.VarChar(500)
+  datasheetFileName    String?        @db.VarChar(255)
+  datasheetMimeType    String?        @db.VarChar(120)
+  isActive             Boolean        @default(true)
+  deletedAt            DateTime?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
 
   balances            StockBalance[]
   buildingStockItems  BuildingStockItem[]
@@ -857,15 +902,17 @@ model StockMovement {
 // ─── Rejection Reasons ────────────────────────────────────────────────────────
 
 model RejectionReason {
-  id        String              @id @default(uuid()) @db.Uuid
-  type      RejectionReasonType
+  id             String              @id @default(uuid()) @db.Uuid
+  type           RejectionReasonType
   // SERVICE_REJECTION → used in WorkOrderAssignment
   // TASK_NOT_DONE     → used in TaskExecutionRecord
-  text      String              @db.VarChar(300)
-  isActive  Boolean             @default(true)
-  deletedAt DateTime?
-  createdAt DateTime            @default(now())
-  updatedAt DateTime            @updatedAt
+  text           String              @db.VarChar(300)
+  /// Si true, el limpiador debe escribir el detalle en rejectionNote.
+  allowsFreeText Boolean             @default(false)
+  isActive       Boolean             @default(true)
+  deletedAt      DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
 
   assignments    WorkOrderAssignment[]
   taskExecutions TaskExecutionRecord[]
@@ -1035,6 +1082,7 @@ model WorkOrderTask {
   task                             Task?     @relation(fields: [taskId], references: [id])
   taskId                           String?   @db.Uuid
   nameSnapshot                     String    @db.VarChar(300)
+  allowsPhotoSnapshot              Boolean   @default(false)
   requiresPhotoSnapshot            Boolean
   allowsObservationSnapshot        Boolean
   requiresRejectionReasonSnapshot  Boolean
@@ -1172,6 +1220,8 @@ model TaskExecutionRecord {
   status                  TaskExecutionStatus
   rejectionReason         RejectionReason?      @relation(fields: [rejectionReasonId], references: [id])
   rejectionReasonId       String?               @db.Uuid // Must be type TASK_NOT_DONE
+  /// Detalle libre cuando el motivo tiene allowsFreeText = true.
+  rejectionNote           String?               @db.VarChar(500)
   observation             String?
   executedBy              User                  @relation(fields: [executedById], references: [id])
   executedById            String                @db.Uuid

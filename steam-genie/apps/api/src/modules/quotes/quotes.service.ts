@@ -9,6 +9,7 @@ import {
   QUOTE_STATUS_LABELS,
   QUOTE_VAT_RATE,
   QUOTE_DEFAULT_SERVICE_INCLUDES,
+  buildQuotePdfFilename,
   calendarDateKeyInBusinessTz,
 } from '@steam-genie/shared-constants';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
@@ -16,12 +17,19 @@ import { WorkOrdersService } from '../work-orders/work-orders.service';
 import { CreateQuoteDto } from './dto/create-quote.dto';
 import { UpdateQuoteDto } from './dto/update-quote.dto';
 import { QueryQuotesDto } from './dto/query-quotes.dto';
-import { ConvertQuoteDto, ParticularClientAction } from './dto/convert-quote.dto';
+import { ConvertQuoteDto, EventualSiteKind, ParticularClientAction } from './dto/convert-quote.dto';
 import { QuoteItemDto } from './dto/quote-item.dto';
+import { QuotePaymentInputDto } from './dto/payment-method.dto';
 import { QuotePdfService } from './quote-pdf.service';
 
 const QUOTE_INCLUDE = {
   items: { orderBy: { sortOrder: 'asc' as const } },
+  payments: {
+    orderBy: { sortOrder: 'asc' as const },
+    include: {
+      paymentMethod: { select: { id: true, name: true, isActive: true } },
+    },
+  },
   particularClient: {
     select: {
       id: true,
@@ -77,7 +85,15 @@ export class QuotesService {
   ) {}
 
   async findAll(query: QueryQuotesDto) {
-    const { page = 1, limit = 20, status, particularClientId, buildingId, month } = query;
+    const {
+      page = 1,
+      limit = 20,
+      status,
+      particularClientId,
+      buildingId,
+      month,
+      search,
+    } = query;
     const skip = (page - 1) * limit;
 
     const where: Prisma.QuoteWhereInput = { deletedAt: null };
@@ -90,6 +106,22 @@ export class QuotesService {
       const from = new Date(Date.UTC(y, m - 1, 1));
       const to = new Date(Date.UTC(y, m, 1));
       where.requestDate = { gte: from, lt: to };
+    }
+
+    const q = search?.trim();
+    if (q) {
+      const or: Prisma.QuoteWhereInput[] = [
+        { particularClient: { name: { contains: q, mode: 'insensitive' } } },
+        { building: { name: { contains: q, mode: 'insensitive' } } },
+        { eventualClient: { name: { contains: q, mode: 'insensitive' } } },
+      ];
+      if (/^\d+$/.test(q)) {
+        const asNumber = Number(q.replace(/^0+/, '') || '0');
+        if (Number.isFinite(asNumber) && asNumber >= 0) {
+          or.push({ number: asNumber });
+        }
+      }
+      where.OR = or;
     }
 
     const [data, total] = await Promise.all([
@@ -141,6 +173,7 @@ export class QuotesService {
     const validUntil = dto.validUntil
       ? parseDateOnly(dto.validUntil)
       : addMonths(requestDate, 1);
+    const paymentCreates = await this.buildPaymentCreates(dto.payments);
 
     return this.prisma.$transaction(async (tx) => {
       let eventualClientId = dto.eventualClientId ?? null;
@@ -177,6 +210,7 @@ export class QuotesService {
             '50% DE ANTICIPO EL RESTO A FINALIZAR EL SERVICIO',
           observations:
             emptyToNull(dto.observations) ?? 'ESTE PRESUPUESTO ES VALIDO POR UN MES',
+          internalNotes: emptyToNull(dto.internalNotes),
           serviceIncludes:
             emptyToNull(dto.serviceIncludes) ?? QUOTE_DEFAULT_SERVICE_INCLUDES,
           validUntil,
@@ -192,6 +226,9 @@ export class QuotesService {
               sortOrder: index,
             })),
           },
+          ...(paymentCreates.length
+            ? { payments: { create: paymentCreates } }
+            : {}),
         },
         include: QUOTE_INCLUDE,
       });
@@ -259,6 +296,8 @@ export class QuotesService {
     }
 
     const computed = dto.items ? this.computeTotals(dto.items) : null;
+    const paymentCreates =
+      dto.payments !== undefined ? await this.buildPaymentCreates(dto.payments) : null;
 
     return this.prisma.$transaction(async (tx) => {
       let eventualClientId = nextEventual;
@@ -283,6 +322,9 @@ export class QuotesService {
 
       if (dto.items) {
         await tx.quoteItem.deleteMany({ where: { quoteId: id } });
+      }
+      if (paymentCreates) {
+        await tx.quotePayment.deleteMany({ where: { quoteId: id } });
       }
 
       const updated = await tx.quote.update({
@@ -323,6 +365,9 @@ export class QuotesService {
           ...(dto.observations !== undefined
             ? { observations: emptyToNull(dto.observations) }
             : {}),
+          ...(dto.internalNotes !== undefined
+            ? { internalNotes: emptyToNull(dto.internalNotes) }
+            : {}),
           ...(dto.serviceIncludes !== undefined
             ? { serviceIncludes: emptyToNull(dto.serviceIncludes) }
             : {}),
@@ -343,6 +388,13 @@ export class QuotesService {
                     lineTotal: lineTotal(item),
                     sortOrder: index,
                   })),
+                },
+              }
+            : {}),
+          ...(paymentCreates
+            ? {
+                payments: {
+                  create: paymentCreates,
                 },
               }
             : {}),
@@ -418,7 +470,7 @@ export class QuotesService {
 
     return {
       buffer,
-      filename: `presupuesto-${String(quote.number).padStart(8, '0')}.pdf`,
+      filename: buildQuotePdfFilename(client.name, quote.number),
     };
   }
 
@@ -494,10 +546,11 @@ export class QuotesService {
 
     for (let i = 0; i < scheduledAts.length; i++) {
       const scheduledAt = scheduledAts[i];
-      const title =
+      const title = truncateTitle(
         scheduledAts.length > 1
           ? `${baseTitle} · ${formatVisitLabel(scheduledAt)}`
-          : baseTitle;
+          : baseTitle,
+      );
 
       const result = await this.workOrdersService.createCheckoutCleaning(
         {
@@ -530,8 +583,8 @@ export class QuotesService {
 
     return {
       quote: updated,
-      workOrders,
-      workOrder: workOrders[0],
+      workOrders: workOrders.map(toConvertWorkOrderSummary),
+      workOrder: toConvertWorkOrderSummary(workOrders[0]),
       warning:
         scheduledAts.length > 1
           ? [
@@ -552,28 +605,53 @@ export class QuotesService {
   ) {
     const eventual = quote.eventualClient!;
     const address = eventual.address?.trim() || null;
-    const matches = address ? await this.findParticularClientsByAddress(address) : [];
+
+    if (!dto.eventualSiteKind) {
+      throw new BadRequestException(
+        'Indicá si el sitio operativo debe ser Cliente particular o Edificio.',
+      );
+    }
 
     let siteBuildingId: string;
 
-    if (matches.length > 0) {
-      if (!dto.particularClientAction) {
-        throw new BadRequestException(
-          'Hay clientes particulares con la misma dirección. Elegí usar uno existente o crear uno nuevo.',
-        );
-      }
+    if (dto.eventualSiteKind === EventualSiteKind.BUILDING) {
+      siteBuildingId = await this.createBuildingFromEventual({
+        name: eventual.name,
+        taxId: eventual.taxId,
+        address,
+      });
+    } else {
+      const matches = address ? await this.findParticularClientsByAddress(address) : [];
 
-      if (dto.particularClientAction === ParticularClientAction.USE_EXISTING) {
-        if (!dto.particularClientId) {
-          throw new BadRequestException('Seleccioná el cliente particular a reutilizar.');
-        }
-        const chosen = matches.find((m) => m.id === dto.particularClientId);
-        if (!chosen) {
+      if (matches.length > 0) {
+        if (!dto.particularClientAction) {
           throw new BadRequestException(
-            'El cliente seleccionado no coincide con la dirección del presupuesto.',
+            'Hay clientes particulares con la misma dirección. Elegí usar uno existente o crear uno nuevo.',
           );
         }
-        siteBuildingId = chosen.buildingId;
+
+        if (dto.particularClientAction === ParticularClientAction.USE_EXISTING) {
+          if (!dto.particularClientId) {
+            throw new BadRequestException('Seleccioná el cliente particular a reutilizar.');
+          }
+          const chosen = matches.find((m) => m.id === dto.particularClientId);
+          if (!chosen) {
+            throw new BadRequestException(
+              'El cliente seleccionado no coincide con la dirección del presupuesto.',
+            );
+          }
+          siteBuildingId = chosen.buildingId;
+        } else {
+          siteBuildingId = (
+            await this.createParticularFromEventual({
+              name: eventual.name,
+              taxId: eventual.taxId,
+              address,
+              phone: quote.contactPhone,
+              email: quote.contactEmail,
+            })
+          ).buildingId;
+        }
       } else {
         siteBuildingId = (
           await this.createParticularFromEventual({
@@ -585,16 +663,6 @@ export class QuotesService {
           })
         ).buildingId;
       }
-    } else {
-      siteBuildingId = (
-        await this.createParticularFromEventual({
-          name: eventual.name,
-          taxId: eventual.taxId,
-          address,
-          phone: quote.contactPhone,
-          email: quote.contactEmail,
-        })
-      ).buildingId;
     }
 
     const hierarchy = await this.resolveDefaultLocation(
@@ -624,10 +692,11 @@ export class QuotesService {
 
     for (let i = 0; i < scheduledAts.length; i++) {
       const scheduledAt = scheduledAts[i];
-      const title =
+      const title = truncateTitle(
         scheduledAts.length > 1
           ? `${baseTitle} · ${formatVisitLabel(scheduledAt)}`
-          : baseTitle;
+          : baseTitle,
+      );
 
       const result = await this.workOrdersService.createQuoteAcceptedService(
         {
@@ -652,8 +721,8 @@ export class QuotesService {
 
     return {
       quote: updated,
-      workOrders,
-      workOrder: workOrders[0],
+      workOrders: workOrders.map(toConvertWorkOrderSummary),
+      workOrder: toConvertWorkOrderSummary(workOrders[0]),
       warning:
         scheduledAts.length > 1
           ? `Se crearon ${scheduledAts.length} servicios en estado Presupuesto aceptado (uno por día). Al asignar cada uno deberás definir el checklist de tareas.`
@@ -717,6 +786,49 @@ export class QuotesService {
     return candidates.filter(
       (c) => normalizeAddress(c.address ?? '') === normalized,
     );
+  }
+
+  private async createBuildingFromEventual(input: {
+    name: string;
+    taxId?: string | null;
+    address: string | null;
+  }) {
+    const { randomUUID } = await import('crypto');
+    const name = input.name.trim();
+    const address = emptyToNull(input.address);
+    const taxId = emptyToNull(input.taxId);
+
+    return this.prisma.$transaction(async (tx) => {
+      const building = await tx.building.create({
+        data: {
+          name,
+          taxId,
+          address,
+          requireGpsValidation: false,
+          buildingMode: BuildingMode.SIMPLE,
+          isActive: true,
+        },
+      });
+
+      const floor = await tx.floor.create({
+        data: {
+          name: 'Planta baja',
+          sortOrder: 0,
+          buildingId: building.id,
+        },
+      });
+
+      await tx.zone.create({
+        data: {
+          name: 'Principal',
+          floorId: floor.id,
+          buildingId: building.id,
+          qrToken: randomUUID(),
+        },
+      });
+
+      return building.id;
+    });
   }
 
   private async createParticularFromEventual(input: {
@@ -866,6 +978,54 @@ export class QuotesService {
     }
   }
 
+  private async buildPaymentCreates(payments?: QuotePaymentInputDto[]) {
+    if (!payments?.length) return [];
+
+    const methodIds = [...new Set(payments.map((p) => p.paymentMethodId))];
+    const methods = await this.prisma.paymentMethod.findMany({
+      where: { id: { in: methodIds }, deletedAt: null, isActive: true },
+      select: { id: true },
+    });
+    if (methods.length !== methodIds.length) {
+      throw new BadRequestException('Hay métodos de pago inválidos o inactivos.');
+    }
+
+    let percentSum = 0;
+    const creates = payments.map((payment, index) => {
+      if (payment.isPending) {
+        return {
+          paymentMethodId: payment.paymentMethodId,
+          isPending: true,
+          percent: null as number | null,
+          note: emptyToNull(payment.note),
+          sortOrder: index,
+        };
+      }
+      const percent = Number(payment.percent);
+      if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
+        throw new BadRequestException(
+          'Cada pago abonado necesita un porcentaje entre 0.01 y 100.',
+        );
+      }
+      percentSum += percent;
+      return {
+        paymentMethodId: payment.paymentMethodId,
+        isPending: false,
+        percent,
+        note: emptyToNull(payment.note),
+        sortOrder: index,
+      };
+    });
+
+    if (percentSum > 100.001) {
+      throw new BadRequestException(
+        `La suma de porcentajes abonados no puede superar 100% (ahora ${round2(percentSum)}%).`,
+      );
+    }
+
+    return creates;
+  }
+
   private computeTotals(items: QuoteItemDto[]) {
     const subtotal = round2(items.reduce((acc, item) => acc + lineTotal(item), 0));
     const vatRate = QUOTE_VAT_RATE;
@@ -955,6 +1115,27 @@ function formatVisitLabel(iso: string): string {
   const key = calendarDateKeyInBusinessTz(new Date(iso));
   const [, m, d] = key.split('-');
   return `${d}/${m}`;
+}
+
+/** Payload liviano para evitar respuestas pesadas/corruptas en el cliente. */
+function toConvertWorkOrderSummary(wo: {
+  id: string;
+  title: string;
+  status: string;
+  scheduledDate?: Date | string | null;
+}) {
+  return {
+    id: wo.id,
+    title: wo.title,
+    status: wo.status,
+    scheduledDate: wo.scheduledDate ?? null,
+  };
+}
+
+function truncateTitle(title: string, max = 300): string {
+  const trimmed = title.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max - 1)}…`;
 }
 
 function toNumber(value: Prisma.Decimal | number): number {

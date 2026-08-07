@@ -51,6 +51,7 @@ export interface TaskExecutionItem {
   workOrderTaskId: string;
   nameSnapshot: string;
   sortOrder: number;
+  allowsPhotoSnapshot: boolean;
   requiresPhotoSnapshot: boolean;
   allowsObservationSnapshot: boolean;
   requiresRejectionReasonSnapshot: boolean;

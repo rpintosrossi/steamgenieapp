@@ -36,7 +36,7 @@ export function CreateTaskModal({ buildings, onClose, onCreated }: CreateTaskMod
   const [weekdays, setWeekdays] = useState<number[]>([]);
   const [categoryId, setCategoryId] = useState('');
   const [categories, setCategories] = useState<TaskCategoryItem[]>([]);
-  const [requiresPhoto, setRequiresPhoto] = useState(false);
+  const [photoMode, setPhotoMode] = useState<'none' | 'optional' | 'required'>('none');
   const [allowsObservation, setAllowsObservation] = useState(true);
   const [requiresRejectionReason, setRequiresRejectionReason] = useState(true);
   const [customFields, setCustomFields] = useState<TaskCustomFieldDraft[]>([]);
@@ -91,7 +91,8 @@ export function CreateTaskModal({ buildings, onClose, onCreated }: CreateTaskMod
         name: name.trim(),
         frequency,
         ...(frequency === TASK_FREQUENCIES.CUSTOM_WEEKDAYS ? { weekdays } : {}),
-        requiresPhoto,
+        allowsPhoto: photoMode !== 'none',
+        requiresPhoto: photoMode === 'required',
         allowsObservation,
         requiresRejectionReason,
         isActive: true,
@@ -188,14 +189,19 @@ export function CreateTaskModal({ buildings, onClose, onCreated }: CreateTaskMod
             ) : null}
 
             <div className="grid-3">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={requiresPhoto}
-                  onChange={(e) => setRequiresPhoto(e.target.checked)}
-                />{' '}
-                Requiere foto
-              </label>
+              <div className="form-field">
+                <label>Foto</label>
+                <select
+                  value={photoMode}
+                  onChange={(e) =>
+                    setPhotoMode(e.target.value as 'none' | 'optional' | 'required')
+                  }
+                >
+                  <option value="none">Sin foto</option>
+                  <option value="optional">Opcional</option>
+                  <option value="required">Obligatoria</option>
+                </select>
+              </div>
               <label>
                 <input
                   type="checkbox"

@@ -1,77 +1,44 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
-  fetchAuthenticatedBlobUrl,
-  resolveTaskPhotoUrl,
-  taskPhotoNeedsAuthFetch,
-} from '../lib/api-client';
-import { TaskPhotoLightbox, type TaskPhotoLightboxContext } from './TaskPhotoLightbox';
+  TaskPhotoLightbox,
+  type TaskPhotoGalleryItem,
+  type TaskPhotoLightboxContext,
+} from './TaskPhotoLightbox';
+import { AuthenticatedPhotoImage, useAuthenticatedPhotoSrc } from './useAuthenticatedPhotoSrc';
 
 export function TaskPhotoThumb({
   photoUrl,
   photoId,
   title,
   context,
+  gallery,
+  galleryIndex = 0,
 }: {
   photoUrl?: string;
   photoId?: string;
   title?: string | null;
   context?: TaskPhotoLightboxContext;
+  /** Si se pasa, el lightbox navega entre todas estas fotos. */
+  gallery?: TaskPhotoGalleryItem[];
+  galleryIndex?: number;
 }) {
-  const resolvedUrl = useMemo(
-    () => resolveTaskPhotoUrl(photoUrl, photoId),
-    [photoId, photoUrl],
-  );
-
-  const requiresAuth = resolvedUrl ? taskPhotoNeedsAuthFetch(resolvedUrl) : false;
-  const [src, setSrc] = useState<string | null>(requiresAuth ? null : resolvedUrl || null);
-  const [failed, setFailed] = useState(false);
+  const { src, failed, loading, resolvedUrl } = useAuthenticatedPhotoSrc(photoUrl, photoId);
   const [open, setOpen] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    let revoked: string | null = null;
-    const controller = new AbortController();
-
-    setFailed(false);
-
-    if (!resolvedUrl) {
-      setSrc(null);
-      return () => {
-        cancelled = true;
-        controller.abort();
-      };
-    }
-
-    if (!requiresAuth) {
-      setSrc(resolvedUrl);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    setSrc(null);
-
-    void (async () => {
-      const blobUrl = await fetchAuthenticatedBlobUrl(resolvedUrl, controller.signal);
-      if (cancelled || controller.signal.aborted) return;
-
-      if (blobUrl) {
-        revoked = blobUrl;
-        setSrc(blobUrl);
-        return;
-      }
-
-      setFailed(true);
-    })();
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-      if (revoked) URL.revokeObjectURL(revoked);
-    };
-  }, [resolvedUrl, requiresAuth]);
+  const galleryItems: TaskPhotoGalleryItem[] =
+    gallery && gallery.length > 0
+      ? gallery
+      : [
+          {
+            id: photoId ?? photoUrl ?? 'photo',
+            photoId,
+            photoUrl,
+            title,
+            context,
+          },
+        ];
 
   if (!resolvedUrl) return null;
 
@@ -83,7 +50,7 @@ export function TaskPhotoThumb({
     );
   }
 
-  if (!src) {
+  if (!src || loading) {
     return <span className="photo-thumb photo-thumb--loading" aria-label="Cargando foto" />;
   }
 
@@ -101,12 +68,14 @@ export function TaskPhotoThumb({
       </button>
       {open ? (
         <TaskPhotoLightbox
-          src={src}
-          title={title}
-          context={context}
+          items={galleryItems}
+          initialIndex={galleryIndex}
           onClose={() => setOpen(false)}
         />
       ) : null}
     </>
   );
 }
+
+// Re-export for callers that only need the image helper via this module.
+export { AuthenticatedPhotoImage };

@@ -10,6 +10,11 @@ import {
   ValidateIf,
 } from 'class-validator';
 
+export enum EventualSiteKind {
+  PARTICULAR = 'PARTICULAR',
+  BUILDING = 'BUILDING',
+}
+
 export enum ParticularClientAction {
   CREATE_NEW = 'CREATE_NEW',
   USE_EXISTING = 'USE_EXISTING',
@@ -22,7 +27,7 @@ export class ConvertQuoteDto {
    */
   @IsArray()
   @ArrayMinSize(1)
-  @IsISO8601({}, { each: true })
+  @IsISO8601(undefined, { each: true })
   scheduledAts!: string[];
 
   @IsOptional()
@@ -47,14 +52,26 @@ export class ConvertQuoteDto {
   description?: string;
 
   /**
-   * Solo para presupuestos de cliente eventual con coincidencias de dirección.
+   * Obligatorio para presupuestos de cliente eventual.
+   * PARTICULAR = alta/reuso de cliente particular; BUILDING = alta de edificio sin particular.
+   */
+  @IsOptional()
+  @IsEnum(EventualSiteKind)
+  eventualSiteKind?: EventualSiteKind;
+
+  /**
+   * Solo para eventual + PARTICULAR con coincidencias de dirección.
    * CREATE_NEW = alta de cliente particular; USE_EXISTING = reutilizar uno existente.
    */
   @IsOptional()
   @IsEnum(ParticularClientAction)
   particularClientAction?: ParticularClientAction;
 
-  @ValidateIf((o: ConvertQuoteDto) => o.particularClientAction === ParticularClientAction.USE_EXISTING)
+  @ValidateIf(
+    (o: ConvertQuoteDto) =>
+      o.eventualSiteKind === EventualSiteKind.PARTICULAR &&
+      o.particularClientAction === ParticularClientAction.USE_EXISTING,
+  )
   @IsUUID()
   particularClientId?: string;
 }

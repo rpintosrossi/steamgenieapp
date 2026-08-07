@@ -72,6 +72,7 @@ const TASK_SELECT = {
   frequency: true,
   startDate: true,
   weekdays: true,
+  allowsPhoto: true,
   requiresPhoto: true,
   allowsObservation: true,
   requiresRejectionReason: true,
@@ -249,6 +250,8 @@ export class TasksService {
     }
 
     const weekdays = this.resolveWeekdays(dto.frequency, dto.weekdays);
+    const requiresPhoto = dto.requiresPhoto ?? false;
+    const allowsPhoto = requiresPhoto || (dto.allowsPhoto ?? false);
 
     return this.prisma.task.create({
       data: {
@@ -260,7 +263,8 @@ export class TasksService {
         frequency: dto.frequency,
         startDate: startOfDay(dto.startDate),
         weekdays,
-        requiresPhoto: dto.requiresPhoto ?? false,
+        allowsPhoto,
+        requiresPhoto,
         allowsObservation: dto.allowsObservation ?? false,
         requiresRejectionReason: dto.requiresRejectionReason ?? false,
         isActive: dto.isActive ?? true,
@@ -301,7 +305,14 @@ export class TasksService {
       data.categoryId =
         existing.frequency === TaskFrequency.EVENTUAL ? (dto.categoryId ?? null) : null;
     }
-    if (dto.requiresPhoto !== undefined) data.requiresPhoto = dto.requiresPhoto;
+    if (dto.allowsPhoto !== undefined || dto.requiresPhoto !== undefined) {
+      const requiresPhoto =
+        dto.requiresPhoto !== undefined ? dto.requiresPhoto : existing.requiresPhoto;
+      data.requiresPhoto = requiresPhoto;
+      data.allowsPhoto =
+        requiresPhoto ||
+        (dto.allowsPhoto !== undefined ? dto.allowsPhoto : existing.allowsPhoto);
+    }
     if (dto.allowsObservation !== undefined) data.allowsObservation = dto.allowsObservation;
     if (dto.requiresRejectionReason !== undefined) data.requiresRejectionReason = dto.requiresRejectionReason;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
@@ -828,6 +839,7 @@ export class TasksService {
       );
     }
 
+    let rejectionNote: string | null = null;
     if (dto.rejectionReasonId) {
       const reason = await this.prisma.rejectionReason.findFirst({
         where: { id: dto.rejectionReasonId, type: 'TASK_NOT_DONE', isActive: true },
@@ -836,6 +848,15 @@ export class TasksService {
         throw new NotFoundException(
           'Rejection reason not found or not valid for task execution (must be type TASK_NOT_DONE)',
         );
+      }
+      if (dto.status === TaskExecutionStatus.NOT_DONE && reason.allowsFreeText) {
+        const note = dto.rejectionNote?.trim() ?? '';
+        if (note.length < 2) {
+          throw new UnprocessableEntityException(
+            `El motivo "${reason.text}" requiere que completes el detalle.`,
+          );
+        }
+        rejectionNote = note.slice(0, 500);
       }
     }
 
@@ -860,6 +881,7 @@ export class TasksService {
       status: dto.status,
       rejectionReasonId:
         dto.status === TaskExecutionStatus.NOT_DONE ? (dto.rejectionReasonId ?? null) : null,
+      rejectionNote: dto.status === TaskExecutionStatus.NOT_DONE ? rejectionNote : null,
       observation: dto.observation ?? null,
       executedById: user.id,
       executedAt: new Date(),
@@ -903,11 +925,17 @@ export class TasksService {
         record.rejectionReasonId
           ? await this.prisma.rejectionReason.findUnique({
               where: { id: record.rejectionReasonId },
-              select: { id: true, text: true },
+              select: { id: true, text: true, allowsFreeText: true },
             })
           : null;
       const rejectionReason = rejectionReasonRow
-        ? { id: rejectionReasonRow.id, reason: rejectionReasonRow.text }
+        ? {
+            id: rejectionReasonRow.id,
+            reason:
+              rejectionReasonRow.allowsFreeText && record.rejectionNote?.trim()
+                ? `${rejectionReasonRow.text}: ${record.rejectionNote.trim()}`
+                : rejectionReasonRow.text,
+          }
         : null;
 
       this.timelineEvents.emit({
@@ -1648,6 +1676,7 @@ export class TasksService {
       id: string;
       name: string;
       frequency: TaskFrequency;
+      allowsPhoto: boolean;
       requiresPhoto: boolean;
       building: {
         id: string;
@@ -1704,6 +1733,7 @@ export class TasksService {
       taskId: task.id,
       taskName: task.name,
       frequency: task.frequency,
+      allowsPhoto: task.allowsPhoto,
       requiresPhoto: task.requiresPhoto,
       photoEvidenceMode: resolvePhotoEvidenceMode(task.building),
       building: task.building

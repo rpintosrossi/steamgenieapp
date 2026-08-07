@@ -12,6 +12,12 @@ export class MarkTaskDto {
   @IsUUID()
   rejectionReasonId?: string;
 
+  /** Detalle libre cuando el motivo seleccionado tiene allowsFreeText = true. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  rejectionNote?: string;
+
   /** Free-text observation. Only allowed when task snapshot has allowsObservationSnapshot = true. */
   @IsOptional()
   @IsString()

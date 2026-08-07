@@ -107,7 +107,7 @@ export function aggregateLineQuantities(
 }
 
 export async function ensureBuildingStockItem(
-  tx: Prisma.TransactionClient,
+  tx: PrismaExecutor,
   buildingId: string,
   productId: string,
 ) {
@@ -116,6 +116,41 @@ export async function ensureBuildingStockItem(
     create: { buildingId, productId, quantity: 0 },
     update: {},
   });
+}
+
+/** Habilita en el edificio todos los productos de destinos de envío (qty 0 si no existían). */
+export async function ensureBuildingProductsFromDestinations(
+  db: PrismaExecutor,
+  destinations: Array<{
+    buildingId: string;
+    lines: Array<{ productId: string }>;
+  }>,
+) {
+  for (const dest of destinations) {
+    if (!dest?.buildingId || !Array.isArray(dest.lines)) continue;
+    for (const line of dest.lines) {
+      if (!line?.productId) continue;
+      await ensureBuildingStockItem(db, dest.buildingId, line.productId);
+    }
+  }
+}
+
+/**
+ * Repara edificios que tienen líneas de envío pero sin filas en building_stock_items
+ * (p. ej. órdenes creadas cuando falló el ensure post-create).
+ */
+export async function syncBuildingProductsFromShipments(
+  db: PrismaService,
+  buildingId: string,
+) {
+  const lines = await db.stockShipmentLine.findMany({
+    where: { destination: { buildingId } },
+    select: { productId: true },
+    distinct: ['productId'],
+  });
+  for (const line of lines) {
+    await ensureBuildingStockItem(db, buildingId, line.productId);
+  }
 }
 
 export function availableDepotQuantity(balance: {

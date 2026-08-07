@@ -3,6 +3,7 @@ import type { Prisma, TaskFieldType } from '@prisma/client';
 export type EventualTaskForSnapshot = {
   id: string;
   name: string;
+  allowsPhoto: boolean;
   requiresPhoto: boolean;
   allowsObservation: boolean;
   requiresRejectionReason: boolean;
@@ -30,6 +31,7 @@ export async function snapshotEventualTasks(
       workOrderId,
       taskId: task.id,
       nameSnapshot: task.name,
+      allowsPhotoSnapshot: task.allowsPhoto || task.requiresPhoto,
       requiresPhotoSnapshot: task.requiresPhoto,
       allowsObservationSnapshot: task.allowsObservation,
       requiresRejectionReasonSnapshot: task.requiresRejectionReason,

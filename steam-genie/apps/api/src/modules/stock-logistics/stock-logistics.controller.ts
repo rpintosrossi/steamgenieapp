@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -143,12 +144,13 @@ export class StockLogisticsController {
   }
 
   @Post('shipments/destinations/:destinationId/deliver')
+  @HttpCode(204)
   @RequiredRoles('admin', 'manager', 'cleaner', 'stock')
-  deliverDestination(
+  async deliverDestination(
     @Param('destinationId', ParseUUIDPipe) destinationId: string,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.shipmentsService.deliverDestination(destinationId, user);
+    await this.shipmentsService.deliverDestination(destinationId, user);
   }
 
   @Post('shipments/destinations/:destinationId/cancel')

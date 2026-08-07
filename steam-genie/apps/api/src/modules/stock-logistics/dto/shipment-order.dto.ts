@@ -15,6 +15,7 @@ class ShipmentLineInputDto {
   @IsUUID()
   productId!: string;
 
+  @Type(() => Number)
   @IsNumber()
   @Min(0.001)
   quantity!: number;

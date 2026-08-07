@@ -12,9 +12,11 @@ export default function TaskRejectionReasonsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [newText, setNewText] = useState('');
+  const [newAllowsFreeText, setNewAllowsFreeText] = useState(false);
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
+  const [editAllowsFreeText, setEditAllowsFreeText] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [showInactive, setShowInactive] = useState(false);
 
@@ -48,8 +50,13 @@ export default function TaskRejectionReasonsPage() {
     setError(null);
     setSuccess(null);
     try {
-      await api.post('/rejection-reasons', { type: 'TASK_NOT_DONE', text });
+      await api.post('/rejection-reasons', {
+        type: 'TASK_NOT_DONE',
+        text,
+        allowsFreeText: newAllowsFreeText,
+      });
       setNewText('');
+      setNewAllowsFreeText(false);
       setSuccess('Motivo creado.');
       await load();
     } catch (err) {
@@ -62,6 +69,7 @@ export default function TaskRejectionReasonsPage() {
   function startEdit(item: RejectionReasonItem) {
     setEditingId(item.id);
     setEditText(item.text);
+    setEditAllowsFreeText(item.allowsFreeText);
     setError(null);
     setSuccess(null);
   }
@@ -69,6 +77,7 @@ export default function TaskRejectionReasonsPage() {
   function cancelEdit() {
     setEditingId(null);
     setEditText('');
+    setEditAllowsFreeText(false);
   }
 
   async function saveEdit(id: string) {
@@ -79,9 +88,13 @@ export default function TaskRejectionReasonsPage() {
     setError(null);
     setSuccess(null);
     try {
-      await api.patch(`/rejection-reasons/${id}`, { text });
+      await api.patch(`/rejection-reasons/${id}`, {
+        text,
+        allowsFreeText: editAllowsFreeText,
+      });
       setEditingId(null);
       setEditText('');
+      setEditAllowsFreeText(false);
       setSuccess('Motivo actualizado.');
       await load();
     } catch (err) {
@@ -153,15 +166,27 @@ export default function TaskRejectionReasonsPage() {
               id="new-reason-text"
               value={newText}
               onChange={(e) => setNewText(e.target.value)}
-              placeholder="Ej: Falta de insumos"
+              placeholder="Ej: Falta de insumos o Otro"
               maxLength={300}
               required
             />
           </div>
+          <label className="checkbox-inline" style={{ alignSelf: 'flex-end', marginBottom: 4 }}>
+            <input
+              type="checkbox"
+              checked={newAllowsFreeText}
+              onChange={(e) => setNewAllowsFreeText(e.target.checked)}
+            />
+            Campo libre
+          </label>
           <button type="submit" className="btn btn-primary btn-sm" disabled={creating}>
             {creating ? 'Guardando…' : 'Agregar'}
           </button>
         </form>
+        <p className="muted" style={{ margin: '8px 0 0', fontSize: 13 }}>
+          Si marcás “Campo libre”, en la app el limpiador deberá escribir el detalle al elegir este
+          motivo (útil para “Otro”).
+        </p>
       </div>
 
       <div className="card">
@@ -195,6 +220,7 @@ export default function TaskRejectionReasonsPage() {
               <thead>
                 <tr>
                   <th>Motivo</th>
+                  <th>Tipo</th>
                   <th>Estado</th>
                   <th>Acciones</th>
                 </tr>
@@ -204,14 +230,31 @@ export default function TaskRejectionReasonsPage() {
                   <tr key={item.id} className={!item.isActive ? 'row-muted' : undefined}>
                     <td>
                       {editingId === item.id ? (
-                        <input
-                          value={editText}
-                          onChange={(e) => setEditText(e.target.value)}
-                          maxLength={300}
-                          autoFocus
-                        />
+                        <div className="stack" style={{ gap: 8 }}>
+                          <input
+                            value={editText}
+                            onChange={(e) => setEditText(e.target.value)}
+                            maxLength={300}
+                            autoFocus
+                          />
+                          <label className="checkbox-inline">
+                            <input
+                              type="checkbox"
+                              checked={editAllowsFreeText}
+                              onChange={(e) => setEditAllowsFreeText(e.target.checked)}
+                            />
+                            Campo libre
+                          </label>
+                        </div>
                       ) : (
                         item.text
+                      )}
+                    </td>
+                    <td>
+                      {item.allowsFreeText ? (
+                        <span className="badge badge-info">Campo libre</span>
+                      ) : (
+                        <span className="muted">Fijo</span>
                       )}
                     </td>
                     <td>

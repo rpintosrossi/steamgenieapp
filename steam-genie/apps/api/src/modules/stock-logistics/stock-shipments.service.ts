@@ -17,6 +17,7 @@ import {
   aggregateLineQuantities,
   assertDepotAvailabilityForTotals,
   computeOrderStatus,
+  ensureBuildingProductsFromDestinations,
   ensureBuildingStockItem,
   generateShipmentReference,
   parseDeliveryDate,
@@ -114,7 +115,8 @@ export class StockShipmentsService {
       select: ORDER_SELECT,
     });
 
-    await this.ensureBuildingProductsFromOrder(order);
+    // Usar el DTO (fuente de verdad) por si el select anidado del create no trae lines.
+    await ensureBuildingProductsFromDestinations(this.prisma, dto.destinations);
     return this.mapOrder(order);
   }
 
@@ -190,7 +192,14 @@ export class StockShipmentsService {
     }
 
     const updated = await this.findOne(id);
-    await this.ensureBuildingProductsFromOrder(updated);
+    await ensureBuildingProductsFromDestinations(
+      this.prisma,
+      dto.destinations ??
+        updated.destinations.map((dest) => ({
+          buildingId: dest.buildingId,
+          lines: dest.lines.map((line) => ({ productId: line.productId })),
+        })),
+    );
     return updated;
   }
 
@@ -505,32 +514,6 @@ export class StockShipmentsService {
     }
 
     await assertDepotAvailabilityForTotals(this.prisma, warehouseId, productTotals);
-  }
-
-  private async ensureBuildingProductsFromOrder(order: {
-    destinations: Array<{
-      buildingId: string;
-      lines: Array<{ productId: string }>;
-    }>;
-  }) {
-    for (const dest of order.destinations) {
-      for (const line of dest.lines) {
-        await this.prisma.buildingStockItem.upsert({
-          where: {
-            buildingId_productId: {
-              buildingId: dest.buildingId,
-              productId: line.productId,
-            },
-          },
-          create: {
-            buildingId: dest.buildingId,
-            productId: line.productId,
-            quantity: 0,
-          },
-          update: {},
-        });
-      }
-    }
   }
 
   private mapOrder(order: {

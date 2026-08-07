@@ -115,6 +115,7 @@ export interface RejectionReasonItem {
   id: string;
   type: 'TASK_NOT_DONE' | 'SERVICE_REJECTION';
   text: string;
+  allowsFreeText: boolean;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -131,6 +132,7 @@ export interface TaskItem {
   startDate: string;
   /** Days of week for CUSTOM_WEEKDAYS (0=Sun … 6=Sat). */
   weekdays?: number[];
+  allowsPhoto: boolean;
   requiresPhoto: boolean;
   allowsObservation: boolean;
   requiresRejectionReason: boolean;
@@ -172,6 +174,7 @@ export interface RecurringWorkListItem {
   taskId: string;
   taskName: string;
   frequency: string;
+  allowsPhoto: boolean;
   requiresPhoto: boolean;
   photoEvidenceMode?: PhotoEvidenceMode;
   building: { id: string; name: string } | null;
@@ -382,6 +385,7 @@ export interface ServiceExecutionTaskItem {
   workOrderTaskId: string;
   nameSnapshot: string;
   sortOrder: number;
+  allowsPhotoSnapshot: boolean;
   requiresPhotoSnapshot: boolean;
   allowsObservationSnapshot: boolean;
   requiresRejectionReasonSnapshot: boolean;
@@ -424,6 +428,7 @@ export interface WorkOrderDetail {
     id: string;
     nameSnapshot: string;
     sortOrder: number;
+    allowsPhotoSnapshot?: boolean;
     requiresPhotoSnapshot: boolean;
     allowsObservationSnapshot: boolean;
   }>;
@@ -626,6 +631,7 @@ export interface Quote {
   paymentCondition?: string | null;
   paymentTerms?: string | null;
   observations?: string | null;
+  internalNotes?: string | null;
   serviceIncludes?: string | null;
   validUntil?: string | null;
   subtotal: string | number;
@@ -636,6 +642,7 @@ export interface Quote {
   createdAt: string;
   updatedAt: string;
   items: QuoteItem[];
+  payments?: QuotePayment[];
   particularClient?: Pick<
     ParticularClientItem,
     'id' | 'name' | 'taxId' | 'address' | 'contactName' | 'email' | 'phone' | 'buildingId'
@@ -650,6 +657,33 @@ export interface Quote {
     scheduledTime?: string | null;
   }>;
   createdBy?: { id: string; fullName: string };
+}
+
+export interface PaymentMethodItem {
+  id: string;
+  name: string;
+  sortOrder: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { quotePayments: number };
+}
+
+export interface QuotePayment {
+  id: string;
+  paymentMethodId: string;
+  isPending: boolean;
+  percent?: string | number | null;
+  note?: string | null;
+  sortOrder: number;
+  paymentMethod?: Pick<PaymentMethodItem, 'id' | 'name' | 'isActive'>;
+}
+
+export interface QuotePaymentInput {
+  paymentMethodId: string;
+  isPending: boolean;
+  percent?: number;
+  note?: string;
 }
 
 export interface StockWarehouseItem {
@@ -681,6 +715,10 @@ export interface StockProductItem {
   unitType: string;
   isActive: boolean;
   status: 'OK' | 'LOW' | 'OUT';
+  hasDatasheet?: boolean;
+  datasheetFileName?: string | null;
+  datasheetMimeType?: string | null;
+  datasheetUrl?: string | null;
   stockUpdatedAt: string;
   createdAt: string;
   updatedAt: string;

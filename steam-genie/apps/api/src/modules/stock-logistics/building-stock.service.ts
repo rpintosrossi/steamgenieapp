@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { UpsertBuildingStockDto } from './dto/upsert-building-stock.dto';
-import { toNumber } from './stock-logistics.helpers';
+import { syncBuildingProductsFromShipments, toNumber } from './stock-logistics.helpers';
 import { recordStockMovement } from './stock-movements.record';
 
 const ITEM_SELECT = {
@@ -33,6 +33,7 @@ export class BuildingStockService {
 
   async listByBuilding(buildingId: string) {
     await this.assertBuilding(buildingId);
+    await syncBuildingProductsFromShipments(this.prisma, buildingId);
 
     const items = await this.prisma.buildingStockItem.findMany({
       where: { buildingId },

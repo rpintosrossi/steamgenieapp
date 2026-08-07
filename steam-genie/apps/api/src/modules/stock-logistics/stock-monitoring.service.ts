@@ -2,13 +2,17 @@ import { Injectable } from '@nestjs/common';
 import { computeStockStatus } from '@steam-genie/shared-constants';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { QueryStockMonitoringDto } from './dto/query-stock-monitoring.dto';
-import { toNumber } from './stock-logistics.helpers';
+import { syncBuildingProductsFromShipments, toNumber } from './stock-logistics.helpers';
 
 @Injectable()
 export class StockMonitoringService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getMatrix(query: QueryStockMonitoringDto) {
+    if (query.buildingId) {
+      await syncBuildingProductsFromShipments(this.prisma, query.buildingId);
+    }
+
     const buildings = await this.prisma.building.findMany({
       where: {
         deletedAt: null,

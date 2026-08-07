@@ -10,6 +10,7 @@ import {
   RefreshControl,
   Modal,
   FlatList,
+  TextInput,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -50,6 +51,7 @@ interface PeriodicDueItem {
     zoneId: string;
     subzoneId: string | null;
     requiresPhoto: boolean;
+    allowsPhoto?: boolean;
     requiresRejectionReason: boolean;
     customFields?: TaskCustomField[];
   };
@@ -244,6 +246,8 @@ export default function TareasScreen() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [reasonPickerItem, setReasonPickerItem] = useState<PeriodicDueItem | null>(null);
+  const [freeTextReason, setFreeTextReason] = useState<RejectionReason | null>(null);
+  const [freeTextNote, setFreeTextNote] = useState('');
   const [fieldPickerItem, setFieldPickerItem] = useState<PeriodicDueItem | null>(null);
   const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
@@ -410,16 +414,18 @@ export default function TareasScreen() {
     newStatus: 'DONE' | 'NOT_DONE',
     rejectionReasonId?: string,
     fieldValues?: TaskFieldValueInput[],
-    options?: { silent?: boolean; skipReload?: boolean },
+    options?: { silent?: boolean; skipReload?: boolean; rejectionNote?: string },
   ): Promise<boolean> {
     setMarkingId(item.id);
     try {
       const clientOperationId = generateClientId();
       const occurredAt = new Date().toISOString();
+      const rejectionNote = options?.rejectionNote?.trim();
       const body = {
         status: newStatus,
         clientOperationId,
         ...(rejectionReasonId ? { rejectionReasonId } : {}),
+        ...(rejectionNote ? { rejectionNote } : {}),
         ...(fieldValues?.length ? { fieldValues } : {}),
       };
 
@@ -446,6 +452,7 @@ export default function TareasScreen() {
             periodicTaskInstanceId: item.id,
             status: newStatus,
             rejectionReasonId,
+            rejectionNote,
             fieldValues,
             deviceId: 'mobile',
           },
@@ -597,9 +604,34 @@ export default function TareasScreen() {
 
   function handleSelectRejectionReason(reason: RejectionReason) {
     if (!reasonPickerItem) return;
+    if (reason.allowsFreeText) {
+      setFreeTextReason(reason);
+      setFreeTextNote('');
+      return;
+    }
     const item = reasonPickerItem;
     setReasonPickerItem(null);
-    markItem(item, 'NOT_DONE', reason.id);
+    void markItem(item, 'NOT_DONE', reason.id);
+  }
+
+  function handleCancelFreeTextReason() {
+    setFreeTextReason(null);
+    setFreeTextNote('');
+  }
+
+  function handleConfirmFreeTextReason() {
+    if (!reasonPickerItem || !freeTextReason) return;
+    const note = freeTextNote.trim();
+    if (note.length < 2) {
+      Alert.alert('Detalle requerido', 'Escribí el motivo (al menos 2 caracteres).');
+      return;
+    }
+    const item = reasonPickerItem;
+    const reasonId = freeTextReason.id;
+    setFreeTextReason(null);
+    setFreeTextNote('');
+    setReasonPickerItem(null);
+    void markItem(item, 'NOT_DONE', reasonId, undefined, { rejectionNote: note });
   }
 
   async function handlePhotoUpload(item: PeriodicDueItem): Promise<boolean> {
@@ -968,7 +1000,12 @@ export default function TareasScreen() {
         onConfirm={handleConfirmFieldValues}
       />
 
-      <Modal visible={!!reasonPickerItem} transparent animationType="slide">
+      <Modal
+        visible={!!reasonPickerItem && freeTextReason == null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setReasonPickerItem(null)}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Motivo de no realización</Text>
@@ -980,7 +1017,12 @@ export default function TareasScreen() {
                   style={styles.reasonRow}
                   onPress={() => handleSelectRejectionReason(reason)}
                 >
-                  <Text style={styles.reasonText}>{reason.text}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.reasonText}>{reason.text}</Text>
+                    {reason.allowsFreeText ? (
+                      <Text style={styles.reasonHint}>Vas a poder escribir el detalle</Text>
+                    ) : null}
+                  </View>
                 </TouchableOpacity>
               )}
             />
@@ -989,6 +1031,38 @@ export default function TareasScreen() {
               onPress={() => setReasonPickerItem(null)}
             >
               <Text style={styles.modalCancelText}>Cancelar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={freeTextReason != null}
+        transparent
+        animationType="slide"
+        onRequestClose={handleCancelFreeTextReason}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>{freeTextReason?.text ?? 'Detalle'}</Text>
+            <TextInput
+              style={styles.freeTextInput}
+              value={freeTextNote}
+              onChangeText={setFreeTextNote}
+              placeholder="Escribí el motivo…"
+              placeholderTextColor={COLORS.textMuted}
+              multiline
+              maxLength={500}
+              autoFocus
+            />
+            <TouchableOpacity
+              style={styles.modalConfirm}
+              onPress={handleConfirmFreeTextReason}
+            >
+              <Text style={styles.modalConfirmText}>Confirmar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalCancel} onPress={handleCancelFreeTextReason}>
+              <Text style={styles.modalCancelText}>Volver</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1683,7 +1757,9 @@ function TaskRow({
             </View>
           ) : (
             <View style={styles.actions}>
-              {perTaskPhotosEnabled && needsPhoto && (
+              {perTaskPhotosEnabled &&
+                isDone &&
+                (item.task.allowsPhoto || item.task.requiresPhoto) && (
                 <TouchableOpacity
                   style={styles.btnPhoto}
                   onPress={onAddPhoto}
@@ -2195,6 +2271,29 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.border,
   },
   reasonText: { fontSize: 14, color: COLORS.text },
+  reasonHint: { fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
+  freeTextInput: {
+    minHeight: 100,
+    maxHeight: 160,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: COLORS.text,
+    textAlignVertical: 'top',
+    marginBottom: 12,
+    backgroundColor: COLORS.bg,
+  },
+  modalConfirm: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  modalConfirmText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   modalCancel: { marginTop: 12, alignItems: 'center', padding: 12 },
   modalCancelText: { fontSize: 14, color: COLORS.textMuted },
 });

@@ -204,6 +204,18 @@ async function refreshAccessToken(): Promise<string | null> {
   return data.accessToken;
 }
 
+function isNetworkFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const lower = error.message.toLowerCase();
+  return (
+    error.name === 'TypeError' ||
+    lower.includes('failed to fetch') ||
+    lower.includes('network error') ||
+    lower.includes('networkrequestfailed') ||
+    lower.includes('load failed')
+  );
+}
+
 export async function apiClient<T>(path: string, options: FetchOptions = {}): Promise<T> {
   const { skipAuth, _retried, ...fetchOptions } = options;
 
@@ -220,10 +232,20 @@ export async function apiClient<T>(path: string, options: FetchOptions = {}): Pr
     (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${getApiBaseUrl()}${path}`, {
-    ...fetchOptions,
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${getApiBaseUrl()}${path}`, {
+      ...fetchOptions,
+      headers,
+    });
+  } catch (error) {
+    if (isNetworkFailure(error)) {
+      throw new Error(
+        'No se pudo conectar con el servidor. Si la acción se completó, recargá la página.',
+      );
+    }
+    throw error instanceof Error ? error : new Error('Error de red');
+  }
 
   if (res.status === 401 && !skipAuth && !_retried) {
     const newToken = await refreshAccessToken();
@@ -238,7 +260,36 @@ export async function apiClient<T>(path: string, options: FetchOptions = {}): Pr
     throw new Error(extractErrorMessage(errBody, res.status, res.statusText));
   }
 
-  return res.json() as Promise<T>;
+  // Leer como texto primero: evita falsos fallos de red si el body se corta al parsear.
+  try {
+    const text = await res.text();
+    if (!text.trim()) return undefined as T;
+    return JSON.parse(text) as T;
+  } catch (error) {
+    if (isNetworkFailure(error) || error instanceof SyntaxError) {
+      throw new Error(
+        'La respuesta del servidor no se pudo leer. Si la acción se completó, recargá la página.',
+      );
+    }
+    throw error instanceof Error ? error : new Error('Error al leer la respuesta');
+  }
+}
+
+function filenameFromContentDisposition(header: string | null): string | null {
+  if (!header) return null;
+
+  const utf8Match = /filename\*=(?:UTF-8''|utf-8'')([^;]+)/i.exec(header);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1].trim().replace(/^"|"$/g, ''));
+    } catch {
+      // fall through
+    }
+  }
+
+  const plainMatch = /filename="([^"]+)"/i.exec(header) ?? /filename=([^;]+)/i.exec(header);
+  const value = plainMatch?.[1]?.trim();
+  return value || null;
 }
 
 export const api = {
@@ -313,6 +364,13 @@ export const api = {
     return send(Boolean(_retried));
   },
   fetchBlob: async (path: string, opts?: FetchOptions): Promise<Blob> => {
+    const result = await api.fetchBlobResult(path, opts);
+    return result.blob;
+  },
+  fetchBlobResult: async (
+    path: string,
+    opts?: FetchOptions,
+  ): Promise<{ blob: Blob; filename: string | null }> => {
     const { skipAuth, _retried, ...fetchOptions } = opts ?? {};
     const headers: HeadersInit = { ...(fetchOptions.headers ?? {}) };
 
@@ -333,7 +391,7 @@ export const api = {
     if (res.status === 401 && !skipAuth && !_retried) {
       const newToken = await refreshAccessToken();
       if (newToken) {
-        return api.fetchBlob(path, { ...opts, _retried: true });
+        return api.fetchBlobResult(path, { ...opts, _retried: true });
       }
       throw new Error('Sesión expirada. Volvé a iniciar sesión.');
     }
@@ -343,14 +401,18 @@ export const api = {
       throw new Error(extractErrorMessage(errBody, res.status, res.statusText));
     }
 
-    return res.blob();
+    return {
+      blob: await res.blob(),
+      filename: filenameFromContentDisposition(res.headers.get('Content-Disposition')),
+    };
   },
   download: async (path: string, filename: string, opts?: FetchOptions): Promise<void> => {
-    const blob = await api.fetchBlob(path, opts);
+    const { blob, filename: headerFilename } = await api.fetchBlobResult(path, opts);
+    const downloadName = headerFilename || filename;
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = filename;
+    anchor.download = downloadName;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();

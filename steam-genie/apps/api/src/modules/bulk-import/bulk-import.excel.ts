@@ -10,7 +10,7 @@ export const TEMPLATE_HEADERS = [
   'Tarea',
   'Frecuencia',
   'Fecha inicio',
-  'Requiere foto',
+  'Foto',
   'Permite observación',
   'Requiere motivo si no se hace',
 ] as const;
@@ -24,7 +24,9 @@ const HEADER_ALIASES: Record<string, keyof Omit<ParsedImportRow, 'rowNumber'>> =
   frecuencia: 'frequencyRaw',
   'fecha inicio': 'startDateRaw',
   'fecha de inicio': 'startDateRaw',
+  foto: 'requiresPhoto',
   'requiere foto': 'requiresPhoto',
+  'permite foto': 'allowsPhoto',
   'permite observacion': 'allowsObservation',
   'permite observación': 'allowsObservation',
   'requiere motivo si no se hace': 'requiresRejectionReason',
@@ -52,6 +54,12 @@ function formatBooleanForExport(value: boolean): string {
   return value ? 'Sí' : 'No';
 }
 
+function formatPhotoForExport(allowsPhoto?: boolean, requiresPhoto?: boolean): string {
+  if (requiresPhoto) return 'Obligatoria';
+  if (allowsPhoto) return 'Opcional';
+  return 'No';
+}
+
 function templateRowToArray(row: TemplateRowData): (string | undefined)[] {
   return [
     row.buildingName,
@@ -61,7 +69,9 @@ function templateRowToArray(row: TemplateRowData): (string | undefined)[] {
     row.taskName ?? '',
     row.frequencyRaw ?? '',
     row.startDateRaw ?? '',
-    row.requiresPhoto !== undefined ? formatBooleanForExport(row.requiresPhoto) : '',
+    row.requiresPhoto !== undefined || row.allowsPhoto !== undefined
+      ? formatPhotoForExport(row.allowsPhoto, row.requiresPhoto)
+      : '',
     row.allowsObservation !== undefined ? formatBooleanForExport(row.allowsObservation) : '',
     row.requiresRejectionReason !== undefined
       ? formatBooleanForExport(row.requiresRejectionReason)
@@ -98,6 +108,31 @@ function parseBooleanCell(value: ExcelJS.CellValue): boolean | undefined {
   if (!text) return undefined;
   if (['si', 'sí', 'yes', 'true', '1', 'x', 'verdadero'].includes(text)) return true;
   if (['no', 'false', '0', 'falso'].includes(text)) return false;
+  return undefined;
+}
+
+/** Valores: No / Opcional / Obligatoria (Sí también = obligatoria). */
+function parsePhotoFlagsCell(
+  value: ExcelJS.CellValue,
+): { allowsPhoto: boolean; requiresPhoto: boolean } | undefined {
+  const text = cellText(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '');
+  if (!text) return undefined;
+  if (['opcional', 'optional'].includes(text)) {
+    return { allowsPhoto: true, requiresPhoto: false };
+  }
+  if (
+    ['si', 'yes', 'true', '1', 'x', 'verdadero', 'obligatoria', 'obligatorio', 'required'].includes(
+      text,
+    )
+  ) {
+    return { allowsPhoto: true, requiresPhoto: true };
+  }
+  if (['no', 'false', '0', 'falso', 'ninguna', 'sin foto'].includes(text)) {
+    return { allowsPhoto: false, requiresPhoto: false };
+  }
   return undefined;
 }
 
@@ -163,7 +198,26 @@ export async function parseImportWorkbook(buffer: Buffer): Promise<ParsedImportR
 
     columnMap.forEach((field, colNumber) => {
       const cellValue = row.getCell(colNumber).value;
-      if (field === 'requiresPhoto' || field === 'allowsObservation' || field === 'requiresRejectionReason') {
+      if (field === 'requiresPhoto') {
+        const flags = parsePhotoFlagsCell(cellValue);
+        if (flags) {
+          parsed.allowsPhoto = flags.allowsPhoto;
+          parsed.requiresPhoto = flags.requiresPhoto;
+        }
+        return;
+      }
+      if (field === 'allowsPhoto') {
+        const flags = parsePhotoFlagsCell(cellValue);
+        if (flags) {
+          parsed.allowsPhoto = flags.allowsPhoto || flags.requiresPhoto;
+          if (flags.requiresPhoto) parsed.requiresPhoto = true;
+        } else {
+          const bool = parseBooleanCell(cellValue);
+          if (bool !== undefined) parsed.allowsPhoto = bool;
+        }
+        return;
+      }
+      if (field === 'allowsObservation' || field === 'requiresRejectionReason') {
         parsed[field] = parseBooleanCell(cellValue);
         return;
       }
@@ -289,7 +343,8 @@ export async function buildImportTemplateBuffer(
         ...Object.entries(FREQUENCY_LABELS).map(([code, label]) => `  • ${label} (o ${code})`),
         '',
         'Fecha inicio: formato YYYY-MM-DD o DD/MM/YYYY.',
-        'Campos Sí/No: Requiere foto, Permite observación, Requiere motivo si no se hace.',
+        'Columna Foto: No / Opcional / Obligatoria (Sí también = Obligatoria).',
+        'Campos Sí/No: Permite observación, Requiere motivo si no se hace.',
       ]
     : [
         'INSTRUCCIONES — Carga masiva de estructura y tareas',
@@ -306,7 +361,8 @@ export async function buildImportTemplateBuffer(
         ...Object.entries(FREQUENCY_LABELS).map(([code, label]) => `  • ${label} (o ${code})`),
         '',
         'Fecha inicio: formato YYYY-MM-DD o DD/MM/YYYY. Si se omite, se usa la fecha de hoy.',
-        'Campos Sí/No: Requiere foto, Permite observación, Requiere motivo si no se hace.',
+        'Columna Foto: No / Opcional / Obligatoria (Sí también = Obligatoria).',
+        'Campos Sí/No: Permite observación, Requiere motivo si no se hace.',
         '',
         'Valores de ejemplo incluidos en la hoja "Carga masiva". Podés borrarlos y pegar tus datos.',
       ];

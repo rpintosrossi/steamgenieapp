@@ -137,6 +137,27 @@ async function main() {
     }
   }
 
+  const freeTextReason = await prisma.rejectionReason.findFirst({
+    where: { type: 'TASK_NOT_DONE', text: 'Otro', deletedAt: null },
+  });
+  if (!freeTextReason) {
+    await prisma.rejectionReason.create({
+      data: {
+        type: 'TASK_NOT_DONE',
+        text: 'Otro',
+        allowsFreeText: true,
+        isActive: true,
+      },
+    });
+    console.log('  ✓ Motivo tarea: Otro (campo libre)');
+  } else if (!freeTextReason.allowsFreeText) {
+    await prisma.rejectionReason.update({
+      where: { id: freeTextReason.id },
+      data: { allowsFreeText: true },
+    });
+    console.log('  ✓ Motivo tarea: Otro marcado como campo libre');
+  }
+
   // ── Stock demo ──────────────────────────────────────────────────────────────
   const STOCK_CATEGORIES = [
     { name: 'Limpieza', sortOrder: 0 },

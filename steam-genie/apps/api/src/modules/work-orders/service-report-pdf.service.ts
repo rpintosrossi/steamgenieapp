@@ -47,7 +47,6 @@ export type ServiceReportTask = {
 
 export type ServiceReportPdfPayload = {
   title: string;
-  serviceTypeLabel: string;
   reportDateLabel: string;
   serviceDateLabel: string;
   startedAtLabel: string | null;
@@ -124,12 +123,6 @@ export class ServiceReportPdfService {
       });
       doc.fillColor(COLORS.text).font('Helvetica').fontSize(9);
       doc.text(`Fecha: ${payload.reportDateLabel}`, rightX, brandY + 32, {
-        width: rightW,
-        align: 'right',
-        lineBreak: false,
-      });
-      doc.fillColor(COLORS.muted).fontSize(8);
-      doc.text(payload.serviceTypeLabel, rightX, brandY + 48, {
         width: rightW,
         align: 'right',
         lineBreak: false,

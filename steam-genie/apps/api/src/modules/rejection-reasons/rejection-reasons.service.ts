@@ -13,6 +13,7 @@ const REASON_SELECT = {
   id: true,
   type: true,
   text: true,
+  allowsFreeText: true,
   isActive: true,
   createdAt: true,
   updatedAt: true,
@@ -33,7 +34,7 @@ export class RejectionReasonsService {
     return this.prisma.rejectionReason.findMany({
       where,
       select: REASON_SELECT,
-      orderBy: [{ isActive: 'desc' }, { text: 'asc' }],
+      orderBy: [{ isActive: 'desc' }, { allowsFreeText: 'asc' }, { text: 'asc' }],
     });
   }
 
@@ -45,6 +46,7 @@ export class RejectionReasonsService {
       data: {
         type: dto.type,
         text: normalized,
+        allowsFreeText: dto.allowsFreeText ?? false,
         isActive: true,
       },
       select: REASON_SELECT,
@@ -66,6 +68,7 @@ export class RejectionReasonsService {
       data: {
         ...(dto.text !== undefined ? { text: dto.text.trim() } : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+        ...(dto.allowsFreeText !== undefined ? { allowsFreeText: dto.allowsFreeText } : {}),
       },
       select: REASON_SELECT,
     });

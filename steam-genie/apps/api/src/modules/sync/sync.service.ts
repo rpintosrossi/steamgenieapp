@@ -172,6 +172,7 @@ export class SyncService {
             id: true,
             nameSnapshot: true,
             sortOrder: true,
+            allowsPhotoSnapshot: true,
             requiresPhotoSnapshot: true,
             allowsObservationSnapshot: true,
             requiresRejectionReasonSnapshot: true,
@@ -219,8 +220,8 @@ export class SyncService {
     // ── Rejection reasons ─────────────────────────────────────────────────────
     const rejectionReasons = await this.prisma.rejectionReason.findMany({
       where: { isActive: true, deletedAt: null },
-      orderBy: { text: 'asc' },
-      select: { id: true, text: true, type: true },
+      orderBy: [{ allowsFreeText: 'asc' }, { text: 'asc' }],
+      select: { id: true, text: true, type: true, allowsFreeText: true },
     });
 
     // ── Periodic tasks due today ───────────────────────────────────────────────
@@ -459,6 +460,7 @@ export class SyncService {
           {
             status: status as 'DONE' | 'NOT_DONE' | 'SKIPPED',
             rejectionReasonId: p.rejectionReasonId as string | undefined,
+            rejectionNote: p.rejectionNote as string | undefined,
             observation: p.observation as string | undefined,
             fieldValues: p.fieldValues as MarkTaskDto['fieldValues'],
             clientOperationId: op.clientOperationId,
@@ -490,6 +492,7 @@ export class SyncService {
           {
             status: status as 'DONE' | 'NOT_DONE' | 'SKIPPED',
             rejectionReasonId: p.rejectionReasonId as string | undefined,
+            rejectionNote: p.rejectionNote as string | undefined,
             observation: p.observation as string | undefined,
             fieldValues: p.fieldValues as MarkTaskDto['fieldValues'],
             clientOperationId: op.clientOperationId,

@@ -378,7 +378,8 @@ export class AttendanceService {
             status: true,
             executedAt: true,
             observation: true,
-            rejectionReason: { select: { id: true, text: true } },
+            rejectionNote: true,
+            rejectionReason: { select: { id: true, text: true, allowsFreeText: true } },
             executedBy: { select: { id: true, fullName: true, dni: true } },
           },
         },
@@ -418,7 +419,14 @@ export class AttendanceService {
               executedBy: execution.executedBy,
               observation: execution.observation,
               rejectionReason: execution.rejectionReason
-                ? { id: execution.rejectionReason.id, reason: execution.rejectionReason.text }
+                ? {
+                    id: execution.rejectionReason.id,
+                    reason:
+                      execution.rejectionReason.allowsFreeText &&
+                      execution.rejectionNote?.trim()
+                        ? `${execution.rejectionReason.text}: ${execution.rejectionNote.trim()}`
+                        : execution.rejectionReason.text,
+                  }
                 : null,
             }
           : null,

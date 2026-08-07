@@ -39,6 +39,7 @@ export interface RejectionReason {
   id: string;
   text: string;
   type: string;
+  allowsFreeText?: boolean;
 }
 
 export interface WorkOrderTaskSnapshot {
@@ -46,6 +47,7 @@ export interface WorkOrderTaskSnapshot {
   nameSnapshot: string;
   sortOrder: number;
   requiresPhotoSnapshot: boolean;
+  allowsPhotoSnapshot?: boolean;
   allowsObservationSnapshot: boolean;
   requiresRejectionReasonSnapshot: boolean;
 }

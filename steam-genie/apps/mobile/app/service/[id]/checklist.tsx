@@ -11,6 +11,7 @@ import {
   Image,
   Modal,
   FlatList,
+  TextInput,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -69,6 +70,7 @@ interface TaskExecutionItem {
   workOrderTaskId: string;
   nameSnapshot: string;
   sortOrder: number;
+  allowsPhotoSnapshot?: boolean;
   requiresPhotoSnapshot: boolean;
   allowsObservationSnapshot: boolean;
   requiresRejectionReasonSnapshot: boolean;
@@ -195,6 +197,8 @@ export default function ChecklistScreen() {
   const [uploadingPhaseProgress, setUploadingPhaseProgress] = useState<string | null>(null);
   const [deletingPhasePhotoId, setDeletingPhasePhotoId] = useState<string | null>(null);
   const [reasonPickerTask, setReasonPickerTask] = useState<TaskExecutionItem | null>(null);
+  const [freeTextReason, setFreeTextReason] = useState<RejectionReason | null>(null);
+  const [freeTextNote, setFreeTextNote] = useState('');
   const [fieldPickerTask, setFieldPickerTask] = useState<TaskExecutionItem | null>(null);
   const [pendingMarkStatus, setPendingMarkStatus] = useState<'DONE' | null>(null);
   const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
@@ -356,7 +360,7 @@ export default function ChecklistScreen() {
     newStatus: 'DONE' | 'NOT_DONE',
     rejectionReasonId?: string,
     fieldValues?: TaskFieldValueInput[],
-    options?: { silent?: boolean; skipReload?: boolean },
+    options?: { silent?: boolean; skipReload?: boolean; rejectionNote?: string },
   ): Promise<boolean> {
     if (!seId) return false;
     if (!canExecute) {
@@ -369,10 +373,12 @@ export default function ChecklistScreen() {
     try {
       const clientOperationId = generateClientId();
       const occurredAt = new Date().toISOString();
+      const rejectionNote = options?.rejectionNote?.trim();
       const body = {
         status: newStatus,
         clientOperationId,
         ...(rejectionReasonId ? { rejectionReasonId } : {}),
+        ...(rejectionNote ? { rejectionNote } : {}),
         ...(fieldValues?.length ? { fieldValues } : {}),
       };
 
@@ -403,6 +409,7 @@ export default function ChecklistScreen() {
             workOrderTaskId: task.workOrderTaskId,
             status: newStatus,
             rejectionReasonId,
+            rejectionNote,
             fieldValues,
             deviceId: 'mobile',
           },
@@ -531,9 +538,34 @@ export default function ChecklistScreen() {
 
   function handleSelectRejectionReason(reason: RejectionReason) {
     if (!reasonPickerTask) return;
+    if (reason.allowsFreeText) {
+      setFreeTextReason(reason);
+      setFreeTextNote('');
+      return;
+    }
     const task = reasonPickerTask;
     setReasonPickerTask(null);
     void markTask(task, 'NOT_DONE', reason.id);
+  }
+
+  function handleCancelFreeTextReason() {
+    setFreeTextReason(null);
+    setFreeTextNote('');
+  }
+
+  function handleConfirmFreeTextReason() {
+    if (!reasonPickerTask || !freeTextReason) return;
+    const note = freeTextNote.trim();
+    if (note.length < 2) {
+      Alert.alert('Detalle requerido', 'Escribí el motivo (al menos 2 caracteres).');
+      return;
+    }
+    const task = reasonPickerTask;
+    const reasonId = freeTextReason.id;
+    setFreeTextReason(null);
+    setFreeTextNote('');
+    setReasonPickerTask(null);
+    void markTask(task, 'NOT_DONE', reasonId, undefined, { rejectionNote: note });
   }
 
   function handleConfirmFieldValues(values: TaskFieldValueInput[]) {
@@ -1176,7 +1208,7 @@ export default function ChecklistScreen() {
       />
 
       <Modal
-        visible={reasonPickerTask != null}
+        visible={reasonPickerTask != null && freeTextReason == null}
         transparent
         animationType="slide"
         onRequestClose={() => setReasonPickerTask(null)}
@@ -1195,7 +1227,12 @@ export default function ChecklistScreen() {
                   style={styles.reasonRow}
                   onPress={() => handleSelectRejectionReason(item)}
                 >
-                  <Text style={styles.reasonText}>{item.text}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.reasonText}>{item.text}</Text>
+                    {item.allowsFreeText ? (
+                      <Text style={styles.reasonHint}>Vas a poder escribir el detalle</Text>
+                    ) : null}
+                  </View>
                   <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
                 </TouchableOpacity>
               )}
@@ -1208,6 +1245,44 @@ export default function ChecklistScreen() {
               onPress={() => setReasonPickerTask(null)}
             >
               <Text style={styles.modalCancelText}>Cancelar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={freeTextReason != null}
+        transparent
+        animationType="slide"
+        onRequestClose={handleCancelFreeTextReason}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, { paddingBottom: 20 + bottomPad }]}>
+            <Text style={styles.modalTitle}>{freeTextReason?.text ?? 'Detalle'}</Text>
+            <Text style={styles.modalSubtitle} numberOfLines={2}>
+              {reasonPickerTask?.nameSnapshot}
+            </Text>
+            <TextInput
+              style={styles.freeTextInput}
+              value={freeTextNote}
+              onChangeText={setFreeTextNote}
+              placeholder="Escribí el motivo…"
+              placeholderTextColor={COLORS.textMuted}
+              multiline
+              maxLength={500}
+              autoFocus
+            />
+            <TouchableOpacity
+              style={styles.modalConfirmBtn}
+              onPress={handleConfirmFreeTextReason}
+            >
+              <Text style={styles.modalConfirmText}>Confirmar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalCancelBtn}
+              onPress={handleCancelFreeTextReason}
+            >
+              <Text style={styles.modalCancelText}>Volver</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1859,7 +1934,8 @@ function TaskCard({
             {statusLabel}
           </Text>
         </View>
-        {perTaskPhotosEnabled && task.requiresPhotoSnapshot && (
+        {perTaskPhotosEnabled &&
+          (task.allowsPhotoSnapshot || task.requiresPhotoSnapshot) && (
           <Ionicons name="camera-outline" size={16} color={COLORS.primary} />
         )}
         {task.requiresRejectionReasonSnapshot && (
@@ -1960,7 +2036,11 @@ function TaskCard({
               )}
             </View>
           )}
-          {perTaskPhotosEnabled && isDone && canExecute && !selectionMode && (
+          {perTaskPhotosEnabled &&
+            isDone &&
+            canExecute &&
+            !selectionMode &&
+            (task.allowsPhotoSnapshot || task.requiresPhotoSnapshot) && (
             <TouchableOpacity style={[styles.taskBtn, styles.taskBtnPhoto]} onPress={onAddPhoto}>
               <Ionicons name="camera-outline" size={16} color={COLORS.primary} />
               <Text style={[styles.taskBtnText, { color: COLORS.primary }]}>Foto</Text>
@@ -2405,6 +2485,29 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.border,
   },
   reasonText: { flex: 1, fontSize: 15, color: COLORS.text, paddingRight: 8 },
+  reasonHint: { fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
+  freeTextInput: {
+    minHeight: 100,
+    maxHeight: 160,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: COLORS.text,
+    textAlignVertical: 'top',
+    marginBottom: 12,
+    backgroundColor: COLORS.bg,
+  },
+  modalConfirmBtn: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  modalConfirmText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   modalEmpty: { textAlign: 'center', color: COLORS.textMuted, padding: 24 },
   modalCancelBtn: {
     marginTop: 12,

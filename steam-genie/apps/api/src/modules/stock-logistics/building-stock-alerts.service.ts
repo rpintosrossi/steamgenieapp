@@ -12,6 +12,7 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StorageService } from '../../infrastructure/storage/storage.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateBuildingStockAlertDto } from './dto/create-building-stock-alert.dto';
+import { syncBuildingProductsFromShipments } from './stock-logistics.helpers';
 
 const ALERT_SELECT = {
   id: true,
@@ -84,6 +85,9 @@ export class BuildingStockAlertsService {
   async getMobileBuildingStock(buildingId: string, userId: string) {
     await this.assertActiveAttendance(userId, buildingId);
 
+    // Si hubo envíos pero falló el alta de building_stock_items, los reparamos acá.
+    await syncBuildingProductsFromShipments(this.prisma, buildingId);
+
     const [items, alerts, pendingDeliveries] = await Promise.all([
       this.prisma.buildingStockItem.findMany({
         where: { buildingId },
@@ -143,28 +147,14 @@ export class BuildingStockAlertsService {
   ) {
     await this.assertActiveAttendance(user.id, buildingId);
 
-    const item = await this.prisma.buildingStockItem.findUnique({
-      where: {
-        buildingId_productId: { buildingId, productId: dto.productId },
-      },
-    });
-    if (!item) {
-      throw new BadRequestException(
-        'Este producto no está habilitado en el edificio.',
-      );
-    }
-
-    const existing = await this.prisma.buildingStockAlert.findFirst({
-      where: {
-        buildingId,
-        productId: dto.productId,
-        status: { in: ['OPEN', 'IN_TRANSIT'] },
-      },
-    });
-    if (existing) {
-      throw new BadRequestException(
-        'Ya existe una alerta activa para este producto en el edificio.',
-      );
+    const productIds = [
+      ...new Set([
+        ...(dto.productIds ?? []),
+        ...(dto.productId ? [dto.productId] : []),
+      ]),
+    ];
+    if (productIds.length === 0) {
+      throw new BadRequestException('Seleccioná al menos un producto.');
     }
 
     const attendance = await this.prisma.attendance.findFirst({
@@ -180,35 +170,88 @@ export class BuildingStockAlertsService {
       throw new ForbiddenException('Debés estar fichado en el edificio.');
     }
 
+    const enabledItems = await this.prisma.buildingStockItem.findMany({
+      where: { buildingId, productId: { in: productIds } },
+      select: {
+        productId: true,
+        product: { select: { id: true, name: true } },
+      },
+    });
+    const enabledById = new Map(enabledItems.map((item) => [item.productId, item]));
+    for (const productId of productIds) {
+      if (!enabledById.has(productId)) {
+        throw new BadRequestException(
+          'Hay productos que no están habilitados en el edificio.',
+        );
+      }
+    }
+
+    const existingAlerts = await this.prisma.buildingStockAlert.findMany({
+      where: {
+        buildingId,
+        productId: { in: productIds },
+        status: { in: ['OPEN', 'IN_TRANSIT'] },
+      },
+      select: {
+        productId: true,
+        product: { select: { name: true } },
+      },
+    });
+    if (existingAlerts.length > 0) {
+      const names = existingAlerts.map((a) => a.product.name).join(', ');
+      throw new BadRequestException(
+        existingAlerts.length === 1
+          ? `Ya existe una alerta activa para «${names}» en el edificio.`
+          : `Ya existen alertas activas para: ${names}.`,
+      );
+    }
+
     let photoStorageKey: string | null = null;
     if (file) {
       photoStorageKey = `stock-alerts/${buildingId}/${Date.now()}-${file.originalname}`;
       await this.storage.upload(photoStorageKey, file.buffer, file.mimetype);
     }
 
-    const created = await this.prisma.buildingStockAlert.create({
-      data: {
-        buildingId,
-        productId: dto.productId,
-        reportedById: user.id,
-        attendanceId: attendance.id,
-        alertType: dto.alertType as BuildingStockAlertType,
-        note: dto.note?.trim() || null,
-        photoStorageKey,
-        status: 'OPEN',
-      },
-      select: ALERT_SELECT,
+    const note = dto.note?.trim() || null;
+    const alertType = dto.alertType as BuildingStockAlertType;
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      const rows = [];
+      for (const productId of productIds) {
+        const row = await tx.buildingStockAlert.create({
+          data: {
+            buildingId,
+            productId,
+            reportedById: user.id,
+            attendanceId: attendance.id,
+            alertType,
+            note,
+            photoStorageKey,
+            status: 'OPEN',
+          },
+          select: ALERT_SELECT,
+        });
+        rows.push(row);
+      }
+      return rows;
     });
+
+    const productNames = created.map((row) => row.product.name);
+    const summaryName =
+      productNames.length === 1
+        ? productNames[0]!
+        : `${productNames[0]} y ${productNames.length - 1} más`;
 
     void this.notificationsService
       .notifyStockAlertCreated({
-        alertId: created.id,
+        alertId: created[0]!.id,
         buildingId,
-        productName: created.product.name,
+        productName: summaryName,
       })
       .catch(() => undefined);
 
-    return this.formatAlert(created);
+    const formatted = created.map((row) => this.formatAlert(row));
+    return productIds.length === 1 ? formatted[0]! : formatted;
   }
 
   async servePhoto(alertId: string, res: Response) {

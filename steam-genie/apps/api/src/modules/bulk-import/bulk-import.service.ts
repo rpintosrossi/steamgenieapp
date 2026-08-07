@@ -126,6 +126,7 @@ export class BulkImportService {
         frequencyRaw: frequencyLabel(task.frequency),
         startDateRaw: task.startDate.toISOString().slice(0, 10),
         requiresPhoto: task.requiresPhoto,
+        allowsPhoto: task.allowsPhoto,
         allowsObservation: task.allowsObservation,
         requiresRejectionReason: task.requiresRejectionReason,
       });
@@ -336,6 +337,7 @@ export class BulkImportService {
       }
 
       const requiresPhoto = row.requiresPhoto ?? false;
+      const allowsPhoto = requiresPhoto || (row.allowsPhoto ?? false);
       const allowsObservation = row.allowsObservation ?? true;
       const requiresRejectionReason = row.requiresRejectionReason ?? true;
 
@@ -355,6 +357,7 @@ export class BulkImportService {
         const unchanged =
           existingTask.frequency === frequencyCode &&
           existingStartDate === targetStartDate &&
+          existingTask.allowsPhoto === allowsPhoto &&
           existingTask.requiresPhoto === requiresPhoto &&
           existingTask.allowsObservation === allowsObservation &&
           existingTask.requiresRejectionReason === requiresRejectionReason;
@@ -380,6 +383,7 @@ export class BulkImportService {
           data: {
             frequency: frequencyCode as TaskFrequency,
             startDate: new Date(targetStartDate),
+            allowsPhoto,
             requiresPhoto,
             allowsObservation,
             requiresRejectionReason,
@@ -409,6 +413,7 @@ export class BulkImportService {
         name: row.taskName.trim(),
         frequency: frequencyCode as TaskFrequency,
         startDate,
+        allowsPhoto,
         requiresPhoto,
         allowsObservation,
         requiresRejectionReason,

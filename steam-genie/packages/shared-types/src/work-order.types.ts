@@ -14,6 +14,7 @@ export interface WorkOrderTaskSnapshot {
   workOrderId: string;
   taskId: string;
   nameSnapshot: string;
+  allowsPhotoSnapshot: boolean;
   requiresPhotoSnapshot: boolean;
   allowsObservationSnapshot: boolean;
   requiresRejectionReasonSnapshot: boolean;

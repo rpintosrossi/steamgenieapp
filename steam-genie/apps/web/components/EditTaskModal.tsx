@@ -34,7 +34,7 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
   const [weekdays, setWeekdays] = useState<number[]>([]);
   const [categoryId, setCategoryId] = useState('');
   const [categories, setCategories] = useState<TaskCategoryItem[]>([]);
-  const [requiresPhoto, setRequiresPhoto] = useState(false);
+  const [photoMode, setPhotoMode] = useState<'none' | 'optional' | 'required'>('none');
   const [allowsObservation, setAllowsObservation] = useState(true);
   const [requiresRejectionReason, setRequiresRejectionReason] = useState(true);
   const [customFields, setCustomFields] = useState<TaskCustomField[]>([]);
@@ -59,7 +59,9 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
         setFrequency(data.frequency);
         setWeekdays(data.weekdays ?? []);
         setCategoryId(data.categoryId ?? '');
-        setRequiresPhoto(data.requiresPhoto);
+        setPhotoMode(
+          data.requiresPhoto ? 'required' : data.allowsPhoto ? 'optional' : 'none',
+        );
         setAllowsObservation(data.allowsObservation);
         setRequiresRejectionReason(data.requiresRejectionReason);
         setCustomFields(data.customFields ?? []);
@@ -109,7 +111,8 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
           ? { categoryId: categoryId || null }
           : {}),
         ...(frequency === TASK_FREQUENCIES.CUSTOM_WEEKDAYS ? { weekdays } : {}),
-        requiresPhoto,
+        allowsPhoto: photoMode !== 'none',
+        requiresPhoto: photoMode === 'required',
         allowsObservation,
         requiresRejectionReason,
       });
@@ -187,14 +190,19 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
               ) : null}
 
               <div className="grid-3">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={requiresPhoto}
-                    onChange={(e) => setRequiresPhoto(e.target.checked)}
-                  />{' '}
-                  Requiere foto
-                </label>
+                <div className="form-field">
+                  <label>Foto</label>
+                  <select
+                    value={photoMode}
+                    onChange={(e) =>
+                      setPhotoMode(e.target.value as 'none' | 'optional' | 'required')
+                    }
+                  >
+                    <option value="none">Sin foto</option>
+                    <option value="optional">Opcional</option>
+                    <option value="required">Obligatoria</option>
+                  </select>
+                </div>
                 <label>
                   <input
                     type="checkbox"

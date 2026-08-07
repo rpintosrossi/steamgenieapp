@@ -62,6 +62,7 @@ export class ServiceExecutionsService {
         id: true,
         nameSnapshot: true,
         sortOrder: true,
+        allowsPhotoSnapshot: true,
         requiresPhotoSnapshot: true,
         allowsObservationSnapshot: true,
         requiresRejectionReasonSnapshot: true,
@@ -120,6 +121,7 @@ export class ServiceExecutionsService {
         workOrderTaskId: wot.id,
         nameSnapshot: wot.nameSnapshot,
         sortOrder: wot.sortOrder,
+        allowsPhotoSnapshot: wot.allowsPhotoSnapshot,
         requiresPhotoSnapshot: wot.requiresPhotoSnapshot,
         allowsObservationSnapshot: wot.allowsObservationSnapshot,
         requiresRejectionReasonSnapshot: wot.requiresRejectionReasonSnapshot,
@@ -223,6 +225,7 @@ export class ServiceExecutionsService {
       );
     }
 
+    let rejectionNote: string | null = null;
     if (dto.rejectionReasonId) {
       const reason = await this.prisma.rejectionReason.findFirst({
         where: { id: dto.rejectionReasonId, type: 'TASK_NOT_DONE', isActive: true },
@@ -231,6 +234,15 @@ export class ServiceExecutionsService {
         throw new NotFoundException(
           'Rejection reason not found or not valid for task execution (must be type TASK_NOT_DONE)',
         );
+      }
+      if (dto.status === TaskExecutionStatus.NOT_DONE && reason.allowsFreeText) {
+        const note = dto.rejectionNote?.trim() ?? '';
+        if (note.length < 2) {
+          throw new UnprocessableEntityException(
+            `El motivo "${reason.text}" requiere que completes el detalle.`,
+          );
+        }
+        rejectionNote = note.slice(0, 500);
       }
     }
 
@@ -255,6 +267,7 @@ export class ServiceExecutionsService {
       status: dto.status,
       rejectionReasonId:
         dto.status === TaskExecutionStatus.NOT_DONE ? (dto.rejectionReasonId ?? null) : null,
+      rejectionNote: dto.status === TaskExecutionStatus.NOT_DONE ? rejectionNote : null,
       observation: dto.observation ?? null,
       executedById: user.id,
       executedAt: new Date(),

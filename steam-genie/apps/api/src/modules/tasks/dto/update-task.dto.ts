@@ -50,6 +50,10 @@ export class UpdateTaskDto {
 
   @IsOptional()
   @IsBoolean()
+  allowsPhoto?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   requiresPhoto?: boolean;
 
   @IsOptional()

@@ -12,6 +12,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { QuoteItemDto } from './quote-item.dto';
+import { QuotePaymentInputDto } from './payment-method.dto';
 
 export class EventualClientInputDto {
   @IsString()
@@ -96,6 +97,11 @@ export class CreateQuoteDto {
   @IsOptional()
   @IsString()
   @MaxLength(2000)
+  internalNotes?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
   serviceIncludes?: string;
 
   @IsOptional()
@@ -107,4 +113,10 @@ export class CreateQuoteDto {
   @ValidateNested({ each: true })
   @Type(() => QuoteItemDto)
   items!: QuoteItemDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => QuotePaymentInputDto)
+  payments?: QuotePaymentInputDto[];
 }

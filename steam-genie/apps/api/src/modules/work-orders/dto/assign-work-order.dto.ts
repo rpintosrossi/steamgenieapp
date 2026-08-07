@@ -19,6 +19,10 @@ export class ChecklistTaskDto {
 
   @IsOptional()
   @IsBoolean()
+  allowsPhoto?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   requiresPhoto?: boolean;
 }
 
