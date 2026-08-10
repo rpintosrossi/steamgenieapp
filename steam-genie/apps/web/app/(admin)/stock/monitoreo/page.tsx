@@ -73,6 +73,7 @@ export default function StockMonitoringPage() {
   } | null>(null);
   const [editQty, setEditQty] = useState('');
   const [saving, setSaving] = useState(false);
+  const [resolvingAlertId, setResolvingAlertId] = useState<string | null>(null);
   const [historyTarget, setHistoryTarget] = useState<{
     productId: string;
     productName: string;
@@ -211,6 +212,27 @@ export default function StockMonitoringPage() {
     }
   }
 
+  async function resolveAlert(alert: BuildingStockAlertRow) {
+    if (
+      !window.confirm(
+        `¿Marcar como resuelta la alerta de «${alert.product.name}» en ${alert.building.name}?`,
+      )
+    ) {
+      return;
+    }
+    setResolvingAlertId(alert.id);
+    setError(null);
+    try {
+      await api.post(`/stock-logistics/alerts/${alert.id}/resolve`, {});
+      setSuccess(`Alerta de «${alert.product.name}» marcada como resuelta.`);
+      await Promise.all([loadAlertsAndStats(), loadBuildingStock()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al resolver la alerta');
+    } finally {
+      setResolvingAlertId(null);
+    }
+  }
+
   return (
     <>
       <div className="page-header">
@@ -330,6 +352,19 @@ export default function StockMonitoringPage() {
                         Reportada por {alert.reportedBy.fullName} ·{' '}
                         {formatDateTime(alert.createdAt)}
                       </span>
+                      <div className="monitoring-alert-card-actions">
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={resolvingAlertId === alert.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void resolveAlert(alert);
+                          }}
+                        >
+                          {resolvingAlertId === alert.id ? 'Resolviendo...' : 'Marcar resuelta'}
+                        </button>
+                      </div>
                     </div>
                   </li>
                 );

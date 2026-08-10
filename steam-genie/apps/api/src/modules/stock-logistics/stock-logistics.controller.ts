@@ -65,6 +65,13 @@ export class StockLogisticsController {
     return this.alertsService.listOpenForMonitoring(buildingId);
   }
 
+  @Post('alerts/:id/resolve')
+  @RequiredRoles('admin', 'manager', 'stock')
+  @RequiredModules(APP_MODULES.STOCK_MONITORING)
+  resolveAlert(@Param('id', ParseUUIDPipe) id: string) {
+    return this.alertsService.resolve(id);
+  }
+
   @Get('alerts/:id/photo')
   @RequiredRoles('admin', 'manager', 'stock')
   @RequiredModules(APP_MODULES.STOCK_MONITORING)

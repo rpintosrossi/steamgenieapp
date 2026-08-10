@@ -18,13 +18,32 @@ const TIMELINE_SELECT = {
   id: true,
   checkInAt: true,
   checkOutAt: true,
+  checkInGpsLat: true,
+  checkInGpsLng: true,
   checkInOutOfRange: true,
   checkInDistanceM: true,
+  checkOutGpsLat: true,
+  checkOutGpsLng: true,
   checkOutOutOfRange: true,
   checkOutDistanceM: true,
   user: { select: { id: true, fullName: true, dni: true } },
-  building: { select: { id: true, name: true, gpsRadiusM: true } },
+  building: {
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      city: true,
+      province: true,
+      gpsRadiusM: true,
+    },
+  },
 } as const;
+
+function toCoord(value: unknown): number | null {
+  if (value == null) return null;
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
 
 export type GpsProximityResult = {
   outOfRange: boolean;
@@ -273,6 +292,10 @@ export class AttendanceService {
 
     const enrichedData = data.map((item) => ({
       ...item,
+      checkInGpsLat: toCoord(item.checkInGpsLat),
+      checkInGpsLng: toCoord(item.checkInGpsLng),
+      checkOutGpsLat: toCoord(item.checkOutGpsLat),
+      checkOutGpsLng: toCoord(item.checkOutGpsLng),
       taskProgress: taskProgressMap.get(item.building.id) ?? { total: 0, completed: 0 },
     }));
 

@@ -110,6 +110,28 @@ function formatTaskProgress(total: number, completed: number): string {
   return `${completed}/${total} tareas (${pct}%)`;
 }
 
+function mapsUrl(lat: number, lng: number): string {
+  return `https://www.google.com/maps?q=${lat},${lng}`;
+}
+
+function formatBuildingAddress(building: AttendanceTimelineItem['building']): string | null {
+  const parts = [building.address, building.city, building.province].filter(
+    (part): part is string => Boolean(part?.trim()),
+  );
+  return parts.length > 0 ? parts.join(', ') : null;
+}
+
+function formatGpsPoint(
+  lat: number | null | undefined,
+  lng: number | null | undefined,
+  distanceM: number | null | undefined,
+): string | null {
+  if (lat == null || lng == null) return null;
+  const coords = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  if (distanceM != null) return `${coords} · ${distanceM} m del edificio`;
+  return coords;
+}
+
 export default function AttendanceTimelinePage() {
   const [items, setItems] = useState<AttendanceTimelineItem[]>([]);
   const [buildings, setBuildings] = useState<Array<{ id: string; name: string }>>([]);
@@ -516,6 +538,17 @@ export default function AttendanceTimelinePage() {
               const isLoadingTasks = loadingKeys.has(taskKey);
               const tasks = tasksByKey.get(taskKey);
               const hasTaskProgress = (item.taskProgress?.total ?? 0) > 0;
+              const buildingAddress = formatBuildingAddress(item.building);
+              const checkInPoint = formatGpsPoint(
+                item.checkInGpsLat,
+                item.checkInGpsLng,
+                item.checkInDistanceM,
+              );
+              const checkOutPoint = formatGpsPoint(
+                item.checkOutGpsLat,
+                item.checkOutGpsLng,
+                item.checkOutDistanceM,
+              );
 
               return (
                 <li key={item.id} className="attendance-timeline-item">
@@ -567,10 +600,44 @@ export default function AttendanceTimelinePage() {
                       <div className="attendance-timeline-building">
                         <span className="attendance-timeline-label">Edificio</span>
                         <span>{item.building.name}</span>
+                        {buildingAddress ? <span className="muted">{buildingAddress}</span> : null}
                       </div>
                       <div className="attendance-timeline-duration">
                         <span className="attendance-timeline-label">Duración</span>
                         <span>{formatDuration(item.checkInAt, item.checkOutAt)}</span>
+                      </div>
+                      <div className="attendance-timeline-location">
+                        <span className="attendance-timeline-label">Ubicación del fichaje</span>
+                        {!checkInPoint && !checkOutPoint ? (
+                          <span className="muted">Sin GPS registrado</span>
+                        ) : (
+                          <div className="attendance-timeline-location-links">
+                            {checkInPoint &&
+                            item.checkInGpsLat != null &&
+                            item.checkInGpsLng != null ? (
+                              <a
+                                href={mapsUrl(item.checkInGpsLat, item.checkInGpsLng)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="attendance-timeline-map-link"
+                              >
+                                Entrada: {checkInPoint}
+                              </a>
+                            ) : null}
+                            {checkOutPoint &&
+                            item.checkOutGpsLat != null &&
+                            item.checkOutGpsLng != null ? (
+                              <a
+                                href={mapsUrl(item.checkOutGpsLat, item.checkOutGpsLng)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="attendance-timeline-map-link"
+                              >
+                                Salida: {checkOutPoint}
+                              </a>
+                            ) : null}
+                          </div>
+                        )}
                       </div>
                       <div className="attendance-timeline-tasks">
                         <span className="attendance-timeline-label">Tareas del edificio</span>

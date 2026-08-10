@@ -100,6 +100,15 @@ const WO_DETAIL_INCLUDE = {
       },
     },
   },
+  quote: {
+    select: {
+      id: true,
+      number: true,
+      particularClient: { select: { name: true } },
+      eventualClient: { select: { name: true } },
+      building: { select: { name: true } },
+    },
+  },
 } as const;
 
 @Injectable()

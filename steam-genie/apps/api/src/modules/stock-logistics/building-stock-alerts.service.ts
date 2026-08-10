@@ -254,6 +254,37 @@ export class BuildingStockAlertsService {
     return productIds.length === 1 ? formatted[0]! : formatted;
   }
 
+  async resolve(alertId: string) {
+    const alert = await this.prisma.buildingStockAlert.findUnique({
+      where: { id: alertId },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+    if (!alert) {
+      throw new NotFoundException('Alerta no encontrada');
+    }
+    if (alert.status === 'RESOLVED') {
+      throw new BadRequestException('La alerta ya está resuelta.');
+    }
+
+    const updated = await this.prisma.buildingStockAlert.update({
+      where: { id: alertId },
+      data: {
+        status: 'RESOLVED',
+        resolvedAt: new Date(),
+      },
+      select: {
+        ...ALERT_SELECT,
+        building: { select: { id: true, name: true } },
+        reportedBy: { select: { id: true, fullName: true } },
+      },
+    });
+
+    return this.formatAlert(updated);
+  }
+
   async servePhoto(alertId: string, res: Response) {
     const alert = await this.prisma.buildingStockAlert.findUnique({
       where: { id: alertId },

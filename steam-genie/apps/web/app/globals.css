@@ -2304,6 +2304,28 @@ textarea {
   gap: 12px 20px;
 }
 
+.attendance-timeline-location {
+  grid-column: 1 / -1;
+}
+
+.attendance-timeline-location-links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.attendance-timeline-map-link {
+  color: var(--color-primary);
+  font-size: 13px;
+  text-decoration: none;
+  width: fit-content;
+}
+
+.attendance-timeline-map-link:hover {
+  text-decoration: underline;
+}
+
 .attendance-timeline-tasks {
   grid-column: 1 / -1;
 }
@@ -2923,6 +2945,12 @@ textarea {
   font-size: 12px;
   color: var(--color-text-muted);
   line-height: 1.45;
+}
+
+.monitoring-alert-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
 }
 
 .monitoring-building-search {

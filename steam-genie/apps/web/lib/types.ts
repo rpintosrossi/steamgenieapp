@@ -286,12 +286,23 @@ export interface AttendanceTimelineItem {
   id: string;
   checkInAt: string;
   checkOutAt: string | null;
+  checkInGpsLat?: number | null;
+  checkInGpsLng?: number | null;
   checkInOutOfRange?: boolean;
   checkInDistanceM?: number | null;
+  checkOutGpsLat?: number | null;
+  checkOutGpsLng?: number | null;
   checkOutOutOfRange?: boolean;
   checkOutDistanceM?: number | null;
   user: { id: string; fullName: string; dni: string };
-  building: { id: string; name: string; gpsRadiusM?: number };
+  building: {
+    id: string;
+    name: string;
+    address?: string | null;
+    city?: string | null;
+    province?: string | null;
+    gpsRadiusM?: number;
+  };
   taskProgress: { total: number; completed: number } | undefined;
 }
 
