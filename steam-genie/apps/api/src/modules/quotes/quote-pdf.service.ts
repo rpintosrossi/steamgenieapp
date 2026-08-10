@@ -53,6 +53,72 @@ export type QuotePdfPayload = {
 
 type PdfDoc = InstanceType<typeof PDFDocument>;
 
+type Density = {
+  headerH: number;
+  logoH: number;
+  brandY: number;
+  companyGap: number;
+  sectionGap: number;
+  clientPad: number;
+  clientFactH: number;
+  clientNameSize: number;
+  sectionTitleSize: number;
+  bodySize: number;
+  tableFont: number;
+  tableHeaderH: number;
+  rowPad: number;
+  minRowH: number;
+  totalsH: number;
+  includeGap: number;
+  includeLineGap: number;
+  maxDescChars: number;
+  footerReserve: number;
+};
+
+const DENSITY_NORMAL: Density = {
+  headerH: 88,
+  logoH: 56,
+  brandY: 14,
+  companyGap: 14,
+  sectionGap: 14,
+  clientPad: 44,
+  clientFactH: 13,
+  clientNameSize: 12,
+  sectionTitleSize: 8,
+  bodySize: 9,
+  tableFont: 8,
+  tableHeaderH: 20,
+  rowPad: 8,
+  minRowH: 18,
+  totalsH: 70,
+  includeGap: 4,
+  includeLineGap: 1,
+  maxDescChars: 900,
+  footerReserve: 44,
+};
+
+const DENSITY_COMPACT: Density = {
+  headerH: 64,
+  logoH: 40,
+  brandY: 10,
+  companyGap: 8,
+  sectionGap: 8,
+  clientPad: 36,
+  clientFactH: 11,
+  clientNameSize: 10,
+  sectionTitleSize: 7,
+  bodySize: 7.5,
+  tableFont: 7,
+  tableHeaderH: 16,
+  rowPad: 4,
+  minRowH: 14,
+  totalsH: 58,
+  includeGap: 2,
+  includeLineGap: 0,
+  maxDescChars: 280,
+  footerReserve: 36,
+};
+
 @Injectable()
 export class QuotePdfService {
   private readonly logger = new Logger(QuotePdfService.name);
@@ -75,56 +141,60 @@ export class QuotePdfService {
 
       const pageWidth = doc.page.width;
       const pageHeight = doc.page.height;
-      const marginX = 42;
+      const marginX = 36;
       const contentWidth = pageWidth - marginX * 2;
       const money = (n: number) =>
         n.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
 
-      // ── Header (fondo claro para el logo original con tipografía navy) ─────
-      const headerH = 96;
+      const density = this.chooseDensity(doc, payload, contentWidth, pageHeight);
+      const items = payload.items.map((item) => ({
+        ...item,
+        description: this.clipText(item.description, density.maxDescChars),
+      }));
+
+      // ── Header ────────────────────────────────────────────────────────────
+      const headerH = density.headerH;
       doc.rect(0, 0, pageWidth, headerH).fill(COLORS.white);
-      doc.rect(0, headerH, pageWidth, 5).fill(COLORS.primary);
+      doc.rect(0, headerH, pageWidth, 4).fill(COLORS.primary);
 
       const brandX = marginX;
-      const brandY = 16;
+      const brandY = density.brandY;
       const logo = this.loadBrandLogo();
       if (logo) {
         try {
-          // Logo horizontal: ícono SG + STEAM / GENIE (dos líneas).
-          const logoH = 64;
-          doc.image(logo.buffer, brandX, brandY, { height: logoH });
+          doc.image(logo.buffer, brandX, brandY, { height: density.logoH });
         } catch (err) {
           this.logger.warn(`No se pudo incrustar el logo: ${String(err)}`);
-          this.drawBrandFallback(doc, brandX, brandY);
+          this.drawBrandFallback(doc, brandX, brandY, density.logoH);
         }
       } else {
-        this.drawBrandFallback(doc, brandX, brandY);
+        this.drawBrandFallback(doc, brandX, brandY, density.logoH);
       }
 
-      // Bloque derecho del header
       const rightW = 210;
       const rightX = pageWidth - marginX - rightW;
-      doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(12);
-      doc.text('PRESUPUESTO DE VENTA', rightX, brandY + 8, {
+      const titleSize = density === DENSITY_COMPACT ? 10 : 12;
+      doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(titleSize);
+      doc.text('PRESUPUESTO DE VENTA', rightX, brandY + 4, {
         width: rightW,
         align: 'right',
         lineBreak: false,
       });
-      doc.fillColor(COLORS.primary).font('Helvetica').fontSize(10);
-      doc.text(`N° ${formatQuoteNumber(payload.number)}`, rightX, brandY + 28, {
+      doc.fillColor(COLORS.primary).font('Helvetica').fontSize(density === DENSITY_COMPACT ? 9 : 10);
+      doc.text(`N° ${formatQuoteNumber(payload.number)}`, rightX, brandY + 20, {
         width: rightW,
         align: 'right',
         lineBreak: false,
       });
-      doc.fillColor(COLORS.text).fontSize(9);
-      doc.text(`Fecha: ${payload.requestDate}`, rightX, brandY + 44, {
+      doc.fillColor(COLORS.text).fontSize(density === DENSITY_COMPACT ? 8 : 9);
+      doc.text(`Fecha: ${payload.requestDate}`, rightX, brandY + 34, {
         width: rightW,
         align: 'right',
         lineBreak: false,
       });
       if (payload.validUntil) {
-        doc.fillColor(COLORS.muted).fontSize(8);
-        doc.text(`Válido hasta: ${payload.validUntil}`, rightX, brandY + 58, {
+        doc.fillColor(COLORS.muted).fontSize(7);
+        doc.text(`Válido hasta: ${payload.validUntil}`, rightX, brandY + 46, {
           width: rightW,
           align: 'right',
           lineBreak: false,
@@ -132,21 +202,21 @@ export class QuotePdfService {
       }
 
       // ── Company strip ─────────────────────────────────────────────────────
-      let y = headerH + 16;
-      doc.fillColor(COLORS.muted).font('Helvetica').fontSize(8);
+      let y = headerH + (density === DENSITY_COMPACT ? 8 : 12);
+      doc.fillColor(COLORS.muted).font('Helvetica').fontSize(7);
       doc.text(
         `${QUOTE_COMPANY.address}  ·  Tel: ${QUOTE_COMPANY.phone}  ·  ${QUOTE_COMPANY.website}`,
         marginX,
         y,
         { width: contentWidth },
       );
-      y += 12;
+      y += 10;
       doc.text(`${QUOTE_COMPANY.taxStatus}  ·  CUIT ${QUOTE_COMPANY.taxId}`, marginX, y, {
         width: contentWidth,
       });
-      y += 18;
+      y += density.companyGap;
 
-      // ── Client card (altura dinámica) ─────────────────────────────────────
+      // ── Client card ───────────────────────────────────────────────────────
       const leftFacts: Array<[string, string]> = [];
       const rightFacts: Array<[string, string]> = [];
       if (payload.clientTaxId) leftFacts.push(['CUIT', payload.clientTaxId]);
@@ -158,91 +228,103 @@ export class QuotePdfService {
       if (payload.sellerName) rightFacts.push(['Vendedor', payload.sellerName]);
 
       const factRows = Math.max(leftFacts.length, rightFacts.length, 1);
-      const clientBoxH = 52 + factRows * 14;
-      doc.roundedRect(marginX, y, contentWidth, clientBoxH, 6).fill(COLORS.surface);
+      const clientBoxH = density.clientPad + factRows * density.clientFactH;
+      doc.roundedRect(marginX, y, contentWidth, clientBoxH, 5).fill(COLORS.surface);
       doc
-        .roundedRect(marginX, y, contentWidth, clientBoxH, 6)
+        .roundedRect(marginX, y, contentWidth, clientBoxH, 5)
         .lineWidth(1)
         .strokeColor(COLORS.border)
         .stroke();
-      doc.rect(marginX, y, 4, clientBoxH).fill(COLORS.primary);
+      doc.rect(marginX, y, 3, clientBoxH).fill(COLORS.primary);
 
-      doc.fillColor(COLORS.primary).font('Helvetica-Bold').fontSize(9);
-      doc.text('DATOS DEL CLIENTE', marginX + 16, y + 12);
-      doc.fillColor(COLORS.text).font('Helvetica-Bold').fontSize(13);
-      doc.text(payload.clientName, marginX + 16, y + 28, {
-        width: contentWidth - 32,
+      doc.fillColor(COLORS.primary).font('Helvetica-Bold').fontSize(8);
+      doc.text('DATOS DEL CLIENTE', marginX + 14, y + 8);
+      doc.fillColor(COLORS.text).font('Helvetica-Bold').fontSize(density.clientNameSize);
+      doc.text(payload.clientName, marginX + 14, y + 22, {
+        width: contentWidth - 28,
         lineBreak: false,
       });
 
-      const leftCol = marginX + 16;
-      const rightCol = marginX + contentWidth / 2 + 8;
-      const factsTop = y + 48;
-      doc.font('Helvetica').fontSize(9);
+      const leftCol = marginX + 14;
+      const rightCol = marginX + contentWidth / 2 + 6;
+      const factsTop = y + density.clientPad - 4;
+      doc.font('Helvetica').fontSize(density.bodySize - 0.5);
       leftFacts.forEach(([label, value], i) => {
-        this.drawLabeledValue(doc, label, value, leftCol, factsTop + i * 14, contentWidth / 2 - 28);
+        this.drawLabeledValue(
+          doc,
+          label,
+          value,
+          leftCol,
+          factsTop + i * density.clientFactH,
+          contentWidth / 2 - 26,
+        );
       });
       rightFacts.forEach(([label, value], i) => {
-        this.drawLabeledValue(doc, label, value, rightCol, factsTop + i * 14, contentWidth / 2 - 28);
+        this.drawLabeledValue(
+          doc,
+          label,
+          value,
+          rightCol,
+          factsTop + i * density.clientFactH,
+          contentWidth / 2 - 26,
+        );
       });
-      y += clientBoxH + 18;
+      y += clientBoxH + density.sectionGap;
 
       // ── Service type ──────────────────────────────────────────────────────
       if (payload.serviceType) {
-        doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(9);
+        doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(density.sectionTitleSize);
         doc.text('TIPO DE SERVICIO', marginX, y);
-        y += 14;
-        doc.fillColor(COLORS.text).font('Helvetica').fontSize(10);
-        doc.text(payload.serviceType, marginX, y, { width: contentWidth });
-        y += doc.heightOfString(payload.serviceType, { width: contentWidth }) + 14;
+        y += 11;
+        doc.fillColor(COLORS.text).font('Helvetica').fontSize(density.bodySize);
+        const serviceText = this.clipText(payload.serviceType, density.maxDescChars);
+        doc.text(serviceText, marginX, y, { width: contentWidth });
+        y += doc.heightOfString(serviceText, { width: contentWidth }) + density.sectionGap;
       }
 
       // ── Items table ───────────────────────────────────────────────────────
-      doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(9);
+      doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(density.sectionTitleSize);
       doc.text('DETALLE DEL PRESUPUESTO', marginX, y);
-      y += 14;
+      y += 11;
 
       const cols = {
-        cant: { x: marginX, w: 42 },
-        desc: { x: marginX + 46, w: 0 },
-        price: { x: 0, w: 78 },
-        bonif: { x: 0, w: 52 },
-        total: { x: 0, w: 82 },
+        cant: { x: marginX, w: 36 },
+        desc: { x: marginX + 40, w: 0 },
+        price: { x: 0, w: 72 },
+        bonif: { x: 0, w: 46 },
+        total: { x: 0, w: 76 },
       };
       cols.total.x = marginX + contentWidth - cols.total.w;
-      cols.bonif.x = cols.total.x - cols.bonif.w - 6;
-      cols.price.x = cols.bonif.x - cols.price.w - 6;
-      cols.desc.w = cols.price.x - cols.desc.x - 6;
+      cols.bonif.x = cols.total.x - cols.bonif.w - 4;
+      cols.price.x = cols.bonif.x - cols.price.w - 4;
+      cols.desc.w = cols.price.x - cols.desc.x - 4;
 
-      const headerHRow = 22;
+      const headerHRow = density.tableHeaderH;
       doc.roundedRect(marginX, y, contentWidth, headerHRow, 3).fill(COLORS.primary);
-      doc.fillColor(COLORS.white).font('Helvetica-Bold').fontSize(8);
-      const headerTextY = y + 7;
-      doc.text('CANT.', cols.cant.x + 4, headerTextY, { width: cols.cant.w - 4 });
+      doc.fillColor(COLORS.white).font('Helvetica-Bold').fontSize(density.tableFont);
+      const headerTextY = y + (headerHRow - density.tableFont) / 2 - 1;
+      doc.text('CANT.', cols.cant.x + 3, headerTextY, { width: cols.cant.w - 3 });
       doc.text('DESCRIPCIÓN', cols.desc.x, headerTextY, { width: cols.desc.w });
       doc.text('PRECIO', cols.price.x, headerTextY, { width: cols.price.w, align: 'right' });
       doc.text('% BONIF.', cols.bonif.x, headerTextY, { width: cols.bonif.w, align: 'right' });
-      doc.text('TOTAL', cols.total.x, headerTextY, { width: cols.total.w - 4, align: 'right' });
+      doc.text('TOTAL', cols.total.x, headerTextY, { width: cols.total.w - 3, align: 'right' });
       y += headerHRow;
 
-      doc.font('Helvetica').fontSize(8);
-      for (let i = 0; i < payload.items.length; i++) {
-        const item = payload.items[i];
+      const bottomLimit = pageHeight - density.footerReserve - 8;
+      doc.font('Helvetica').fontSize(density.tableFont);
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
         const descHeight = doc.heightOfString(item.description, { width: cols.desc.w });
-        const rowH = Math.max(22, descHeight + 10);
+        const rowH = Math.max(density.minRowH, descHeight + density.rowPad);
 
-        if (y + rowH > pageHeight - 200) {
-          doc.addPage();
-          y = 48;
-        }
-
+        // Sin saltar de página: si no entra, se dibuja igual (preferimos 1 hoja).
         if (i % 2 === 0) {
           doc.rect(marginX, y, contentWidth, rowH).fill(COLORS.rowAlt);
         }
 
-        const textY = y + 6;
+        const textY = y + Math.max(2, density.rowPad / 2);
         doc.fillColor(COLORS.text);
-        doc.text(String(item.quantity), cols.cant.x + 4, textY, { width: cols.cant.w - 4 });
+        doc.text(String(item.quantity), cols.cant.x + 3, textY, { width: cols.cant.w - 3 });
         doc.text(item.description, cols.desc.x, textY, { width: cols.desc.w });
         doc.text(money(item.unitPrice), cols.price.x, textY, {
           width: cols.price.w,
@@ -257,7 +339,7 @@ export class QuotePdfService {
           { width: cols.bonif.w, align: 'right' },
         );
         doc.font('Helvetica-Bold').text(money(item.lineTotal), cols.total.x, textY, {
-          width: cols.total.w - 4,
+          width: cols.total.w - 3,
           align: 'right',
         });
         doc.font('Helvetica');
@@ -272,107 +354,182 @@ export class QuotePdfService {
         .stroke();
 
       // ── Totals ────────────────────────────────────────────────────────────
-      y += 14;
-      const totalsW = 220;
+      y += density === DENSITY_COMPACT ? 8 : 12;
+      const totalsW = 200;
       const totalsX = marginX + contentWidth - totalsW;
-      const totalsH = 78;
-      if (y + totalsH > pageHeight - 160) {
-        doc.addPage();
-        y = 48;
-      }
+      const totalsH = density.totalsH;
 
-      doc.roundedRect(totalsX, y, totalsW, totalsH, 6).fill(COLORS.surface);
-      doc.roundedRect(totalsX, y, totalsW, totalsH, 6).strokeColor(COLORS.border).stroke();
+      doc.roundedRect(totalsX, y, totalsW, totalsH, 5).fill(COLORS.surface);
+      doc.roundedRect(totalsX, y, totalsW, totalsH, 5).strokeColor(COLORS.border).stroke();
 
-      const totalsInner = totalsX + 14;
-      const totalsValueW = totalsW - 28;
-      doc.fillColor(COLORS.muted).font('Helvetica').fontSize(9);
-      doc.text('Sub-Total', totalsInner, y + 12);
-      doc.fillColor(COLORS.text).text(money(payload.subtotal), totalsInner, y + 12, {
+      const totalsInner = totalsX + 12;
+      const totalsValueW = totalsW - 24;
+      doc.fillColor(COLORS.muted).font('Helvetica').fontSize(density.bodySize);
+      doc.text('Sub-Total', totalsInner, y + 10);
+      doc.fillColor(COLORS.text).text(money(payload.subtotal), totalsInner, y + 10, {
         width: totalsValueW,
         align: 'right',
       });
-      doc.fillColor(COLORS.muted).text(`I.V.A. (${payload.vatRate}%)`, totalsInner, y + 28);
-      doc.fillColor(COLORS.text).text(money(payload.vatAmount), totalsInner, y + 28, {
+      doc.fillColor(COLORS.muted).text(`I.V.A. (${payload.vatRate}%)`, totalsInner, y + 24);
+      doc.fillColor(COLORS.text).text(money(payload.vatAmount), totalsInner, y + 24, {
         width: totalsValueW,
         align: 'right',
       });
       doc
-        .moveTo(totalsInner, y + 46)
-        .lineTo(totalsX + totalsW - 14, y + 46)
+        .moveTo(totalsInner, y + 38)
+        .lineTo(totalsX + totalsW - 12, y + 38)
         .strokeColor(COLORS.border)
         .stroke();
-      doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(11);
-      doc.text('TOTAL', totalsInner, y + 54);
-      doc.fillColor(COLORS.primaryDark).text(money(payload.total), totalsInner, y + 54, {
+      doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(density.bodySize + 1);
+      doc.text('TOTAL', totalsInner, y + totalsH - 18);
+      doc.fillColor(COLORS.primaryDark).text(money(payload.total), totalsInner, y + totalsH - 18, {
         width: totalsValueW,
         align: 'right',
       });
 
       // ── Terms ─────────────────────────────────────────────────────────────
-      y += totalsH + 22;
-      if (y > pageHeight - 150) {
-        doc.addPage();
-        y = 48;
-      }
+      y += totalsH + density.sectionGap;
 
-      doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(9);
+      doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(density.sectionTitleSize);
       doc.text('CONDICIONES', marginX, y);
-      y += 14;
-      doc.fillColor(COLORS.text).font('Helvetica').fontSize(9);
-      const observations =
-        payload.observations?.trim() || 'ESTE PRESUPUESTO ES VALIDO POR UN MES';
-      const paymentTerms =
+      y += 11;
+      doc.fillColor(COLORS.text).font('Helvetica').fontSize(density.bodySize);
+      const observations = this.clipText(
+        payload.observations?.trim() || 'ESTE PRESUPUESTO ES VALIDO POR UN MES',
+        density === DENSITY_COMPACT ? 220 : 500,
+      );
+      const paymentTerms = this.clipText(
         payload.paymentTerms?.trim() ||
-        '50% DE ANTICIPO EL RESTO A FINALIZAR EL SERVICIO';
+          '50% DE ANTICIPO EL RESTO A FINALIZAR EL SERVICIO',
+        density === DENSITY_COMPACT ? 220 : 500,
+      );
       doc.text(`Observaciones: ${observations}`, marginX, y, { width: contentWidth });
-      y += doc.heightOfString(`Observaciones: ${observations}`, { width: contentWidth }) + 8;
+      y +=
+        doc.heightOfString(`Observaciones: ${observations}`, { width: contentWidth }) +
+        (density === DENSITY_COMPACT ? 4 : 6);
       doc.text(`Forma de pago: ${paymentTerms}`, marginX, y, { width: contentWidth });
-      y += doc.heightOfString(`Forma de pago: ${paymentTerms}`, { width: contentWidth }) + 14;
+      y +=
+        doc.heightOfString(`Forma de pago: ${paymentTerms}`, { width: contentWidth }) +
+        density.sectionGap;
 
-      doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(9);
+      doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(density.sectionTitleSize);
       doc.text('EL SERVICIO INCLUYE', marginX, y);
-      y += 14;
-      doc.font('Helvetica').fontSize(9);
+      y += 11;
+      doc.font('Helvetica').fontSize(density.bodySize);
       const includes = parseQuoteServiceIncludes(payload.serviceIncludes);
       for (const item of includes) {
-        if (y > pageHeight - 60) {
-          doc.addPage();
-          y = 48;
-        }
+        if (y > bottomLimit - 12) break;
         const bulletX = marginX;
-        const textX = marginX + 14;
-        const textW = contentWidth - 14;
+        const textX = marginX + 12;
+        const textW = contentWidth - 12;
+        const line = this.clipText(item, density === DENSITY_COMPACT ? 160 : 400);
         const h = Math.max(
-          12,
-          doc.heightOfString(item, { width: textW, lineGap: 2 }),
+          10,
+          doc.heightOfString(line, { width: textW, lineGap: density.includeLineGap }),
         );
-        doc.fillColor(COLORS.primary).text('•', bulletX, y, { width: 12, lineBreak: false });
-        doc.fillColor(COLORS.text).text(item, textX, y, {
+        doc.fillColor(COLORS.primary).text('•', bulletX, y, { width: 10, lineBreak: false });
+        doc.fillColor(COLORS.text).text(line, textX, y, {
           width: textW,
-          lineGap: 2,
+          lineGap: density.includeLineGap,
         });
-        y += h + 6;
+        y += h + density.includeGap;
       }
 
-      // ── Footer ────────────────────────────────────────────────────────────
-      const footerY = pageHeight - 36;
-      doc.rect(0, footerY - 10, pageWidth, 46).fill(COLORS.navy);
-      doc.fillColor(COLORS.accent).font('Helvetica').fontSize(8);
+      // ── Footer (siempre en la primera hoja) ───────────────────────────────
+      const footerY = pageHeight - density.footerReserve + 8;
+      doc.rect(0, footerY - 8, pageWidth, density.footerReserve + 8).fill(COLORS.navy);
+      doc.fillColor(COLORS.accent).font('Helvetica').fontSize(7);
       doc.text('*** DOCUMENTO SIN VALOR FISCAL ***', marginX, footerY, {
         width: contentWidth,
         align: 'center',
       });
-      doc.fillColor('#94a3b8').fontSize(7);
+      doc.fillColor('#94a3b8').fontSize(6.5);
       doc.text(
         `${QUOTE_COMPANY.name} · ${QUOTE_COMPANY.website} · Estado: ${payload.statusLabel}`,
         marginX,
-        footerY + 12,
+        footerY + 11,
         { width: contentWidth, align: 'center' },
       );
 
       doc.end();
     });
+  }
+
+  /** Elige layout normal o compacto según si el contenido cabe en una hoja A4. */
+  private chooseDensity(
+    doc: PdfDoc,
+    payload: QuotePdfPayload,
+    contentWidth: number,
+    pageHeight: number,
+  ): Density {
+    const estimate = (d: Density) => {
+      const descW = contentWidth - 36 - 72 - 46 - 76 - 20;
+      doc.font('Helvetica').fontSize(d.tableFont);
+      let itemsH = d.tableHeaderH;
+      for (const item of payload.items) {
+        const desc = this.clipText(item.description, d.maxDescChars);
+        const h = Math.max(
+          d.minRowH,
+          doc.heightOfString(desc, { width: Math.max(80, descW) }) + d.rowPad,
+        );
+        itemsH += h;
+      }
+
+      const includes = parseQuoteServiceIncludes(payload.serviceIncludes);
+      doc.font('Helvetica').fontSize(d.bodySize);
+      let includesH = 0;
+      for (const line of includes) {
+        const clipped = this.clipText(line, d === DENSITY_COMPACT ? 160 : 400);
+        includesH +=
+          Math.max(10, doc.heightOfString(clipped, { width: contentWidth - 12 })) + d.includeGap;
+      }
+
+      const leftFacts =
+        [payload.clientTaxId, payload.clientAddress, payload.clientContact].filter(Boolean)
+          .length || 1;
+      const rightFacts =
+        [
+          payload.clientEmail,
+          payload.clientPhone,
+          payload.paymentCondition,
+          payload.sellerName,
+        ].filter(Boolean).length || 1;
+      const clientH = d.clientPad + Math.max(leftFacts, rightFacts) * d.clientFactH;
+
+      const serviceH = payload.serviceType
+        ? 11 +
+          doc.heightOfString(this.clipText(payload.serviceType, d.maxDescChars), {
+            width: contentWidth,
+          }) +
+          d.sectionGap
+        : 0;
+
+      return (
+        d.headerH +
+        30 +
+        clientH +
+        d.sectionGap +
+        serviceH +
+        11 +
+        itemsH +
+        12 +
+        d.totalsH +
+        d.sectionGap +
+        40 +
+        includesH +
+        d.footerReserve +
+        24
+      );
+    };
+
+    if (estimate(DENSITY_NORMAL) <= pageHeight) return DENSITY_NORMAL;
+    return DENSITY_COMPACT;
+  }
+
+  private clipText(value: string, maxChars: number): string {
+    const text = value.trim();
+    if (text.length <= maxChars) return text;
+    return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
   }
 
   private drawLabeledValue(
@@ -390,23 +547,19 @@ export class QuotePdfService {
     });
   }
 
-  /** Fallback tipográfico si no se encuentra el PNG de marca. */
-  private drawBrandFallback(doc: PdfDoc, x: number, y: number) {
-    const size = 56;
+  private drawBrandFallback(doc: PdfDoc, x: number, y: number, size = 56) {
     const r = size / 2;
     doc.fillColor(COLORS.primary);
     doc.circle(x + r, y + r, r).fill();
     doc.fillColor(COLORS.white).font('Helvetica-Bold').fontSize(size * 0.28);
     doc.text('SG', x, y + size * 0.34, { width: size, align: 'center', lineBreak: false });
-    doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(18);
-    doc.text(QUOTE_COMPANY.name, x + size + 12, y + 12, { lineBreak: false });
-    doc.fillColor(COLORS.primary).font('Helvetica').fontSize(8);
-    doc.text('SERVICIO DE LIMPIEZA', x + size + 12, y + 36, { lineBreak: false });
+    doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(Math.max(12, size * 0.32));
+    doc.text(QUOTE_COMPANY.name, x + size + 10, y + size * 0.2, { lineBreak: false });
+    doc.fillColor(COLORS.primary).font('Helvetica').fontSize(7);
+    doc.text('SERVICIO DE LIMPIEZA', x + size + 10, y + size * 0.55, { lineBreak: false });
   }
 
   private loadBrandLogo(): { buffer: Buffer } | null {
-    // En prod (Docker): WORKDIR=/app/apps/api y __dirname=.../dist/modules/quotes.
-    // Priorizamos assets junto al package y también los copiados a dist/.
     const candidates = [
       join(process.cwd(), 'assets/brand/logo-horizontal.png'),
       join(__dirname, '../../../assets/brand/logo-horizontal.png'),
