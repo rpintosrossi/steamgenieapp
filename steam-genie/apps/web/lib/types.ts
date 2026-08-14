@@ -455,6 +455,14 @@ export interface WorkOrderDetail {
       user?: { id: string; fullName: string };
     }>;
   }>;
+  quote?: {
+    id: string;
+    number: number;
+    particularClient?: { name: string } | null;
+    eventualClient?: { name: string } | null;
+    building?: { name: string } | null;
+    items: QuoteItem[];
+  } | null;
 }
 
 export interface EventualCalendarReservation {

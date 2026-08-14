@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api-client';
 import {
@@ -69,6 +70,18 @@ function resolvePhotoEvidenceMode(
     return 'BEFORE_DURING_AFTER';
   }
   return 'PER_TASK';
+}
+
+function formatMoney(value: string | number | null | undefined): string {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return n.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
+}
+
+function formatQty(value: string | number | null | undefined): string {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return String(value ?? '—');
+  return Number.isInteger(n) ? String(n) : n.toLocaleString('es-AR');
 }
 
 export function WorkOrderExecutionDetailModal({ workOrderId, onClose }: Props) {
@@ -272,7 +285,77 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose }: Props) {
                 <dt>Limpiadores en el servicio</dt>
                 <dd>{participants.length > 0 ? participants.join(', ') : '—'}</dd>
               </div>
+              {wo.quote ? (
+                <div className="recurring-task-meta-item">
+                  <dt>Presupuesto</dt>
+                  <dd>
+                    <Link href={`/presupuestos/${wo.quote.id}`} className="btn-link">
+                      #{wo.quote.number}
+                    </Link>
+                  </dd>
+                </div>
+              ) : null}
             </dl>
+
+            {wo.quote ? (
+              <section className="stack" style={{ gap: 10 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <h4 className="recurring-task-list-heading" style={{ margin: 0 }}>
+                    {wo.quote.items.length > 0
+                      ? `Ítems del presupuesto #${wo.quote.number}`
+                      : `Presupuesto #${wo.quote.number}`}
+                  </h4>
+                  <Link
+                    href={`/presupuestos/${wo.quote.id}`}
+                    className="btn btn-secondary btn-sm"
+                  >
+                    Abrir presupuesto
+                  </Link>
+                </div>
+                {wo.quote.items.length > 0 ? (
+                  <div className="table-wrap">
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Cant.</th>
+                          <th>Descripción</th>
+                          <th>Precio</th>
+                          <th>% Bonif.</th>
+                          <th>Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {wo.quote.items.map((item) => (
+                          <tr key={item.id}>
+                            <td>{formatQty(item.quantity)}</td>
+                            <td>{item.description}</td>
+                            <td>{formatMoney(item.unitPrice)}</td>
+                            <td>
+                              {item.discountPercent != null && item.discountPercent !== ''
+                                ? formatQty(item.discountPercent)
+                                : '—'}
+                            </td>
+                            <td>{formatMoney(item.lineTotal)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="muted" style={{ margin: 0 }}>
+                    Este presupuesto no tiene ítems cargados.
+                  </p>
+                )}
+              </section>
+            ) : null}
 
             {!se ? (
               <p className="muted" style={{ margin: 0 }}>

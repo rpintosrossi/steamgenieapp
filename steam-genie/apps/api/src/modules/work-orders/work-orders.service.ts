@@ -107,6 +107,18 @@ const WO_DETAIL_INCLUDE = {
       particularClient: { select: { name: true } },
       eventualClient: { select: { name: true } },
       building: { select: { name: true } },
+      items: {
+        orderBy: { sortOrder: 'asc' as const },
+        select: {
+          id: true,
+          quantity: true,
+          description: true,
+          unitPrice: true,
+          discountPercent: true,
+          lineTotal: true,
+          sortOrder: true,
+        },
+      },
     },
   },
 } as const;
