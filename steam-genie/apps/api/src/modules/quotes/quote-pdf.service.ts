@@ -31,6 +31,9 @@ export type QuotePdfPayload = {
   clientEmail: string | null;
   clientPhone: string | null;
   sellerName: string | null;
+  companyBranchName?: string | null;
+  companyAddress?: string | null;
+  companyPhone?: string | null;
   paymentCondition: string | null;
   paymentTerms: string | null;
   observations: string | null;
@@ -203,13 +206,19 @@ export class QuotePdfService {
 
       // ── Company strip ─────────────────────────────────────────────────────
       let y = headerH + (density === DENSITY_COMPACT ? 8 : 12);
+      const companyBranchName = payload.companyBranchName?.trim() || '';
+      const companyAddress = payload.companyAddress?.trim() || QUOTE_COMPANY.address;
+      const companyPhone = payload.companyPhone?.trim() || QUOTE_COMPANY.phone;
+      const companyLine = [
+        companyBranchName,
+        companyAddress,
+        `Tel: ${companyPhone}`,
+        QUOTE_COMPANY.website,
+      ]
+        .filter(Boolean)
+        .join('  ·  ');
       doc.fillColor(COLORS.muted).font('Helvetica').fontSize(7);
-      doc.text(
-        `${QUOTE_COMPANY.address}  ·  Tel: ${QUOTE_COMPANY.phone}  ·  ${QUOTE_COMPANY.website}`,
-        marginX,
-        y,
-        { width: contentWidth },
-      );
+      doc.text(companyLine, marginX, y, { width: contentWidth });
       y += 10;
       doc.text(`${QUOTE_COMPANY.taxStatus}  ·  CUIT ${QUOTE_COMPANY.taxId}`, marginX, y, {
         width: contentWidth,

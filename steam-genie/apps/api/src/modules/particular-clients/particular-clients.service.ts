@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { resolveQuoteBranch } from '../quotes/quote-branches.service';
 import { CreateParticularClientDto } from './dto/create-particular-client.dto';
 import { UpdateParticularClientDto } from './dto/update-particular-client.dto';
 import { QueryParticularClientsDto } from './dto/query-particular-clients.dto';
@@ -32,9 +33,20 @@ const CLIENT_SELECT = {
   notes: true,
   isActive: true,
   buildingId: true,
+  branchId: true,
   createdAt: true,
   updatedAt: true,
   building: { select: BUILDING_SELECT },
+  branch: {
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      phone: true,
+      isDefault: true,
+      isActive: true,
+    },
+  },
 } satisfies Prisma.ParticularClientSelect;
 
 @Injectable()
@@ -112,6 +124,8 @@ export class ParticularClientsService {
         },
       });
 
+      const branch = await resolveQuoteBranch(tx, dto.branchId);
+
       return tx.particularClient.create({
         data: {
           name,
@@ -123,6 +137,7 @@ export class ParticularClientsService {
           notes: emptyToNull(dto.notes),
           isActive: true,
           buildingId: building.id,
+          branchId: branch.id,
         },
         select: CLIENT_SELECT,
       });
@@ -168,6 +183,12 @@ export class ParticularClientsService {
         },
       });
 
+      let nextBranchId: string | undefined;
+      if (dto.branchId && dto.branchId !== existing.branchId) {
+        const branch = await resolveQuoteBranch(tx, dto.branchId);
+        nextBranchId = branch.id;
+      }
+
       return tx.particularClient.update({
         where: { id },
         data: {
@@ -181,6 +202,7 @@ export class ParticularClientsService {
           ...(dto.phone !== undefined ? { phone: emptyToNull(dto.phone) } : {}),
           ...(dto.notes !== undefined ? { notes: emptyToNull(dto.notes) } : {}),
           ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+          ...(nextBranchId ? { branchId: nextBranchId } : {}),
         },
         select: CLIENT_SELECT,
       });

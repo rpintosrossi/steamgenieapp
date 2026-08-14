@@ -34,6 +34,10 @@ export class EventualClientInputDto {
 export class CreateQuoteDto {
   @IsOptional()
   @IsUUID()
+  branchId?: string;
+
+  @IsOptional()
+  @IsUUID()
   particularClientId?: string;
 
   @IsOptional()

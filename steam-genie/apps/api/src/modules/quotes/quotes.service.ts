@@ -21,6 +21,7 @@ import { ConvertQuoteDto, EventualSiteKind, ParticularClientAction } from './dto
 import { QuoteItemDto } from './dto/quote-item.dto';
 import { QuotePaymentInputDto } from './dto/payment-method.dto';
 import { QuotePdfService } from './quote-pdf.service';
+import { resolveQuoteBranch } from './quote-branches.service';
 
 const QUOTE_INCLUDE = {
   items: { orderBy: { sortOrder: 'asc' as const } },
@@ -28,6 +29,16 @@ const QUOTE_INCLUDE = {
     orderBy: { sortOrder: 'asc' as const },
     include: {
       paymentMethod: { select: { id: true, name: true, isActive: true } },
+    },
+  },
+  branch: {
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      phone: true,
+      isDefault: true,
+      isActive: true,
     },
   },
   particularClient: {
@@ -93,6 +104,7 @@ export class QuotesService {
       buildingId,
       month,
       search,
+      branchId,
     } = query;
     const skip = (page - 1) * limit;
 
@@ -100,6 +112,7 @@ export class QuotesService {
     if (status) where.status = status;
     if (particularClientId) where.particularClientId = particularClientId;
     if (buildingId) where.buildingId = buildingId;
+    if (branchId) where.branchId = branchId;
 
     if (month) {
       const [y, m] = month.split('-').map(Number);
@@ -190,11 +203,13 @@ export class QuotesService {
       }
 
       const number = await allocateQuoteNumber(tx);
+      const branch = await resolveQuoteBranch(tx, dto.branchId);
 
       const quote = await tx.quote.create({
         data: {
           number,
           status: QuoteStatus.COTIZADO,
+          branchId: branch.id,
           particularClientId: dto.particularClientId ?? null,
           buildingId: dto.buildingId ?? null,
           eventualClientId,
@@ -321,9 +336,20 @@ export class QuotesService {
         await tx.quotePayment.deleteMany({ where: { quoteId: id } });
       }
 
+      let nextBranchId: string | undefined;
+      if (dto.branchId) {
+        if (dto.branchId === existing.branchId) {
+          nextBranchId = existing.branchId;
+        } else {
+          const branch = await resolveQuoteBranch(tx, dto.branchId);
+          nextBranchId = branch.id;
+        }
+      }
+
       const updated = await tx.quote.update({
         where: { id },
         data: {
+          ...(nextBranchId ? { branchId: nextBranchId } : {}),
           ...(dto.status !== undefined ? { status: dto.status } : {}),
           ...(switchingClient
             ? {
@@ -458,6 +484,9 @@ export class QuotesService {
       clientEmail: quote.contactEmail ?? client.email,
       clientPhone: quote.contactPhone ?? client.phone,
       sellerName: quote.sellerName,
+      companyBranchName: quote.branch?.name ?? null,
+      companyAddress: quote.branch?.address ?? null,
+      companyPhone: quote.branch?.phone ?? null,
       paymentCondition: quote.paymentCondition,
       paymentTerms: quote.paymentTerms,
       observations: quote.observations,
@@ -652,6 +681,12 @@ export class QuotesService {
             );
           }
           siteBuildingId = chosen.buildingId;
+          if (quote.branchId && chosen.id) {
+            await this.prisma.particularClient.update({
+              where: { id: chosen.id },
+              data: { branchId: quote.branchId },
+            });
+          }
         } else {
           siteBuildingId = (
             await this.createParticularFromEventual({
@@ -660,6 +695,7 @@ export class QuotesService {
               address,
               phone: quote.contactPhone,
               email: quote.contactEmail,
+              branchId: quote.branchId,
             })
           ).buildingId;
         }
@@ -671,6 +707,7 @@ export class QuotesService {
             address,
             phone: quote.contactPhone,
             email: quote.contactEmail,
+            branchId: quote.branchId,
           })
         ).buildingId;
       }
@@ -848,6 +885,7 @@ export class QuotesService {
     address: string | null;
     phone?: string | null;
     email?: string | null;
+    branchId: string;
   }) {
     const { randomUUID } = await import('crypto');
     const name = input.name.trim();
@@ -892,6 +930,7 @@ export class QuotesService {
           email: emptyToNull(input.email),
           isActive: true,
           buildingId: building.id,
+          branchId: input.branchId,
         },
         select: { id: true, buildingId: true },
       });

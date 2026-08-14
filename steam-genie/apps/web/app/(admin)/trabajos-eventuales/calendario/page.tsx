@@ -18,6 +18,7 @@ import type {
   EventualCalendarResponse,
   EventualCalendarService,
   Paginated,
+  QuoteBranchItem,
   UserItem,
 } from '../../../../lib/types';
 
@@ -234,6 +235,8 @@ export default function EventualCalendarPage() {
   const [workerSearch, setWorkerSearch] = useState('');
   const [workerOptions, setWorkerOptions] = useState<UserItem[]>([]);
   const [searchingWorkers, setSearchingWorkers] = useState(false);
+  const [branchId, setBranchId] = useState('');
+  const [branches, setBranches] = useState<QuoteBranchItem[]>([]);
   const [showReservations, setShowReservations] = useState(true);
   const [showServices, setShowServices] = useState(true);
 
@@ -315,6 +318,7 @@ export default function EventualCalendarPage() {
           ...(floorId ? { floorId } : {}),
           ...(zoneId ? { zoneId } : {}),
           ...(workerId ? { workerId } : {}),
+          ...(branchId ? { branchId } : {}),
         },
         { signal },
       );
@@ -332,7 +336,7 @@ export default function EventualCalendarPage() {
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [from, to, buildingIds, floorId, zoneId, workerId]);
+  }, [from, to, buildingIds, floorId, zoneId, workerId, branchId]);
 
   useEffect(() => {
     void fetchBuildingsList()
@@ -347,6 +351,10 @@ export default function EventualCalendarPage() {
       })
       .catch(() => setBuildings([]))
       .finally(() => setBuildingReady(true));
+    void api
+      .get<QuoteBranchItem[]>('/quote-branches?includeInactive=false')
+      .then(setBranches)
+      .catch(() => setBranches([]));
   }, []);
 
   useEffect(() => {
@@ -497,6 +505,19 @@ export default function EventualCalendarPage() {
               {zones.map((z) => (
                 <option key={z.id} value={z.id}>
                   {z.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="form-field">
+            <label>Sucursal</label>
+            <select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+              <option value="">Todas</option>
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}
+                  {branch.isDefault ? ' (predeterminada)' : ''}
                 </option>
               ))}
             </select>

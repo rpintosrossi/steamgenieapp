@@ -31,10 +31,15 @@ function ParticularClientDetailShell({ children }: { children: ReactNode }) {
           </Link>
           <h1 className="page-title">{client.name}</h1>
           {locationParts.length > 0 ? (
-            <p className="page-subtitle">{locationParts.join(' · ')}</p>
+            <p className="page-subtitle">
+              {client.branch?.name ? `${client.branch.name} · ` : ''}
+              {locationParts.join(' · ')}
+            </p>
           ) : (
             <p className="page-subtitle">
-              Gestioná datos de contacto, ubicación GPS y zonas del cliente.
+              {client.branch?.name
+                ? `Sucursal ${client.branch.name}. Gestioná datos de contacto, ubicación GPS y zonas.`
+                : 'Gestioná datos de contacto, ubicación GPS y zonas del cliente.'}
             </p>
           )}
         </div>

@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsEmail,
@@ -5,11 +6,11 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   Min,
   MinLength,
 } from 'class-validator';
-import { Type } from 'class-transformer';
 
 export class CreateParticularClientDto {
   @IsString()
@@ -56,6 +57,10 @@ export class CreateParticularClientDto {
   @IsOptional()
   @IsBoolean()
   requireGpsValidation?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
 
   @IsOptional()
   @IsString()

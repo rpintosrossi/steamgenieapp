@@ -104,6 +104,7 @@ const NAV_ITEMS: NavItem[] = [
       { href: '/users', label: 'Usuarios', module: APP_MODULES.USERS },
       { href: '/roles', label: 'Roles', module: APP_MODULES.ROLES },
       { href: '/tasks', label: 'Tareas', module: APP_MODULES.TASKS },
+      { href: '/configuracion/sucursales', label: 'Sucursales', module: APP_MODULES.PRESUPUESTOS },
     ],
   },
   {

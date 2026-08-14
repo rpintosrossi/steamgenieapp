@@ -10,7 +10,7 @@ import {
 } from '@steam-genie/shared-constants';
 import { api } from '../../../lib/api-client';
 import { QuotesSubnav } from '../../../components/QuotesSubnav';
-import type { Paginated, Quote, QuoteStatus } from '../../../lib/types';
+import type { Paginated, Quote, QuoteBranchItem, QuoteStatus } from '../../../lib/types';
 
 function money(value: string | number) {
   const n = typeof value === 'number' ? value : Number(value);
@@ -46,6 +46,8 @@ export default function QuotesPage() {
   const [search, setSearch] = useState('');
   const [month, setMonth] = useState('');
   const [status, setStatus] = useState<QuoteStatus | ''>('');
+  const [branchId, setBranchId] = useState('');
+  const [branches, setBranches] = useState<QuoteBranchItem[]>([]);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [total, setTotal] = useState(0);
@@ -61,6 +63,7 @@ export default function QuotesPage() {
       if (search.trim()) params.set('search', search.trim());
       if (month) params.set('month', month);
       if (status) params.set('status', status);
+      if (branchId) params.set('branchId', branchId);
       const res = await api.get<Paginated<Quote>>(`/quotes?${params}`);
       setItems(res.data);
       setTotal(res.total);
@@ -70,11 +73,18 @@ export default function QuotesPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, month, status, page]);
+  }, [search, month, status, branchId, page]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    void api
+      .get<QuoteBranchItem[]>('/quote-branches?includeInactive=false')
+      .then(setBranches)
+      .catch(() => setBranches([]));
+  }, []);
 
   function applyFilters(e: FormEvent) {
     e.preventDefault();
@@ -151,6 +161,26 @@ export default function QuotesPage() {
               ))}
             </select>
           </div>
+          <div className="form-field" style={{ margin: 0 }}>
+            <label htmlFor="q-branch">Sucursal</label>
+            <select
+              id="q-branch"
+              className="input"
+              value={branchId}
+              onChange={(e) => {
+                setBranchId(e.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">Todas</option>
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}
+                  {branch.isDefault ? ' (predeterminada)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
           <button type="submit" className="btn btn-secondary">
             Filtrar
           </button>
@@ -186,6 +216,7 @@ export default function QuotesPage() {
                   <th>N°</th>
                   <th>Cliente</th>
                   <th>Tipo</th>
+                  <th>Sucursal</th>
                   <th>Condición</th>
                   <th>Fecha</th>
                   <th>Servicio</th>
@@ -199,6 +230,7 @@ export default function QuotesPage() {
                     <td>{formatQuoteNumber(quote.number)}</td>
                     <td>{clientLabel(quote)}</td>
                     <td>{clientKind(quote)}</td>
+                    <td>{quote.branch?.name ?? '—'}</td>
                     <td>
                       <span className="badge">
                         {QUOTE_STATUS_LABELS[quote.status as SharedQuoteStatus]}

@@ -50,6 +50,17 @@ const SUBMODULES = [
       </svg>
     ),
   },
+  {
+    href: '/configuracion/sucursales',
+    title: 'Sucursales',
+    description: 'Dirección y teléfono de cada sucursal para emitir presupuestos.',
+    module: APP_MODULES.PRESUPUESTOS,
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M3 21h18M5 21V10l7-5 7 5v11M9 21v-6h6v6" />
+      </svg>
+    ),
+  },
 ];
 
 export default function ConfiguracionPage() {
@@ -61,7 +72,7 @@ export default function ConfiguracionPage() {
         <div>
           <h1 className="page-title">Configuración</h1>
           <p className="page-subtitle">
-            Estructura del sistema: edificios, usuarios, roles y tareas maestras.
+            Estructura del sistema: edificios, usuarios, roles, tareas maestras y sucursales.
           </p>
         </div>
       </div>

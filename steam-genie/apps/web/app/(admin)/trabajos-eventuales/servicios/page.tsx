@@ -25,6 +25,7 @@ import type {
   AssignableCleanerSameDayService,
   AssignableCleanersResponse,
   Paginated,
+  QuoteBranchItem,
   WorkOrderListItem,
 } from '../../../../lib/types';
 
@@ -223,6 +224,8 @@ function EventualServicesPageInner() {
 
   const [buildingFilter, setBuildingFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [branchFilter, setBranchFilter] = useState('');
+  const [branches, setBranches] = useState<QuoteBranchItem[]>([]);
   const [sortDir, setSortDir] = useState<ScheduleSortDir>('asc');
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
@@ -266,6 +269,7 @@ function EventualServicesPageInner() {
       } else {
         if (buildingFilter) params.set('buildingId', buildingFilter);
         if (statusFilter) params.set('status', statusFilter);
+        if (branchFilter) params.set('branchId', branchFilter);
         params.set('sortDir', sortDir);
       }
 
@@ -278,12 +282,16 @@ function EventualServicesPageInner() {
     } finally {
       setLoading(false);
     }
-  }, [buildingFilter, statusFilter, sortDir, page, focusId]);
+  }, [buildingFilter, statusFilter, branchFilter, sortDir, page, focusId]);
 
   useEffect(() => {
     void fetchBuildingsList()
       .then(setBuildings)
       .catch(() => setBuildings([]));
+    void api
+      .get<QuoteBranchItem[]>('/quote-branches?includeInactive=false')
+      .then(setBranches)
+      .catch(() => setBranches([]));
   }, []);
 
   useEffect(() => {
@@ -591,6 +599,24 @@ function EventualServicesPageInner() {
               {buildings.map((building) => (
                 <option key={building.id} value={building.id}>
                   {building.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-field">
+            <label>Sucursal</label>
+            <select
+              value={branchFilter}
+              onChange={(e) => {
+                setBranchFilter(e.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">Todas</option>
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}
+                  {branch.isDefault ? ' (predeterminada)' : ''}
                 </option>
               ))}
             </select>

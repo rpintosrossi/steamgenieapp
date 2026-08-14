@@ -1,8 +1,9 @@
 'use client';
 
 import { FormEvent, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { api } from '../../../../../lib/api-client';
-import type { ParticularClientItem } from '../../../../../lib/types';
+import type { ParticularClientItem, QuoteBranchItem } from '../../../../../lib/types';
 import { useParticularClientDetail } from '../ParticularClientDetailContext';
 
 export default function ParticularClientDatosPage() {
@@ -13,6 +14,8 @@ export default function ParticularClientDatosPage() {
   const [email, setEmail] = useState(client.email ?? '');
   const [phone, setPhone] = useState(client.phone ?? '');
   const [notes, setNotes] = useState(client.notes ?? '');
+  const [branchId, setBranchId] = useState(client.branchId ?? client.branch?.id ?? '');
+  const [branches, setBranches] = useState<QuoteBranchItem[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -22,7 +25,22 @@ export default function ParticularClientDatosPage() {
     setEmail(client.email ?? '');
     setPhone(client.phone ?? '');
     setNotes(client.notes ?? '');
+    setBranchId(client.branchId ?? client.branch?.id ?? '');
   }, [client]);
+
+  useEffect(() => {
+    void api
+      .get<QuoteBranchItem[]>('/quote-branches?includeInactive=false')
+      .then((rows) => {
+        const current = client.branch;
+        const list =
+          current && !rows.some((row) => row.id === current.id)
+            ? [current, ...rows]
+            : rows;
+        setBranches(list);
+      })
+      .catch(() => setBranches([]));
+  }, [client.branch]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -39,6 +57,7 @@ export default function ParticularClientDatosPage() {
         email: email.trim() || null,
         phone: phone.trim() || null,
         notes: notes.trim() || null,
+        ...(branchId ? { branchId } : {}),
       });
       setClient(updated);
       setSuccess('Datos actualizados.');
@@ -110,6 +129,30 @@ export default function ParticularClientDatosPage() {
               onChange={(e) => setPhone(e.target.value)}
               maxLength={50}
             />
+          </div>
+          <div className="form-field" style={{ margin: 0 }}>
+            <label htmlFor="pc-branch">Sucursal *</label>
+            {branches.length === 0 ? (
+              <p className="muted" style={{ margin: '8px 0 0' }}>
+                No hay sucursales. Crealas en{' '}
+                <Link href="/configuracion/sucursales">Configuración</Link>.
+              </p>
+            ) : (
+              <select
+                id="pc-branch"
+                className="input"
+                value={branchId}
+                onChange={(e) => setBranchId(e.target.value)}
+                required
+              >
+                {branches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {branch.name}
+                    {branch.isDefault ? ' (predeterminada)' : ''}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
           <div className="form-field" style={{ margin: 0, gridColumn: '1 / -1' }}>
             <label htmlFor="pc-notes">Notas</label>

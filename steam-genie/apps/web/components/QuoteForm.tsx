@@ -11,6 +11,7 @@ import type {
   ParticularClientItem,
   PaymentMethodItem,
   Quote,
+  QuoteBranchItem,
   QuoteItemInput,
   QuotePaymentInput,
   UserItem,
@@ -150,6 +151,10 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
     initialQuote ? quoteToDraftPayments(initialQuote) : [],
   );
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodItem[]>([]);
+  const [branches, setBranches] = useState<QuoteBranchItem[]>([]);
+  const [branchId, setBranchId] = useState(
+    initialQuote?.branchId ?? initialQuote?.branch?.id ?? '',
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [contactPrefillDone, setContactPrefillDone] = useState(mode === 'edit');
@@ -177,7 +182,23 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
       .get<PaymentMethodItem[]>('/payment-methods?includeInactive=false')
       .then(setPaymentMethods)
       .catch(() => setPaymentMethods([]));
-  }, []);
+    void api
+      .get<QuoteBranchItem[]>('/quote-branches?includeInactive=false')
+      .then((rows) => {
+        const current = initialQuote?.branch;
+        const list =
+          current && !rows.some((row) => row.id === current.id)
+            ? [current, ...rows]
+            : rows;
+        setBranches(list);
+        setBranchId((prev) => {
+          if (prev) return prev;
+          const preferred = list.find((row) => row.isDefault) ?? list[0];
+          return preferred?.id ?? '';
+        });
+      })
+      .catch(() => setBranches([]));
+  }, [initialQuote?.branch]);
 
   useEffect(() => {
     if (clientKind !== 'particular' || !particularClientId || contactPrefillDone) return;
@@ -192,6 +213,8 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
     const vatAmount = Math.round(subtotal * (QUOTE_VAT_RATE / 100) * 100) / 100;
     return { subtotal, vatAmount, total: Math.round((subtotal + vatAmount) * 100) / 100 };
   }, [items]);
+
+  const selectedBranch = branches.find((row) => row.id === branchId);
 
   function updateItem(index: number, patch: Partial<DraftItem>) {
     setItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
@@ -256,6 +279,10 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
       setError('Ingresá el nombre del cliente eventual.');
       return;
     }
+    if (!branchId) {
+      setError('Seleccioná una sucursal emisora.');
+      return;
+    }
 
     const payloadItems: QuoteItemInput[] = [];
     for (const item of items) {
@@ -317,6 +344,7 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
 
       const body = {
         ...clientPayload,
+        branchId,
         requestDate,
         serviceType: serviceType.trim() || null,
         clientDetails: clientDetails.trim() || null,
@@ -350,6 +378,7 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
                 };
         const quote = await api.post<Quote>('/quotes', {
           ...createBody,
+          branchId,
           requestDate,
           serviceType: serviceType.trim() || undefined,
           clientDetails: clientDetails.trim() || undefined,
@@ -549,6 +578,35 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
                 onChange={(e) => setRequestDate(e.target.value)}
                 required
               />
+            </div>
+            <div className="form-field" style={{ margin: 0 }}>
+              <label htmlFor="q-branch">Sucursal *</label>
+              {branches.length === 0 ? (
+                <p className="muted" style={{ margin: '8px 0 0' }}>
+                  No hay sucursales. Crealas en{' '}
+                  <Link href="/configuracion/sucursales">Configuración</Link>.
+                </p>
+              ) : (
+                <select
+                  id="q-branch"
+                  className="input"
+                  value={branchId}
+                  onChange={(e) => setBranchId(e.target.value)}
+                  required
+                >
+                  {branches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name}
+                      {branch.isDefault ? ' (predeterminada)' : ''}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {selectedBranch ? (
+                <p className="muted" style={{ margin: '6px 0 0', fontSize: 12 }}>
+                  {selectedBranch.address} · Tel: {selectedBranch.phone}
+                </p>
+              ) : null}
             </div>
             <div className="form-field" style={{ margin: 0 }}>
               <label htmlFor="q-seller">Vendedor</label>

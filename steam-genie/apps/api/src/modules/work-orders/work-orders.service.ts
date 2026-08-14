@@ -25,6 +25,7 @@ import { CreateCheckoutCleaningDto } from './dto/create-checkout-cleaning.dto';
 import { CreateAdditionalRequestDto } from './dto/create-additional-request.dto';
 import { RescheduleWorkOrderDto } from './dto/reschedule-work-order.dto';
 import { WORK_ORDER_LIST_SELECT } from './work-order-list.select';
+import { workOrderBranchWhere } from './work-order-branch.filter';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   ServiceReportPdfService,
@@ -135,7 +136,18 @@ export class WorkOrdersService {
   // ─── LIST ─────────────────────────────────────────────────────────────────
 
   async findAll(query: QueryWorkOrdersDto, user?: AuthUser) {
-    const { page = 1, limit = 20, buildingId, status, type, date, assignedTo, sortDir, id } = query;
+    const {
+      page = 1,
+      limit = 20,
+      buildingId,
+      status,
+      type,
+      date,
+      assignedTo,
+      sortDir,
+      id,
+      branchId,
+    } = query;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = { deletedAt: null };
     const isExternalViewer = user ? EXTERNAL_VIEWER_ROLES.has(user.primaryRole) : false;
@@ -204,6 +216,10 @@ export class WorkOrdersService {
           status: { in: ['PENDING', 'ACCEPTED'] },
         },
       };
+    }
+
+    if (branchId) {
+      Object.assign(where, workOrderBranchWhere(branchId));
     }
 
     const scheduleOrder = sortDir === 'desc' ? 'desc' : 'asc';

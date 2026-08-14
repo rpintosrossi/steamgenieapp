@@ -17,6 +17,7 @@ import * as bcrypt from 'bcrypt';
 import {
   ALL_APP_MODULES,
   APP_MODULES,
+  QUOTE_DEFAULT_BRANCH,
   SYSTEM_ROLE_MODULES,
   type AppModuleKey,
 } from '@steam-genie/shared-constants';
@@ -116,6 +117,27 @@ async function main() {
   }
 
   console.log(`  ✓ Global admin role assigned`);
+
+  // ── Sucursal emisora de presupuestos ───────────────────────────────────────
+  const existingBranch = await prisma.quoteBranch.findFirst({
+    where: { name: QUOTE_DEFAULT_BRANCH.name, deletedAt: null },
+  });
+  if (!existingBranch) {
+    const hasDefault = await prisma.quoteBranch.findFirst({
+      where: { isDefault: true, deletedAt: null },
+    });
+    await prisma.quoteBranch.create({
+      data: {
+        name: QUOTE_DEFAULT_BRANCH.name,
+        address: QUOTE_DEFAULT_BRANCH.address,
+        phone: QUOTE_DEFAULT_BRANCH.phone,
+        isDefault: !hasDefault,
+        isActive: true,
+        sortOrder: 0,
+      },
+    });
+    console.log(`  ✓ Sucursal: ${QUOTE_DEFAULT_BRANCH.name}`);
+  }
 
   // ── Motivos de no realización de tareas ─────────────────────────────────────
   const TASK_NOT_DONE_REASONS = [

@@ -21,6 +21,10 @@ export class QueryQuotesDto extends PaginationDto {
   @Matches(/^\d{4}-\d{2}$/)
   month?: string;
 
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
+
   /** Busca por número de presupuesto o nombre de cliente (particular / edificio / eventual) */
   @IsOptional()
   @IsString()

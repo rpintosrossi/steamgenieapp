@@ -42,6 +42,13 @@ export const QUOTE_COMPANY = {
   taxStatus: 'I.V.A. Responsable Inscripto',
 } as const;
 
+/** Sucursal inicial / fallback si no hay otra configurada. */
+export const QUOTE_DEFAULT_BRANCH = {
+  name: 'Buenos Aires',
+  address: QUOTE_COMPANY.address,
+  phone: QUOTE_COMPANY.phone,
+} as const;
+
 export function formatQuoteNumber(number: number): string {
   return String(number).padStart(8, '0');
 }

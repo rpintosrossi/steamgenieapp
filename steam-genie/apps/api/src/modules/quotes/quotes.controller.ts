@@ -52,6 +52,7 @@ export class QuotesController {
     const { buffer, filename } = await this.quotesService.generatePdf(id);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.send(buffer);
   }
 

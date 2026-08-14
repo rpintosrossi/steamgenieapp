@@ -596,7 +596,9 @@ export interface ParticularClientItem {
   notes?: string | null;
   isActive: boolean;
   buildingId: string;
+  branchId: string;
   building: Building;
+  branch?: QuoteBranchItem | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -638,6 +640,7 @@ export interface Quote {
   id: string;
   number: number;
   status: QuoteStatus;
+  branchId: string;
   particularClientId?: string | null;
   buildingId?: string | null;
   eventualClientId?: string | null;
@@ -676,6 +679,20 @@ export interface Quote {
     scheduledTime?: string | null;
   }>;
   createdBy?: { id: string; fullName: string };
+  branch?: QuoteBranchItem | null;
+}
+
+export interface QuoteBranchItem {
+  id: string;
+  name: string;
+  address: string;
+  phone: string;
+  isDefault: boolean;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { quotes: number };
 }
 
 export interface PaymentMethodItem {

@@ -364,12 +364,15 @@ model ParticularClient {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  building    Building  @relation(fields: [buildingId], references: [id])
-  buildingId  String    @unique @db.Uuid
+  building    Building    @relation(fields: [buildingId], references: [id])
+  buildingId  String      @unique @db.Uuid
+  branch      QuoteBranch @relation(fields: [branchId], references: [id])
+  branchId    String      @db.Uuid
   quotes      Quote[]
 
   @@index([deletedAt])
   @@index([name])
+  @@index([branchId])
   @@map("particular_clients")
 }
 
@@ -400,10 +403,34 @@ model QuoteCounter {
   @@map("quote_counters")
 }
 
+/// Sucursal emisora de presupuestos (dirección y teléfono en el PDF).
+model QuoteBranch {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String    @db.VarChar(200)
+  address   String    @db.VarChar(300)
+  phone     String    @db.VarChar(50)
+  isDefault Boolean   @default(false)
+  isActive  Boolean   @default(true)
+  sortOrder Int       @default(0)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  quotes            Quote[]
+  particularClients ParticularClient[]
+
+  @@index([deletedAt, sortOrder])
+  @@map("quote_branches")
+}
+
 model Quote {
   id     String      @id @default(uuid()) @db.Uuid
   number Int         @unique
   status QuoteStatus @default(COTIZADO)
+
+  /// Sucursal emisora (dirección y teléfono del PDF).
+  branch   QuoteBranch @relation(fields: [branchId], references: [id])
+  branchId String      @db.Uuid
 
   /// Cliente: particular XOR edificio XOR cliente eventual (uno obligatorio).
   particularClient   ParticularClient? @relation(fields: [particularClientId], references: [id])
@@ -450,6 +477,7 @@ model Quote {
   @@index([particularClientId])
   @@index([buildingId])
   @@index([eventualClientId])
+  @@index([branchId])
   @@index([deletedAt, requestDate])
   @@map("quotes")
 }

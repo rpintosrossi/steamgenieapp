@@ -13,7 +13,7 @@ import {
 } from '@steam-genie/shared-constants';
 import { api } from '../../../../lib/api-client';
 import { shareQuoteEmail, shareQuoteWhatsApp } from '../../../../lib/quote-share';
-import type { Quote, QuoteStatus } from '../../../../lib/types';
+import type { Quote, QuoteBranchItem, QuoteStatus } from '../../../../lib/types';
 
 function money(value: string | number) {
   const n = typeof value === 'number' ? value : Number(value);
@@ -53,7 +53,10 @@ export default function QuoteDetailPage() {
   const [contactEmail, setContactEmail] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
   const [savingStatus, setSavingStatus] = useState(false);
+  const [savingBranch, setSavingBranch] = useState(false);
   const [savingContact, setSavingContact] = useState(false);
+  const [branches, setBranches] = useState<QuoteBranchItem[]>([]);
+  const [branchId, setBranchId] = useState('');
   const [savingInternalNotes, setSavingInternalNotes] = useState(false);
   const [sharing, setSharing] = useState<'whatsapp' | 'email' | null>(null);
   const [convertOpen, setConvertOpen] = useState(false);
@@ -87,6 +90,7 @@ export default function QuoteDetailPage() {
       const data = await api.get<Quote>(`/quotes/${params.id}`);
       setQuote(data);
       setStatus(data.status);
+      setBranchId(data.branchId ?? data.branch?.id ?? '');
       setContactPhone(data.contactPhone ?? data.particularClient?.phone ?? '');
       setContactEmail(data.contactEmail ?? data.particularClient?.email ?? '');
       setInternalNotes(data.internalNotes ?? '');
@@ -102,6 +106,21 @@ export default function QuoteDetailPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    void api
+      .get<QuoteBranchItem[]>('/quote-branches?includeInactive=false')
+      .then((rows) => {
+        setBranches((prev) => {
+          const current = quote?.branch;
+          if (current && !rows.some((row) => row.id === current.id)) {
+            return [current, ...rows];
+          }
+          return rows;
+        });
+      })
+      .catch(() => setBranches([]));
+  }, [quote?.branch]);
+
   async function saveStatus() {
     if (!quote) return;
     setSavingStatus(true);
@@ -115,6 +134,23 @@ export default function QuoteDetailPage() {
       setError(e instanceof Error ? e.message : 'No se pudo actualizar');
     } finally {
       setSavingStatus(false);
+    }
+  }
+
+  async function saveBranch() {
+    if (!quote || !branchId) return;
+    setSavingBranch(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const updated = await api.patch<Quote>(`/quotes/${quote.id}`, { branchId });
+      setQuote(updated);
+      setBranchId(updated.branchId ?? updated.branch?.id ?? branchId);
+      setSuccess('Sucursal actualizada. El PDF usará la nueva dirección y teléfono.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo actualizar la sucursal');
+    } finally {
+      setSavingBranch(false);
     }
   }
 
@@ -410,6 +446,7 @@ export default function QuoteDetailPage() {
 
   const linkedWorkOrders = quote.workOrders ?? [];
   const canConvert = quote.status === 'ACEPTADO' && linkedWorkOrders.length === 0;
+  const selectedBranch = branches.find((row) => row.id === branchId) ?? quote.branch;
 
   return (
     <>
@@ -547,7 +584,7 @@ export default function QuoteDetailPage() {
             alignItems: 'flex-end',
           }}
         >
-          <div className="form-field" style={{ margin: 0 }}>
+          <div className="form-field" style={{ margin: 0, minWidth: 220 }}>
             <label htmlFor="q-status">Condición</label>
             <select
               id="q-status"
@@ -569,6 +606,39 @@ export default function QuoteDetailPage() {
             onClick={() => void saveStatus()}
           >
             {savingStatus ? 'Guardando…' : 'Actualizar condición'}
+          </button>
+          <div className="form-field" style={{ margin: 0, minWidth: 240 }}>
+            <label htmlFor="q-branch">Sucursal</label>
+            <select
+              id="q-branch"
+              className="input"
+              value={branchId}
+              onChange={(e) => setBranchId(e.target.value)}
+            >
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}
+                  {branch.isDefault ? ' (predeterminada)' : ''}
+                </option>
+              ))}
+            </select>
+            {selectedBranch ? (
+              <p className="muted" style={{ margin: '6px 0 0', fontSize: 12 }}>
+                {selectedBranch.address} · Tel: {selectedBranch.phone}
+              </p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={
+              savingBranch ||
+              !branchId ||
+              branchId === (quote.branchId ?? quote.branch?.id)
+            }
+            onClick={() => void saveBranch()}
+          >
+            {savingBranch ? 'Guardando…' : 'Actualizar sucursal'}
           </button>
           {linkedWorkOrders.length > 0 ? (
             linkedWorkOrders.length === 1 ? (
@@ -623,6 +693,15 @@ export default function QuoteDetailPage() {
           <div>
             <div className="muted">Vendedor</div>
             <div>{quote.sellerName ?? '—'}</div>
+          </div>
+          <div>
+            <div className="muted">Sucursal</div>
+            <div>{quote.branch?.name ?? '—'}</div>
+            {quote.branch ? (
+              <div className="muted" style={{ fontSize: 12 }}>
+                {quote.branch.address} · Tel: {quote.branch.phone}
+              </div>
+            ) : null}
           </div>
           <div>
             <div className="muted">Forma de pago</div>
@@ -836,6 +915,12 @@ export default function QuoteDetailPage() {
                       ¿Querés crear un <strong>cliente particular</strong> o un{' '}
                       <strong>edificio</strong> con estos datos?
                     </p>
+                    {quote.branch?.name ? (
+                      <p className="muted" style={{ margin: 0 }}>
+                        Si creás o reutilizás un cliente particular, quedará asociado a la
+                        sucursal <strong>{quote.branch.name}</strong>.
+                      </p>
+                    ) : null}
                     <label className="checkbox-label">
                       <input
                         type="radio"

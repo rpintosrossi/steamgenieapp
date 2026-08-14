@@ -41,6 +41,10 @@ export class QueryWorkOrdersDto {
   @IsUUID()
   assignedTo?: string;
 
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
+
   /** Orden por fecha programada y hora (asc | desc). */
   @IsOptional()
   @IsIn(['asc', 'desc'])

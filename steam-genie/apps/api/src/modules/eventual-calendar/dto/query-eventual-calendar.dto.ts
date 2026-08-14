@@ -75,6 +75,10 @@ export class QueryEventualCalendarDto {
   workerId?: string;
 
   @IsOptional()
+  @IsUUID()
+  branchId?: string;
+
+  @IsOptional()
   @Transform(({ value }) => toBooleanFlag(value, true))
   @IsBoolean()
   includeReservations?: boolean = true;

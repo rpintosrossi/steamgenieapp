@@ -7,6 +7,7 @@ import {
 } from '@steam-genie/shared-constants';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { QueryEventualCalendarDto } from './dto/query-eventual-calendar.dto';
+import { workOrderBranchWhere } from '../work-orders/work-order-branch.filter';
 
 const LOCATION_SELECT = {
   building: { select: { id: true, name: true } },
@@ -34,6 +35,7 @@ export class EventualCalendarService {
     } = query;
 
     const buildingIds = query.buildingIds ?? [];
+    const branchId = query.branchId;
 
     if (!buildingIds.length) {
       return {
@@ -77,6 +79,7 @@ export class EventualCalendarService {
             floorId,
             zoneId,
             workerId,
+            branchId,
             limit,
           })
         : { items: [], total: 0, truncated: false },
@@ -155,6 +158,7 @@ export class EventualCalendarService {
     floorId?: string;
     zoneId?: string;
     workerId?: string;
+    branchId?: string;
     limit: number;
   }) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -173,6 +177,9 @@ export class EventualCalendarService {
           status: { in: [...ACTIVE_ASSIGNMENT_STATUSES] },
         },
       };
+    }
+    if (params.branchId) {
+      Object.assign(where, workOrderBranchWhere(params.branchId));
     }
 
     const [rows, total] = await Promise.all([

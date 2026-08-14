@@ -8,7 +8,7 @@ import {
 } from '../../../components/BuildingLocationFields';
 import { api } from '../../../lib/api-client';
 import { invalidateBuildingsListCache } from '../../../lib/buildings-cache';
-import type { ParticularClientItem } from '../../../lib/types';
+import type { ParticularClientItem, QuoteBranchItem } from '../../../lib/types';
 
 type ContactForm = {
   name: string;
@@ -67,6 +67,8 @@ export default function ParticularClientsPage() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [branches, setBranches] = useState<QuoteBranchItem[]>([]);
+  const [branchId, setBranchId] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,11 +91,27 @@ export default function ParticularClientsPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    void api
+      .get<QuoteBranchItem[]>('/quote-branches?includeInactive=false')
+      .then((rows) => {
+        setBranches(rows);
+        setBranchId((prev) => {
+          if (prev) return prev;
+          const preferred = rows.find((row) => row.isDefault) ?? rows[0];
+          return preferred?.id ?? '';
+        });
+      })
+      .catch(() => setBranches([]));
+  }, []);
+
   function openCreate() {
     setContact(EMPTY_CONTACT);
     setLocation(EMPTY_LOCATION);
     setCreateError(null);
     setShowCreate(true);
+    const preferred = branches.find((row) => row.isDefault) ?? branches[0];
+    setBranchId(preferred?.id ?? '');
   }
 
   function closeCreate() {
@@ -123,6 +141,11 @@ export default function ParticularClientsPage() {
         setCreating(false);
         return;
       }
+      if (!branchId) {
+        setCreateError('Seleccioná una sucursal.');
+        setCreating(false);
+        return;
+      }
 
       await api.post('/particular-clients', {
         name: contact.name.trim(),
@@ -138,6 +161,7 @@ export default function ParticularClientsPage() {
         latitude: lat,
         longitude: lng,
         gpsRadiusM: radius,
+        branchId,
       });
 
       invalidateBuildingsListCache();
@@ -249,6 +273,7 @@ export default function ParticularClientsPage() {
                   <th>Nombre</th>
                   <th>CUIT</th>
                   <th>Contacto</th>
+                  <th>Sucursal</th>
                   <th>Ubicación</th>
                   <th>Estado</th>
                   <th />
@@ -271,6 +296,7 @@ export default function ParticularClientsPage() {
                           <div style={{ fontSize: 12, opacity: 0.75 }}>{item.phone}</div>
                         ) : null}
                       </td>
+                      <td>{item.branch?.name ?? '—'}</td>
                       <td>{formatLocation(item)}</td>
                       <td>
                         <span className={item.isActive ? 'badge badge-success' : 'badge badge-warning'}>
@@ -402,6 +428,30 @@ export default function ParticularClientsPage() {
                     onChange={(e) => setContact((f) => ({ ...f, phone: e.target.value }))}
                     maxLength={50}
                   />
+                </div>
+                <div className="form-field" style={{ margin: 0 }}>
+                  <label htmlFor="pc-branch">Sucursal *</label>
+                  {branches.length === 0 ? (
+                    <p className="muted" style={{ margin: '8px 0 0' }}>
+                      No hay sucursales. Crealas en{' '}
+                      <Link href="/configuracion/sucursales">Configuración</Link>.
+                    </p>
+                  ) : (
+                    <select
+                      id="pc-branch"
+                      className="input"
+                      value={branchId}
+                      onChange={(e) => setBranchId(e.target.value)}
+                      required
+                    >
+                      {branches.map((branch) => (
+                        <option key={branch.id} value={branch.id}>
+                          {branch.name}
+                          {branch.isDefault ? ' (predeterminada)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 <div className="form-field" style={{ margin: 0, gridColumn: '1 / -1' }}>
                   <label htmlFor="pc-notes">Notas</label>

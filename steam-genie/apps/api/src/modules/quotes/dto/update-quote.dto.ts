@@ -19,6 +19,10 @@ import { QuotePaymentInputDto } from './payment-method.dto';
 
 export class UpdateQuoteDto {
   @IsOptional()
+  @IsUUID()
+  branchId?: string;
+
+  @IsOptional()
   @IsEnum(QuoteStatus)
   status?: QuoteStatus;
 
