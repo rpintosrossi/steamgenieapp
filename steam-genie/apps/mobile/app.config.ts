@@ -4,7 +4,7 @@ export default (): ExpoConfig => ({
   name: 'Steam Genie',
   slug: 'steam-genie',
   owner: 'rpintosrossi',
-  version: '1.0.1',
+  version: '1.0.2',
   orientation: 'portrait',
   scheme: 'steamgenie',
   platforms: ['ios', 'android'],
@@ -49,7 +49,7 @@ export default (): ExpoConfig => ({
   ],
   ios: {
     bundleIdentifier: 'com.steamgenie.app',
-    buildNumber: '16',
+    buildNumber: '17',
     supportsTablet: false,
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
@@ -64,7 +64,7 @@ export default (): ExpoConfig => ({
   android: {
     package: 'com.steamgenie.app',
     googleServicesFile: './google-services.json',
-    versionCode: 16,
+    versionCode: 17,
     usesCleartextTraffic: true,
     softwareKeyboardLayoutMode: 'resize',
     permissions: [

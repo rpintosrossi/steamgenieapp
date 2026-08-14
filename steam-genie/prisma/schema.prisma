@@ -1081,7 +1081,7 @@ model WorkOrderTask {
   /// Null for custom checklist tasks (e.g. quote-sourced services without master EVENTUAL tasks).
   task                             Task?     @relation(fields: [taskId], references: [id])
   taskId                           String?   @db.Uuid
-  nameSnapshot                     String    @db.VarChar(300)
+  nameSnapshot                     String    @db.VarChar(5000)
   allowsPhotoSnapshot              Boolean   @default(false)
   requiresPhotoSnapshot            Boolean
   allowsObservationSnapshot        Boolean

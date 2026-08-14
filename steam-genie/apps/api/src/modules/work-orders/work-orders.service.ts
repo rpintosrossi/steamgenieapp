@@ -1456,6 +1456,10 @@ export class WorkOrdersService {
             particularClient: { select: { name: true } },
             eventualClient: { select: { name: true } },
             building: { select: { name: true } },
+            items: {
+              orderBy: { sortOrder: 'asc' },
+              select: { description: true, quantity: true },
+            },
           },
         },
         serviceExecutions: {
@@ -1592,6 +1596,23 @@ export class WorkOrdersService {
         observation: exec?.observation?.trim() || null,
         photos,
       });
+    }
+
+    // Si aún no hay checklist propio (p. ej. presupuesto sin asignar), usar ítems del presupuesto.
+    if (tasks.length === 0 && wo.quote?.items?.length) {
+      for (const item of wo.quote.items) {
+        const name = String(item.description ?? '').trim();
+        if (!name) continue;
+        const qty = item.quantity != null ? Number(item.quantity) : null;
+        tasks.push({
+          name: qty != null && Number.isFinite(qty) && qty !== 1 ? `${name} (x${qty})` : name,
+          status: null,
+          executedByName: null,
+          executedAtLabel: null,
+          observation: null,
+          photos: [],
+        });
+      }
     }
 
     const clientName = resolveServiceReportClientName(wo);

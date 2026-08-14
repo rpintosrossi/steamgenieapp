@@ -185,24 +185,27 @@ export class ServiceReportPdfService {
       }
       y += 8;
 
-      // ── Tasks ─────────────────────────────────────────────────────────────
+      // ── Tasks (checklist del servicio / ítems del presupuesto) ──────────────
       doc.y = y;
       ensureSpace(40);
       y = doc.y;
       doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(11);
-      doc.text('TAREAS REALIZADAS', marginX, y);
+      doc.text('TAREAS DEL SERVICIO', marginX, y);
       y += 16;
 
       if (payload.tasks.length === 0) {
         doc.fillColor(COLORS.muted).font('Helvetica').fontSize(10);
-        doc.text('No hay tareas registradas en este servicio.', marginX, y);
+        doc.text('No hay tareas definidas para este servicio.', marginX, y);
         y += 18;
       } else {
         payload.tasks.forEach((task, index) => {
+          const hasExecutionMeta = Boolean(
+            task.status || task.executedByName || task.executedAtLabel,
+          );
           const obsH = task.observation
             ? doc.heightOfString(task.observation, { width: contentWidth - 24 }) + 14
             : 0;
-          const blockH = 54 + obsH;
+          const blockH = (hasExecutionMeta ? 54 : 36) + obsH;
           ensureSpace(blockH + 8);
           y = doc.y;
 
@@ -221,25 +224,28 @@ export class ServiceReportPdfService {
             ellipsis: true,
           });
 
-          const statusLabel = task.status
-            ? (TASK_STATUS_LABELS[task.status] ?? task.status)
-            : 'Pendiente';
-          const statusColor = task.status === 'DONE' ? COLORS.success : COLORS.muted;
-          doc.fillColor(statusColor).font('Helvetica-Bold').fontSize(8);
-          doc.text(statusLabel, marginX + 12, y + 28);
+          if (hasExecutionMeta) {
+            const statusLabel = task.status
+              ? (TASK_STATUS_LABELS[task.status] ?? task.status)
+              : 'Pendiente';
+            const statusColor = task.status === 'DONE' ? COLORS.success : COLORS.muted;
+            doc.fillColor(statusColor).font('Helvetica-Bold').fontSize(8);
+            doc.text(statusLabel, marginX + 12, y + 28);
 
-          const who = task.executedByName ?? '—';
-          const when = task.executedAtLabel ?? '—';
-          doc.fillColor(COLORS.muted).font('Helvetica').fontSize(8);
-          doc.text(`${who}  ·  ${when}`, marginX + 100, y + 28, {
-            width: contentWidth - 120,
-            lineBreak: false,
-            ellipsis: true,
-          });
+            const who = task.executedByName ?? '—';
+            const when = task.executedAtLabel ?? '—';
+            doc.fillColor(COLORS.muted).font('Helvetica').fontSize(8);
+            doc.text(`${who}  ·  ${when}`, marginX + 100, y + 28, {
+              width: contentWidth - 120,
+              lineBreak: false,
+              ellipsis: true,
+            });
+          }
 
           if (task.observation) {
+            const obsY = hasExecutionMeta ? y + 44 : y + 28;
             doc.fillColor(COLORS.text).font('Helvetica').fontSize(9);
-            doc.text(`Observación: ${task.observation}`, marginX + 12, y + 44, {
+            doc.text(`Observación: ${task.observation}`, marginX + 12, obsY, {
               width: contentWidth - 24,
             });
           }

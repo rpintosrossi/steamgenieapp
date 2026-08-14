@@ -236,6 +236,7 @@ function EventualServicesPageInner() {
   const [selectedCleanerIds, setSelectedCleanerIds] = useState<string[]>([]);
   const [loadingAssign, setLoadingAssign] = useState(false);
   const [savingAssign, setSavingAssign] = useState(false);
+  const [assignError, setAssignError] = useState<string | null>(null);
   const [checklistTasks, setChecklistTasks] = useState<ChecklistDraft[]>([]);
 
   const [deletingWo, setDeletingWo] = useState<WorkOrderListItem | null>(null);
@@ -318,6 +319,7 @@ function EventualServicesPageInner() {
     setSelectedCleanerIds([]);
     setBuildingUsersWrongRole([]);
     setLoadingAssign(true);
+    setAssignError(null);
     setError(null);
     setSuccess(null);
 
@@ -325,7 +327,7 @@ function EventualServicesPageInner() {
     if (needsChecklist) {
       const suggested =
         wo.quote?.items?.map((item) => ({
-          name: String(item.description ?? '').trim(),
+          name: String(item.description ?? '').trim().slice(0, 5000),
           photoMode: 'none' as const,
         })).filter((t) => t.name) ?? [];
       setChecklistTasks(suggested.length > 0 ? suggested : [{ name: '', photoMode: 'none' }]);
@@ -344,7 +346,7 @@ function EventualServicesPageInner() {
       setCleaners(res.cleaners);
       setBuildingUsersWrongRole(res.otherUsersOnBuilding);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'No se pudieron cargar los limpiadores');
+      setAssignError(e instanceof Error ? e.message : 'No se pudieron cargar los limpiadores');
       setCleaners([]);
       setBuildingUsersWrongRole([]);
     } finally {
@@ -358,6 +360,7 @@ function EventualServicesPageInner() {
     setBuildingUsersWrongRole([]);
     setSelectedCleanerIds([]);
     setChecklistTasks([]);
+    setAssignError(null);
   }
 
   function toggleCleaner(userId: string) {
@@ -385,13 +388,13 @@ function EventualServicesPageInner() {
     if (needsChecklist) {
       const cleaned = checklistTasks
         .map((t) => ({
-          name: t.name.trim(),
+          name: t.name.trim().slice(0, 5000),
           allowsPhoto: t.photoMode !== 'none',
           requiresPhoto: t.photoMode === 'required',
         }))
         .filter((t) => t.name.length > 0);
       if (cleaned.length === 0) {
-        setError('Agregá al menos una tarea al checklist antes de asignar.');
+        setAssignError('Agregá al menos una tarea al checklist antes de asignar.');
         return;
       }
       checklistPayload = cleaned;
@@ -403,6 +406,7 @@ function EventualServicesPageInner() {
     }
 
     setSavingAssign(true);
+    setAssignError(null);
     setError(null);
     setSuccess(null);
     try {
@@ -410,11 +414,11 @@ function EventualServicesPageInner() {
         userIds: selectedCleanerIds,
         ...(checklistPayload ? { checklistTasks: checklistPayload } : {}),
       });
-      setSuccess('Limpiadores asignados. Deberán aceptar el servicio en la app móvil.');
+      setSuccess('Personal asignado. Deberán aceptar el servicio en la app móvil.');
       closeAssign();
       await loadServices();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'No se pudo asignar el servicio');
+      setAssignError(e instanceof Error ? e.message : 'No se pudo asignar el servicio');
     } finally {
       setSavingAssign(false);
     }
@@ -810,6 +814,12 @@ function EventualServicesPageInner() {
               {formatDate(assigningWo.scheduledDate)}
             </p>
 
+            {assignError ? (
+              <div className="alert alert-error" style={{ marginBottom: 12 }}>
+                {assignError}
+              </div>
+            ) : null}
+
             {assigningWo.status === 'QUOTE_ACCEPTED' &&
             assigningWo._count.workOrderTasks === 0 ? (
               <div
@@ -944,7 +954,13 @@ function EventualServicesPageInner() {
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={savingAssign || selectedCleanerIds.length === 0}
+                disabled={
+                  savingAssign ||
+                  selectedCleanerIds.length === 0 ||
+                  (assigningWo.status === 'QUOTE_ACCEPTED' &&
+                    assigningWo._count.workOrderTasks === 0 &&
+                    !checklistTasks.some((t) => t.name.trim().length > 0))
+                }
                 onClick={() => void handleAssign()}
               >
                 {savingAssign ? 'Asignando…' : 'Confirmar asignación'}

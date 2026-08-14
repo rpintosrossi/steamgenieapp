@@ -14,7 +14,7 @@ import { Type } from 'class-transformer';
 export class ChecklistTaskDto {
   @IsString()
   @MinLength(1)
-  @MaxLength(300)
+  @MaxLength(5000)
   name!: string;
 
   @IsOptional()

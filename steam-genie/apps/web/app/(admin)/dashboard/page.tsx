@@ -148,8 +148,6 @@ function buildKpis(stats: DashboardStats, role: RoleName | null): DashboardKpi[]
     hasModule(APP_MODULES.ORDENES_CHECKIN);
   const canSeeReservations =
     hasModule(APP_MODULES.RESERVAS) || hasModule(APP_MODULES.ORDENES_CHECKIN);
-  const canSeeRecurring =
-    hasModule(APP_MODULES.TRABAJOS_RECURRENTES) || hasModule(APP_MODULES.TASKS);
   const canSeePresence = hasModule(APP_MODULES.PRESENCIA);
   const canSeeOperationalTimes =
     canSeePresence || hasModule(APP_MODULES.REPORTES);
@@ -203,16 +201,6 @@ function buildKpis(stats: DashboardStats, role: RoleName | null): DashboardKpi[]
         tone: stats.roomsNotReady > 0 ? 'error' : 'default',
       },
     );
-  }
-
-  if (canSeeRecurring) {
-    items.push({
-      key: 'overdueTasks',
-      label: 'Tareas vencidas',
-      value: String(stats.overdueTasks),
-      href: '/trabajos-recurrentes/listado',
-      tone: stats.overdueTasks > 0 ? 'error' : 'default',
-    });
   }
 
   if (canSeePresence) {
