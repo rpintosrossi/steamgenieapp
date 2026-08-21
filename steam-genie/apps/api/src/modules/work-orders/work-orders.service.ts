@@ -24,6 +24,7 @@ import { RejectWorkOrderDto } from './dto/reject-work-order.dto';
 import { CreateCheckoutCleaningDto } from './dto/create-checkout-cleaning.dto';
 import { CreateAdditionalRequestDto } from './dto/create-additional-request.dto';
 import { RescheduleWorkOrderDto } from './dto/reschedule-work-order.dto';
+import { UpdateWorkOrderChecklistDto } from './dto/update-work-order-checklist.dto';
 import { WORK_ORDER_LIST_SELECT } from './work-order-list.select';
 import { workOrderBranchWhere } from './work-order-branch.filter';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -75,6 +76,7 @@ const WO_DETAIL_INCLUDE = {
       allowsPhotoSnapshot: true, requiresPhotoSnapshot: true,
       allowsObservationSnapshot: true,
       requiresRejectionReasonSnapshot: true, sortOrder: true,
+      _count: { select: { taskExecutions: true } },
       task: { select: { zoneId: true, subzoneId: true } },
       customFieldSnapshots: {
         select: {
@@ -1142,6 +1144,124 @@ export class WorkOrdersService {
     return this.findOneForList(id);
   }
 
+  // ─── CHECKLIST ────────────────────────────────────────────────────────────
+
+  async updateChecklist(id: string, dto: UpdateWorkOrderChecklistDto, user: AuthUser) {
+    const wo = await this.prisma.workOrder.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, buildingId: true, status: true },
+    });
+    if (!wo) throw new NotFoundException('Work order not found');
+
+    const globalStaff = await this.hasGlobalStaffAccess(user.id);
+    if (!globalStaff) {
+      const staffBuildingIds = await this.getStaffBuildingIds(user.id);
+      if (!staffBuildingIds.includes(wo.buildingId)) {
+        throw new ForbiddenException('No tenés acceso a servicios de este edificio.');
+      }
+    }
+
+    if (wo.status === WorkOrderStatus.COMPLETED) {
+      throw new ConflictException(
+        'No se puede editar el checklist de un servicio completado.',
+      );
+    }
+
+    const existing = await this.prisma.workOrderTask.findMany({
+      where: { workOrderId: id },
+      select: {
+        id: true,
+        requiresPhotoSnapshot: true,
+        allowsPhotoSnapshot: true,
+        _count: { select: { taskExecutions: true } },
+      },
+    });
+    const existingById = new Map(existing.map((task) => [task.id, task]));
+
+    for (const task of dto.tasks) {
+      if (task.id && !existingById.has(task.id)) {
+        throw new BadRequestException(
+          'Una de las tareas no pertenece a este servicio.',
+        );
+      }
+    }
+
+    const incomingIds = new Set(
+      dto.tasks.filter((task) => task.id).map((task) => task.id as string),
+    );
+    const toRemove = existing.filter((task) => !incomingIds.has(task.id));
+    if (toRemove.some((task) => task._count.taskExecutions > 0)) {
+      throw new ConflictException(
+        'No se pueden quitar tareas que ya tienen ejecución registrada.',
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      if (toRemove.length > 0) {
+        const removeIds = toRemove.map((task) => task.id);
+        const woFields = await tx.workOrderTaskCustomField.findMany({
+          where: { workOrderTaskId: { in: removeIds } },
+          select: { id: true },
+        });
+        const woFieldIds = woFields.map((field) => field.id);
+        if (woFieldIds.length > 0) {
+          await tx.workOrderTaskCustomFieldOption.deleteMany({
+            where: { workOrderTaskFieldId: { in: woFieldIds } },
+          });
+          await tx.workOrderTaskCustomField.deleteMany({
+            where: { id: { in: woFieldIds } },
+          });
+        }
+        await tx.workOrderTask.deleteMany({ where: { id: { in: removeIds } } });
+      }
+
+      for (const [index, task] of dto.tasks.entries()) {
+        const name = task.name.trim();
+        if (!name) {
+          throw new BadRequestException('El nombre de la tarea no puede estar vacío.');
+        }
+
+        const current = task.id ? existingById.get(task.id) : undefined;
+        const requiresPhoto =
+          task.requiresPhoto !== undefined
+            ? task.requiresPhoto
+            : (current?.requiresPhotoSnapshot ?? false);
+        const allowsPhoto =
+          requiresPhoto ||
+          (task.allowsPhoto !== undefined
+            ? task.allowsPhoto
+            : (current?.allowsPhotoSnapshot ?? false));
+
+        if (task.id) {
+          await tx.workOrderTask.update({
+            where: { id: task.id },
+            data: {
+              nameSnapshot: name,
+              requiresPhotoSnapshot: requiresPhoto,
+              allowsPhotoSnapshot: allowsPhoto,
+              sortOrder: index,
+            },
+          });
+        } else {
+          await tx.workOrderTask.create({
+            data: {
+              workOrderId: id,
+              taskId: null,
+              nameSnapshot: name,
+              requiresPhotoSnapshot: requiresPhoto,
+              allowsPhotoSnapshot: allowsPhoto,
+              allowsObservationSnapshot: true,
+              requiresRejectionReasonSnapshot: false,
+              sortOrder: index,
+            },
+          });
+        }
+      }
+    });
+
+    return this.findOne(id, user);
+  }
+
   // ─── DELETE ───────────────────────────────────────────────────────────────
 
   async remove(id: string, user: AuthUser) {
@@ -1159,9 +1279,6 @@ export class WorkOrdersService {
       }
     }
 
-    if (wo.status === WorkOrderStatus.IN_PROGRESS) {
-      throw new ConflictException('No se puede eliminar un servicio en curso.');
-    }
     if (wo.status === WorkOrderStatus.COMPLETED) {
       throw new ConflictException('No se puede eliminar un servicio completado.');
     }

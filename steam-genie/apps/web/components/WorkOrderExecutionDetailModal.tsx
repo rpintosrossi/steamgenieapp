@@ -17,6 +17,7 @@ import type {
 } from '../lib/types';
 import type { TaskPhotoGalleryItem } from './TaskPhotoLightbox';
 import { TaskPhotoThumb } from './TaskPhotoThumb';
+import { WorkOrderChecklistModal } from './WorkOrderChecklistModal';
 
 function buildServiceReportFilename(wo: WorkOrderDetail): string {
   const clientName = wo.building?.name ?? 'Cliente';
@@ -30,6 +31,7 @@ function buildServiceReportFilename(wo: WorkOrderDetail): string {
 type Props = {
   workOrderId: string;
   onClose: () => void;
+  onChecklistSaved?: () => void;
 };
 
 const PHASE_LABELS: Record<string, string> = {
@@ -84,7 +86,13 @@ function formatQty(value: string | number | null | undefined): string {
   return Number.isInteger(n) ? String(n) : n.toLocaleString('es-AR');
 }
 
-export function WorkOrderExecutionDetailModal({ workOrderId, onClose }: Props) {
+function photoRequirementLabel(requiresPhoto: boolean, allowsPhoto?: boolean): string {
+  if (requiresPhoto) return 'Foto obligatoria';
+  if (allowsPhoto) return 'Foto opcional';
+  return 'Sin foto';
+}
+
+export function WorkOrderExecutionDetailModal({ workOrderId, onClose, onChecklistSaved }: Props) {
   const [wo, setWo] = useState<WorkOrderDetail | null>(null);
   const [tasks, setTasks] = useState<ServiceExecutionTaskItem[]>([]);
   const [phasePhotos, setPhasePhotos] = useState<ServiceExecutionPhasePhoto[]>([]);
@@ -92,6 +100,7 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
+  const [editingChecklist, setEditingChecklist] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -209,6 +218,7 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose }: Props) {
   }, [serviceGallery]);
 
   return (
+    <>
     <div className="modal-overlay" onClick={onClose}>
       <div
         className="modal modal-wide work-order-execution-modal"
@@ -226,6 +236,16 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose }: Props) {
             >
               {downloadingPdf ? 'Generando PDF…' : 'Descargar PDF'}
             </button>
+            {wo && wo.status !== 'COMPLETED' ? (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setEditingChecklist(true)}
+                title="Editar nombre, fotos requeridas y tareas del checklist"
+              >
+                Editar tareas
+              </button>
+            ) : null}
             <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
               Cerrar
             </button>
@@ -361,156 +381,200 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose }: Props) {
               <p className="muted" style={{ margin: 0 }}>
                 Este servicio todavía no tiene una ejecución iniciada.
               </p>
-            ) : (
-              <>
-                {showPhaseSection ? (
-                  <section className="stack" style={{ gap: 10 }}>
-                    <h4 className="recurring-task-list-heading" style={{ margin: 0 }}>
-                      Fotos del servicio (antes / durante / después)
-                    </h4>
-                    {phasePhotos.length === 0 ? (
-                      <p className="muted" style={{ margin: 0 }}>
-                        Sin fotos de fase
-                      </p>
-                    ) : (
-                      <div className="stack" style={{ gap: 12 }}>
-                        {(['BEFORE', 'DURING', 'AFTER'] as const).map((phase) => {
-                          const phaseItems = phasePhotos.filter((p) => p.phase === phase);
-                          if (phaseItems.length === 0) return null;
-                          return (
-                            <div key={phase}>
-                              <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-                                {PHASE_LABELS[phase]}
-                              </div>
-                              <div className="photo-thumbs">
-                                {phaseItems.map((photo) => (
-                                  <TaskPhotoThumb
-                                    key={photo.id}
-                                    photoId={photo.id}
-                                    photoUrl={photo.url}
-                                    title={photo.originalFilename ?? PHASE_LABELS[phase]}
-                                    gallery={serviceGallery}
-                                    galleryIndex={galleryIndexById.get(photo.id) ?? 0}
-                                    context={{
-                                      capturedAt: photo.capturedAt,
-                                      uploadedAt: photo.uploadedAt,
-                                      uploadedByName:
-                                        photo.uploadedByName ?? participants[0] ?? null,
-                                      taskName: wo.title,
-                                      buildingName: wo.building?.name ?? null,
-                                      floor: wo.floor ?? null,
-                                      zone: wo.zone ?? null,
-                                      subzone: wo.subzone ?? null,
-                                    }}
-                                  />
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </section>
-                ) : null}
-
-                <section className="stack" style={{ gap: 12 }}>
-                  <p className="recurring-task-list-heading" style={{ margin: 0 }}>
-                    {tasks.length} tarea{tasks.length === 1 ? '' : 's'}
+            ) : showPhaseSection ? (
+              <section className="stack" style={{ gap: 10 }}>
+                <h4 className="recurring-task-list-heading" style={{ margin: 0 }}>
+                  Fotos del servicio (antes / durante / después)
+                </h4>
+                {phasePhotos.length === 0 ? (
+                  <p className="muted" style={{ margin: 0 }}>
+                    Sin fotos de fase
                   </p>
-
-                  {tasks.length === 0 ? (
-                    <p className="muted" style={{ margin: 0 }}>
-                      No hay tareas en este servicio.
-                    </p>
-                  ) : (
-                    tasks.map((item) => {
-                      const photos = item.execution?.photos ?? [];
-                      const photoPending =
-                        !isBdaMode &&
-                        item.requiresPhotoSnapshot &&
-                        item.execution?.status === 'DONE' &&
-                        photos.length === 0;
-
+                ) : (
+                  <div className="stack" style={{ gap: 12 }}>
+                    {(['BEFORE', 'DURING', 'AFTER'] as const).map((phase) => {
+                      const phaseItems = phasePhotos.filter((p) => p.phase === phase);
+                      if (phaseItems.length === 0) return null;
                       return (
-                        <article key={item.workOrderTaskId} className="recurring-task-card">
-                          <div className="recurring-task-card-header">
-                            <h3 className="recurring-task-card-title">{item.nameSnapshot}</h3>
-                            <span className="badge">
-                              {item.execution
-                                ? (TASK_EXECUTION_STATUS_LABELS[item.execution.status] ??
-                                  item.execution.status)
-                                : 'Pendiente'}
-                            </span>
+                        <div key={phase}>
+                          <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+                            {PHASE_LABELS[phase]}
                           </div>
+                          <div className="photo-thumbs">
+                            {phaseItems.map((photo) => (
+                              <TaskPhotoThumb
+                                key={photo.id}
+                                photoId={photo.id}
+                                photoUrl={photo.url}
+                                title={photo.originalFilename ?? PHASE_LABELS[phase]}
+                                gallery={serviceGallery}
+                                galleryIndex={galleryIndexById.get(photo.id) ?? 0}
+                                context={{
+                                  capturedAt: photo.capturedAt,
+                                  uploadedAt: photo.uploadedAt,
+                                  uploadedByName:
+                                    photo.uploadedByName ?? participants[0] ?? null,
+                                  taskName: wo.title,
+                                  buildingName: wo.building?.name ?? null,
+                                  floor: wo.floor ?? null,
+                                  zone: wo.zone ?? null,
+                                  subzone: wo.subzone ?? null,
+                                }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            ) : null}
 
-                          <dl className="recurring-task-card-meta">
-                            <div className="recurring-task-meta-item">
-                              <dt>Completado por</dt>
-                              <dd>{item.execution?.executedByName ?? '—'}</dd>
-                            </div>
-                            <div className="recurring-task-meta-item">
-                              <dt>Fecha y hora</dt>
-                              <dd>{formatDateTime(item.execution?.executedAt)}</dd>
-                            </div>
+            <section className="stack" style={{ gap: 12 }}>
+              <p className="recurring-task-list-heading" style={{ margin: 0 }}>
+                {se
+                  ? `${tasks.length} tarea${tasks.length === 1 ? '' : 's'}`
+                  : `${wo.workOrderTasks?.length ?? 0} tarea${
+                      (wo.workOrderTasks?.length ?? 0) === 1 ? '' : 's'
+                    }`}
+              </p>
+
+              {se ? (
+                tasks.length === 0 ? (
+                  <p className="muted" style={{ margin: 0 }}>
+                    No hay tareas en este servicio.
+                  </p>
+                ) : (
+                  tasks.map((item) => {
+                    const photos = item.execution?.photos ?? [];
+                    const photoPending =
+                      !isBdaMode &&
+                      item.requiresPhotoSnapshot &&
+                      item.execution?.status === 'DONE' &&
+                      photos.length === 0;
+
+                    return (
+                      <article key={item.workOrderTaskId} className="recurring-task-card">
+                        <div className="recurring-task-card-header">
+                          <h3 className="recurring-task-card-title">{item.nameSnapshot}</h3>
+                          <span className="badge">
+                            {item.execution
+                              ? (TASK_EXECUTION_STATUS_LABELS[item.execution.status] ??
+                                item.execution.status)
+                              : 'Pendiente'}
+                          </span>
+                        </div>
+
+                        <dl className="recurring-task-card-meta">
+                          <div className="recurring-task-meta-item">
+                            <dt>Completado por</dt>
+                            <dd>{item.execution?.executedByName ?? '—'}</dd>
+                          </div>
+                          <div className="recurring-task-meta-item">
+                            <dt>Fecha y hora</dt>
+                            <dd>{formatDateTime(item.execution?.executedAt)}</dd>
+                          </div>
+                          <div className="recurring-task-meta-item recurring-task-meta-item--full">
+                            <dt>Observación</dt>
+                            <dd>
+                              {item.execution?.observation?.trim()
+                                ? item.execution.observation
+                                : '—'}
+                            </dd>
+                          </div>
+                          {!isBdaMode ? (
                             <div className="recurring-task-meta-item recurring-task-meta-item--full">
-                              <dt>Observación</dt>
+                              <dt>Evidencia fotográfica</dt>
                               <dd>
-                                {item.execution?.observation?.trim()
-                                  ? item.execution.observation
-                                  : '—'}
+                                {photos.length > 0 ? (
+                                  <div className="photo-thumbs">
+                                    {photos.map((photo) => (
+                                      <TaskPhotoThumb
+                                        key={photo.id}
+                                        photoId={photo.id}
+                                        photoUrl={photo.url}
+                                        title={photo.originalFilename ?? 'Ver foto'}
+                                        gallery={serviceGallery}
+                                        galleryIndex={galleryIndexById.get(photo.id) ?? 0}
+                                        context={{
+                                          capturedAt: photo.capturedAt,
+                                          uploadedAt: photo.uploadedAt,
+                                          uploadedByName:
+                                            item.execution?.executedByName ?? null,
+                                          taskName: item.nameSnapshot,
+                                          buildingName: wo.building?.name ?? null,
+                                          floor: wo.floor ?? null,
+                                          zone: wo.zone ?? null,
+                                          subzone: wo.subzone ?? null,
+                                        }}
+                                      />
+                                    ))}
+                                  </div>
+                                ) : photoPending ? (
+                                  <span className="badge badge-warning">
+                                    Realizada con foto pendiente
+                                  </span>
+                                ) : item.execution ? (
+                                  <span className="muted">Sin fotos</span>
+                                ) : (
+                                  <span className="muted">
+                                    {photoRequirementLabel(
+                                      item.requiresPhotoSnapshot,
+                                      item.allowsPhotoSnapshot,
+                                    )}
+                                  </span>
+                                )}
                               </dd>
                             </div>
-                            {!isBdaMode ? (
-                              <div className="recurring-task-meta-item recurring-task-meta-item--full">
-                                <dt>Evidencia fotográfica</dt>
-                                <dd>
-                                  {photos.length > 0 ? (
-                                    <div className="photo-thumbs">
-                                      {photos.map((photo) => (
-                                        <TaskPhotoThumb
-                                          key={photo.id}
-                                          photoId={photo.id}
-                                          photoUrl={photo.url}
-                                          title={photo.originalFilename ?? 'Ver foto'}
-                                          gallery={serviceGallery}
-                                          galleryIndex={galleryIndexById.get(photo.id) ?? 0}
-                                          context={{
-                                            capturedAt: photo.capturedAt,
-                                            uploadedAt: photo.uploadedAt,
-                                            uploadedByName:
-                                              item.execution?.executedByName ?? null,
-                                            taskName: item.nameSnapshot,
-                                            buildingName: wo.building?.name ?? null,
-                                            floor: wo.floor ?? null,
-                                            zone: wo.zone ?? null,
-                                            subzone: wo.subzone ?? null,
-                                          }}
-                                        />
-                                      ))}
-                                    </div>
-                                  ) : photoPending ? (
-                                    <span className="badge badge-warning">
-                                      Realizada con foto pendiente
-                                    </span>
-                                  ) : item.execution ? (
-                                    <span className="muted">Sin fotos</span>
-                                  ) : (
-                                    <span className="muted">—</span>
-                                  )}
-                                </dd>
-                              </div>
-                            ) : null}
-                          </dl>
-                        </article>
-                      );
-                    })
-                  )}
-                </section>
-              </>
-            )}
+                          ) : null}
+                        </dl>
+                      </article>
+                    );
+                  })
+                )
+              ) : (wo.workOrderTasks ?? []).length === 0 ? (
+                <p className="muted" style={{ margin: 0 }}>
+                  No hay tareas en este servicio. Usá «Editar tareas» para agregarlas.
+                </p>
+              ) : (
+                (wo.workOrderTasks ?? []).map((item) => (
+                  <article key={item.id} className="recurring-task-card">
+                    <div className="recurring-task-card-header">
+                      <h3 className="recurring-task-card-title">{item.nameSnapshot}</h3>
+                      <span className="badge">Pendiente</span>
+                    </div>
+                    {!isBdaMode ? (
+                      <dl className="recurring-task-card-meta">
+                        <div className="recurring-task-meta-item">
+                          <dt>Foto</dt>
+                          <dd>
+                            {photoRequirementLabel(
+                              item.requiresPhotoSnapshot,
+                              item.allowsPhotoSnapshot,
+                            )}
+                          </dd>
+                        </div>
+                      </dl>
+                    ) : null}
+                  </article>
+                ))
+              )}
+            </section>
           </div>
         )}
       </div>
     </div>
+    {editingChecklist ? (
+      <WorkOrderChecklistModal
+        workOrderId={workOrderId}
+        onClose={() => setEditingChecklist(false)}
+        onSaved={() => {
+          void load();
+          onChecklistSaved?.();
+        }}
+      />
+    ) : null}
+  </>
   );
 }

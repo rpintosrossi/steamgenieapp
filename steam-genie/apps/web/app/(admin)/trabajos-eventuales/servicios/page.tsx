@@ -6,6 +6,7 @@ import { FormEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState 
 import { APP_MODULES } from '@steam-genie/shared-constants';
 import { WorkOrderFinanceModal } from '../../../../components/WorkOrderFinanceModal';
 import { WorkOrderExecutionDetailModal } from '../../../../components/WorkOrderExecutionDetailModal';
+import { WorkOrderChecklistModal } from '../../../../components/WorkOrderChecklistModal';
 import { toIsoFromDatetimeLocal } from '../../../../components/LocationPicker';
 import { api } from '../../../../lib/api-client';
 import { getCurrentUserRole, hasModule } from '../../../../lib/auth';
@@ -131,7 +132,7 @@ function buildPriorRejectionAssignWarning(
   return `${lines.join('\n')}\n\n¿Querés asignarlo igualmente?`;
 }
 
-const NON_DELETABLE_STATUSES = new Set(['IN_PROGRESS', 'COMPLETED']);
+const NON_DELETABLE_STATUSES = new Set(['COMPLETED']);
 const NON_RESCHEDULABLE_STATUSES = new Set(['IN_PROGRESS', 'COMPLETED']);
 const PURGE_CONFIRM_TOKEN = 'DELETE_ALL_WORK_ORDERS';
 
@@ -253,6 +254,7 @@ function EventualServicesPageInner() {
   const [savingReschedule, setSavingReschedule] = useState(false);
   const [financeWoId, setFinanceWoId] = useState<string | null>(null);
   const [detailWoId, setDetailWoId] = useState<string | null>(null);
+  const [checklistWoId, setChecklistWoId] = useState<string | null>(null);
   const canManageFinance = hasModule(APP_MODULES.GASTOS_SERVICIOS);
 
   const loadServices = useCallback(async () => {
@@ -697,6 +699,7 @@ function EventualServicesPageInner() {
                   const canAssign = ASSIGNABLE_STATUSES.has(wo.status);
                   const canDelete = !NON_DELETABLE_STATUSES.has(wo.status);
                   const canReschedule = !NON_RESCHEDULABLE_STATUSES.has(wo.status);
+                  const canEditTasks = wo.status !== 'COMPLETED';
                   const isFocused = focusId === wo.id;
                   return (
                     <tr
@@ -738,6 +741,19 @@ function EventualServicesPageInner() {
                             title="Ver limpiadores, horarios, observaciones y fotos"
                           >
                             Ver
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            disabled={!canEditTasks}
+                            onClick={() => setChecklistWoId(wo.id)}
+                            title={
+                              canEditTasks
+                                ? 'Editar nombre, fotos requeridas y tareas del checklist'
+                                : 'No se puede editar el checklist de un servicio completado'
+                            }
+                          >
+                            Tareas
                           </button>
                           {canManageFinance ? (
                             <button
@@ -783,7 +799,7 @@ function EventualServicesPageInner() {
                             title={
                               canDelete
                                 ? 'Eliminar servicio'
-                                : 'No se puede eliminar un servicio en curso o completado'
+                                : 'No se puede eliminar un servicio completado'
                             }
                           >
                             Eliminar
@@ -1013,7 +1029,16 @@ function EventualServicesPageInner() {
               ¿Eliminar el servicio <strong>{deletingWo.title}</strong>?
             </p>
 
-            {getActiveAssignments(deletingWo).length > 0 ? (
+            {deletingWo.status === 'IN_PROGRESS' ? (
+              <div className="alert alert-warning">
+                Este servicio está en curso
+                {getActiveAssignments(deletingWo).length > 0
+                  ? ` (${formatAssignments(deletingWo)})`
+                  : ''}
+                . Al eliminarlo, el personal dejará de verlo en la app móvil y se perderá el
+                progreso de ejecución.
+              </div>
+            ) : getActiveAssignments(deletingWo).length > 0 ? (
               <div className="alert alert-warning">
                 Este servicio está asignado a: <strong>{formatAssignments(deletingWo)}</strong>.
                 Al eliminarlo, dejarán de verlo en la app móvil.
@@ -1139,9 +1164,18 @@ function EventualServicesPageInner() {
         <WorkOrderFinanceModal workOrderId={financeWoId} onClose={() => setFinanceWoId(null)} />
       ) : null}
 
+      {checklistWoId ? (
+        <WorkOrderChecklistModal
+          workOrderId={checklistWoId}
+          onClose={() => setChecklistWoId(null)}
+          onSaved={() => void loadServices()}
+        />
+      ) : null}
+
       {detailWoId ? (
         <WorkOrderExecutionDetailModal
           workOrderId={detailWoId}
+          onChecklistSaved={() => void loadServices()}
           onClose={() => {
             setDetailWoId(null);
             if (focusId) clearFocus();

@@ -442,6 +442,7 @@ export interface WorkOrderDetail {
     allowsPhotoSnapshot?: boolean;
     requiresPhotoSnapshot: boolean;
     allowsObservationSnapshot: boolean;
+    _count?: { taskExecutions: number };
   }>;
   serviceExecutions?: Array<{
     id: string;
