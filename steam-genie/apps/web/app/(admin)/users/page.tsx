@@ -7,7 +7,7 @@ import {
   formatStoredCalendarDate,
 } from '@steam-genie/shared-constants';
 import { api } from '../../../lib/api-client';
-import { fetchBuildingsList } from '../../../lib/buildings-cache';
+import { fetchBuildingsList, invalidateBuildingsListCache } from '../../../lib/buildings-cache';
 import { AssignBuildingsModal } from '../../../components/AssignBuildingsModal';
 import { CreateUserModal } from '../../../components/CreateUserModal';
 import { ROLE_LABELS } from '../../../lib/labels';
@@ -100,6 +100,7 @@ export default function UsersPage() {
     setError(null);
     setSuccess(null);
     try {
+      invalidateBuildingsListCache();
       const [buildingRoles, buildings] = await Promise.all([
         api.get<UserBuildingRoleItem[]>(`/users/${user.id}/building-roles`),
         fetchBuildingsList(),

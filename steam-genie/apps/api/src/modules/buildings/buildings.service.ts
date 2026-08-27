@@ -54,28 +54,27 @@ export class BuildingsService {
     }
 
     if (user) {
-      const canListAll = await this.canListAllBuildings(user);
+      // El encargado se crea con rol global, así que el listado iba al catálogo
+      // general (20 más nuevos, sin sitios particulares) y no a lo habilitado.
+      // Si tiene edificios asignados uno a uno, esos son los que debe ver.
+      if (user.primaryRole !== 'admin') {
+        const buildingIds = await this.getScopedBuildingIds(user.id);
+        if (buildingIds.length > 0) {
+          delete where.particularClient;
+          where.id = { in: buildingIds };
 
-      if (!canListAll) {
-        const assignments = await this.prisma.userBuildingRole.findMany({
-          where: { userId: user.id, buildingId: { not: null } },
-          select: { buildingId: true },
-        });
-        const buildingIds = [
-          ...new Set(
-            assignments
-              .map((item) => item.buildingId)
-              .filter((id): id is string => Boolean(id)),
-          ),
-        ];
-
-        if (buildingIds.length === 0) {
-          return { data: [], total: 0, page, limit, pages: 0 };
+          const data = await this.prisma.building.findMany({
+            where,
+            orderBy: { name: 'asc' },
+          });
+          const total = data.length;
+          return { data, total, page: 1, limit: total || limit, pages: total > 0 ? 1 : 0 };
         }
+      }
 
-        // Acceso acotado: incluir sitios particulares asignados.
-        delete where.particularClient;
-        where.id = { in: buildingIds };
+      const canListAll = await this.canListAllBuildings(user);
+      if (!canListAll) {
+        return { data: [], total: 0, page, limit, pages: 0 };
       }
     }
 
@@ -835,7 +834,26 @@ export class BuildingsService {
 
   // ─── Assertions ────────────────────────────────────────────────────────────
 
-  /** Admin (primaryRole) o staff con rol global en user_building_roles ve todos los edificios. */
+  /** Edificios habilitados en user_building_roles (buildingId concreto). */
+  private async getScopedBuildingIds(userId: string): Promise<string[]> {
+    const assignments = await this.prisma.userBuildingRole.findMany({
+      where: { userId, buildingId: { not: null } },
+      select: { buildingId: true },
+    });
+    return [
+      ...new Set(
+        assignments
+          .map((item) => item.buildingId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+  }
+
+  /**
+   * Catálogo completo solo si no hay edificios habilitados uno a uno.
+   * Un encargado se crea con rol global; si después le asignan edificios,
+   * esas filas concretas son las que debe ver en la app.
+   */
   private async canListAllBuildings(user: AuthUser): Promise<boolean> {
     if (user.primaryRole === 'admin') return true;
 

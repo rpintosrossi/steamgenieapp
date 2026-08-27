@@ -530,15 +530,13 @@ export class UsersService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      // Reemplaza scoped y global de este rol. Lista vacía = sin acceso,
+      // no un rol global (eso hacía que la app listara todos o ninguno).
       await tx.userBuildingRole.deleteMany({
-        where: { userId, roleId: dto.roleId, buildingId: { not: null } },
+        where: { userId, roleId: dto.roleId },
       });
 
       if (dto.buildingIds.length > 0) {
-        await tx.userBuildingRole.deleteMany({
-          where: { userId, roleId: dto.roleId, buildingId: null },
-        });
-
         await tx.userBuildingRole.createMany({
           data: dto.buildingIds.map((buildingId) => ({
             userId,
@@ -547,20 +545,6 @@ export class UsersService {
             grantedById,
           })),
         });
-      } else {
-        const existingGlobal = await tx.userBuildingRole.findFirst({
-          where: { userId, roleId: dto.roleId, buildingId: null },
-        });
-        if (!existingGlobal) {
-          await tx.userBuildingRole.create({
-            data: {
-              userId,
-              roleId: dto.roleId,
-              buildingId: null,
-              grantedById,
-            },
-          });
-        }
       }
 
       const assignments = await tx.userBuildingRole.findMany({

@@ -26,13 +26,43 @@ import {
 interface BuildingsResponse {
   data?: Building[];
   total?: number;
+  pages?: number;
 }
+
+const BUILDINGS_PAGE_SIZE = 100;
+const BUILDINGS_MAX_PAGES = 50;
 
 function normalizeBuildingsList(response: unknown): Building[] {
   if (!response || typeof response !== 'object') return [];
   const payload = response as BuildingsResponse | Building[];
   if (Array.isArray(payload)) return payload;
   return Array.isArray(payload.data) ? payload.data : [];
+}
+
+async function fetchAllAccessibleBuildings(): Promise<Building[]> {
+  const all: Building[] = [];
+  let page = 1;
+  let pages = 1;
+
+  while (page <= pages && page <= BUILDINGS_MAX_PAGES) {
+    const res = await apiService.get<BuildingsResponse | Building[]>(
+      `/buildings?limit=${BUILDINGS_PAGE_SIZE}&page=${page}&includeParticularSites=true`,
+    );
+    const batch = normalizeBuildingsList(res);
+    all.push(...batch);
+
+    if (res && typeof res === 'object' && !Array.isArray(res)) {
+      const paginated = res as BuildingsResponse;
+      pages = typeof paginated.pages === 'number' && paginated.pages > 0 ? paginated.pages : 1;
+    } else {
+      break;
+    }
+
+    if (batch.length === 0) break;
+    page += 1;
+  }
+
+  return [...new Map(all.map((building) => [building.id, building])).values()];
 }
 
 interface AttendanceTodaySummary {
@@ -187,10 +217,10 @@ export default function BuildingSelectScreen() {
   const loadBuildings = useCallback(async () => {
     try {
       const [buildingsRes] = await Promise.all([
-        apiService.get<BuildingsResponse | Building[]>('/buildings'),
+        fetchAllAccessibleBuildings(),
         loadAttendanceSummary(),
       ]);
-      setBuildings(normalizeBuildingsList(buildingsRes));
+      setBuildings(buildingsRes);
       if (user?.id) {
         await loadPendingCounts(user.id);
       }

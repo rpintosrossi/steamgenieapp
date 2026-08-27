@@ -37,9 +37,12 @@ export function AssignBuildingsModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const catalogIds = useMemo(() => new Set(buildings.map((building) => building.id)), [buildings]);
+
   useEffect(() => {
-    setAssignedIds(getBuildingIdsForRole(buildingRoles, roleId));
-  }, [buildingRoles, roleId]);
+    // Solo edificios activos del catálogo: inactivos/borrados no se pueden re-guardar.
+    setAssignedIds(getBuildingIdsForRole(buildingRoles, roleId).filter((id) => catalogIds.has(id)));
+  }, [buildingRoles, roleId, catalogIds]);
 
   const assignedBuildings = useMemo(
     () =>
@@ -114,7 +117,8 @@ export function AssignBuildingsModal({
             </select>
             <p className="muted">
               Los edificios de la derecha quedarán vinculados a este rol. Tocá un edificio para
-              moverlo de un lado al otro.
+              moverlo de un lado al otro. Si dejás la lista vacía, el usuario no verá edificios en
+              la app.
             </p>
           </div>
 

@@ -12,17 +12,34 @@ let buildingsListCache: {
 
 const hierarchyCache = new Map<string, BuildingHierarchy>();
 
+const BUILDINGS_PAGE_SIZE = 100;
+const BUILDINGS_MAX_PAGES = 50;
+
 export async function fetchBuildingsList(): Promise<Array<{ id: string; name: string }>> {
   const now = Date.now();
   if (buildingsListCache && now - buildingsListCache.fetchedAt < BUILDINGS_TTL_MS) {
     return buildingsListCache.data;
   }
 
-  const res = await api.get<{ data: Array<{ id: string; name: string }> }>(
-    '/buildings?limit=100&includeParticularSites=true',
-  );
-  buildingsListCache = { data: res.data, fetchedAt: now };
-  return res.data;
+  const all: Array<{ id: string; name: string }> = [];
+  let page = 1;
+  let pages = 1;
+
+  while (page <= pages && page <= BUILDINGS_MAX_PAGES) {
+    const res = await api.get<{
+      data: Array<{ id: string; name: string }>;
+      pages?: number;
+    }>(`/buildings?limit=${BUILDINGS_PAGE_SIZE}&page=${page}&includeParticularSites=true`);
+
+    all.push(...(res.data ?? []));
+    pages = typeof res.pages === 'number' && res.pages > 0 ? res.pages : 1;
+    if (!res.data?.length) break;
+    page += 1;
+  }
+
+  const unique = [...new Map(all.map((building) => [building.id, building])).values()];
+  buildingsListCache = { data: unique, fetchedAt: now };
+  return unique;
 }
 
 export function invalidateBuildingsListCache(): void {
