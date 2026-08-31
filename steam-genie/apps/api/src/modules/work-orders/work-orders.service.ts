@@ -27,7 +27,8 @@ import { RescheduleWorkOrderDto } from './dto/reschedule-work-order.dto';
 import { RepeatWorkOrderDto } from './dto/repeat-work-order.dto';
 import { UpdateWorkOrderChecklistDto } from './dto/update-work-order-checklist.dto';
 import { WORK_ORDER_LIST_SELECT } from './work-order-list.select';
-import { workOrderBranchWhere } from './work-order-branch.filter';
+import { workOrderBranchesWhere, workOrderBranchWhere } from './work-order-branch.filter';
+import { listAccessibleBranchIds } from '../../common/branch-access';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   ServiceReportPdfService,
@@ -222,6 +223,21 @@ export class WorkOrdersService {
       if (!mergeBuildingIdConstraint(where, scope)) {
         return { data: [], total: 0, page, limit, pages: 0 };
       }
+
+      const branchIds = await listAccessibleBranchIds(this.prisma, user.id);
+      if (branchId) {
+        if (branchIds !== null && !branchIds.includes(branchId)) {
+          return { data: [], total: 0, page, limit, pages: 0 };
+        }
+        Object.assign(where, workOrderBranchWhere(branchId));
+      } else if (branchIds !== null) {
+        if (branchIds.length === 0) {
+          return { data: [], total: 0, page, limit, pages: 0 };
+        }
+        Object.assign(where, workOrderBranchesWhere(branchIds));
+      }
+    } else if (branchId) {
+      Object.assign(where, workOrderBranchWhere(branchId));
     }
 
     if (effectiveAssignedTo) {
@@ -231,10 +247,6 @@ export class WorkOrdersService {
           status: { in: ['PENDING', 'ACCEPTED'] },
         },
       };
-    }
-
-    if (branchId) {
-      Object.assign(where, workOrderBranchWhere(branchId));
     }
 
     const scheduleOrder = sortDir === 'desc' ? 'desc' : 'asc';

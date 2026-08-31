@@ -1,8 +1,8 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { api } from '../lib/api-client';
-import type { BuildingDetail, BuildingMode, PhotoEvidenceMode } from '../lib/types';
+import type { BuildingDetail, BuildingMode, PhotoEvidenceMode, QuoteBranchItem } from '../lib/types';
 import {
   BuildingLocationFields,
   type BuildingLocationFieldsValue,
@@ -51,7 +51,24 @@ export function BuildingSettingsCard({
   const [photoEvidenceMode, setPhotoEvidenceMode] = useState<PhotoEvidenceMode>(
     building.photoEvidenceMode ?? 'PER_TASK',
   );
+  const [branchId, setBranchId] = useState(building.branchId ?? '');
+  const [branches, setBranches] = useState<QuoteBranchItem[]>([]);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .get<QuoteBranchItem[]>('/quote-branches?includeInactive=false')
+      .then((data) => {
+        if (!cancelled) setBranches(data);
+      })
+      .catch(() => {
+        /* el select queda vacío; el guardado sigue pidiendo sucursal */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -72,6 +89,12 @@ export function BuildingSettingsCard({
       const effectivePhotoMode: PhotoEvidenceMode =
         buildingMode === 'SIMPLE' ? photoEvidenceMode : 'PER_TASK';
 
+      if (!branchId) {
+        onError('Seleccioná la sucursal del edificio.');
+        setSaving(false);
+        return;
+      }
+
       const updated = await api.patch<BuildingDetail>(`/buildings/${building.id}`, {
         name: name.trim(),
         taxId: taxId.trim() || null,
@@ -85,6 +108,7 @@ export function BuildingSettingsCard({
         longitude: lng ?? null,
         gpsRadiusM: radius,
         isActive,
+        branchId,
       });
       onSaved({ ...building, ...updated });
       onSuccess('Configuración del edificio guardada.');
@@ -101,7 +125,7 @@ export function BuildingSettingsCard({
         Configuración
       </h2>
       <p className="muted" style={{ marginTop: 0 }}>
-        Datos del edificio, provincia/ciudad, ubicación GPS y modo de operación.
+        Datos del edificio, sucursal, provincia/ciudad, ubicación GPS y modo de operación.
       </p>
 
       <form onSubmit={handleSubmit} className="stack">
@@ -110,8 +134,26 @@ export function BuildingSettingsCard({
           <input value={name} onChange={(e) => setName(e.target.value)} required />
         </div>
 
-        <div className="form-field">
-          <label>CUIT</label>
+          <div className="form-field">
+            <label>Sucursal *</label>
+            <select value={branchId} onChange={(e) => setBranchId(e.target.value)} required>
+              <option value="" disabled>
+                Seleccioná una sucursal
+              </option>
+              {branchId && !branches.some((branch) => branch.id === branchId) ? (
+                <option value={branchId}>Sucursal actual</option>
+              ) : null}
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}
+                  {branch.isDefault ? ' (predeterminada)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="form-field">
+            <label>CUIT</label>
           <input
             value={taxId}
             onChange={(e) => setTaxId(e.target.value)}
@@ -179,7 +221,7 @@ export function BuildingSettingsCard({
         />
 
         <div className="form-actions">
-          <button type="submit" className="btn btn-primary" disabled={saving || !name.trim()}>
+          <button type="submit" className="btn btn-primary" disabled={saving || !name.trim() || !branchId}>
             {saving ? 'Guardando…' : 'Guardar configuración'}
           </button>
         </div>

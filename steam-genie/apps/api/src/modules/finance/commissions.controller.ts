@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -133,6 +134,13 @@ export class CommissionsController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.commissions.update(id, dto, user);
+  }
+
+  @Delete(':id')
+  @RequiredRoles('admin', 'manager')
+  @RequiredModules(APP_MODULES.RENDICIONES, APP_MODULES.COMISIONES)
+  remove(@Param('id', ParseUUIDPipe) id: string) {
+    return this.commissions.remove(id);
   }
 
   @Get(':id/pdf')

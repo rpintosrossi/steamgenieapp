@@ -19,12 +19,14 @@ import { QueryUserDetailDto } from './dto/query-user-detail.dto';
 import { AssignBuildingRoleDto } from './dto/assign-building-role.dto';
 import { SyncBuildingRolesDto } from './dto/sync-building-roles.dto';
 import { SyncExcludedBuildingsDto } from './dto/sync-excluded-buildings.dto';
+import { SyncExcludedBranchesDto } from './dto/sync-excluded-branches.dto';
 import { SyncBuildingUsersDto } from './dto/sync-building-users.dto';
 import { RegisterDeviceDto } from './dto/register-device.dto';
 import {
   listAccessibleBuildingIds,
   loadBuildingAccessScope,
 } from '../../common/building-access';
+import { listAccessibleBranchIds } from '../../common/branch-access';
 
 const USER_SELECT = {
   id: true,
@@ -537,6 +539,37 @@ export class UsersService {
       }
     }
 
+    const [actorBuildingIds, targetBranchIds] = await Promise.all([
+      listAccessibleBuildingIds(this.prisma, grantedById),
+      listAccessibleBranchIds(this.prisma, userId),
+    ]);
+
+    const catalogBuildings =
+      actorBuildingIds.length === 0 ||
+      (targetBranchIds !== null && targetBranchIds.length === 0)
+        ? []
+        : await this.prisma.building.findMany({
+            where: {
+              deletedAt: null,
+              isActive: true,
+              id: { in: actorBuildingIds },
+              ...(targetBranchIds !== null ? { branchId: { in: targetBranchIds } } : {}),
+            },
+            select: { id: true },
+          });
+    const catalogSet = new Set(catalogBuildings.map((building) => building.id));
+
+    const existing = await this.prisma.userBuildingRole.findMany({
+      where: { userId, roleId: dto.roleId, buildingId: { not: null } },
+      select: { buildingId: true },
+    });
+    const preserved = existing
+      .map((row) => row.buildingId)
+      .filter((id): id is string => typeof id === 'string' && !catalogSet.has(id));
+    const nextIds = [
+      ...new Set([...preserved, ...dto.buildingIds.filter((id) => catalogSet.has(id))]),
+    ];
+
     await this.prisma.$transaction(async (tx) => {
       // Reemplaza scoped y global de este rol. Lista vacía = sin acceso,
       // no un rol global (eso hacía que la app listara todos o ninguno).
@@ -544,9 +577,9 @@ export class UsersService {
         where: { userId, roleId: dto.roleId },
       });
 
-      if (dto.buildingIds.length > 0) {
+      if (nextIds.length > 0) {
         await tx.userBuildingRole.createMany({
-          data: dto.buildingIds.map((buildingId) => ({
+          data: nextIds.map((buildingId) => ({
             userId,
             roleId: dto.roleId,
             buildingId,
@@ -654,6 +687,65 @@ export class UsersService {
     });
 
     return this.getExcludedBuildings(userId);
+  }
+
+  async getExcludedBranches(userId: string) {
+    await this.assertExists(userId);
+    const rows = await this.prisma.userExcludedBranch.findMany({
+      where: { userId },
+      select: {
+        branchId: true,
+        branch: { select: { id: true, name: true } },
+      },
+      orderBy: { branch: { name: 'asc' } },
+    });
+    return {
+      branchIds: rows.map((row) => row.branchId),
+      branches: rows.map((row) => row.branch),
+    };
+  }
+
+  async syncExcludedBranches(
+    userId: string,
+    dto: SyncExcludedBranchesDto,
+    actorId: string,
+  ) {
+    await this.assertExists(userId);
+
+    if (dto.branchIds.length > 0) {
+      const validCount = await this.prisma.quoteBranch.count({
+        where: { id: { in: dto.branchIds }, deletedAt: null },
+      });
+      if (validCount !== dto.branchIds.length) {
+        throw new BadRequestException('Una o más sucursales no son válidas');
+      }
+    }
+
+    const actorBranches = await listAccessibleBranchIds(this.prisma, actorId);
+    let nextIds = [...new Set(dto.branchIds)];
+
+    if (actorBranches !== null) {
+      const actorSet = new Set(actorBranches);
+      const existing = await this.prisma.userExcludedBranch.findMany({
+        where: { userId },
+        select: { branchId: true },
+      });
+      const preserved = existing
+        .map((row) => row.branchId)
+        .filter((id) => !actorSet.has(id));
+      nextIds = [...new Set([...preserved, ...nextIds.filter((id) => actorSet.has(id))])];
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.userExcludedBranch.deleteMany({ where: { userId } });
+      if (nextIds.length > 0) {
+        await tx.userExcludedBranch.createMany({
+          data: nextIds.map((branchId) => ({ userId, branchId })),
+        });
+      }
+    });
+
+    return this.getExcludedBranches(userId);
   }
 
   async getBuildingUserRoles(buildingId: string) {

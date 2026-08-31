@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { formatStoredCalendarDate } from '@steam-genie/shared-constants';
 import { FinanceSubnav } from '../../../../../components/FinanceSubnav';
@@ -14,6 +14,7 @@ function money(value: number): string {
 
 export default function RendicionDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const id = params.id;
   const [data, setData] = useState<CommissionSettlementDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -22,6 +23,7 @@ export default function RendicionDetailPage() {
   const [percentage, setPercentage] = useState('');
   const [includedMap, setIncludedMap] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -71,6 +73,27 @@ export default function RendicionDetailPage() {
     }
   }
 
+  async function handleDelete() {
+    if (!data) return;
+    if (
+      !window.confirm(
+        `¿Eliminar la rendición de ${data.beneficiaryName}?\n\nSe borra el PDF y el detalle. Esta acción no se puede deshacer.`,
+      )
+    ) {
+      return;
+    }
+
+    setDeleting(true);
+    setError(null);
+    try {
+      await api.delete(`/commissions/${data.id}`);
+      router.push('/gastos-y-comisiones/rendiciones');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo eliminar la rendición');
+      setDeleting(false);
+    }
+  }
+
   if (loading) {
     return (
       <>
@@ -112,6 +135,14 @@ export default function RendicionDetailPage() {
             }
           >
             Descargar PDF actual
+          </button>
+          <button
+            type="button"
+            className="btn btn-danger"
+            disabled={deleting || saving}
+            onClick={() => void handleDelete()}
+          >
+            {deleting ? 'Eliminando…' : 'Eliminar rendición'}
           </button>
           <Link href="/gastos-y-comisiones/rendiciones" className="btn btn-secondary">
             Volver

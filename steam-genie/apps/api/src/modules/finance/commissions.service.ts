@@ -638,6 +638,25 @@ export class CommissionsService {
     return { count, hasSettlements: count > 0 };
   }
 
+  async remove(id: string) {
+    const row = await this.loadSettlement(id);
+    const storageKeys = row.pdfVersions
+      .map((pdf) => pdf.storageKey)
+      .filter((key): key is string => Boolean(key));
+
+    await this.prisma.commissionSettlement.delete({ where: { id } });
+
+    for (const key of storageKeys) {
+      try {
+        await this.storage.delete(key);
+      } catch {
+        // La rendición ya se eliminó; el PDF huérfano no debe abortar.
+      }
+    }
+
+    return { message: 'Rendición eliminada' };
+  }
+
   async update(id: string, dto: UpdateCommissionSettlementDto, user: AuthUser) {
     const existing = await this.loadSettlement(id);
     const percentage = dto.percentage ?? this.toNumber(existing.percentage);

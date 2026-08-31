@@ -66,6 +66,13 @@ async function main() {
   });
 
   if (!building) {
+    const branch = await prisma.quoteBranch.findFirst({
+      where: { deletedAt: null, isActive: true },
+      orderBy: [{ isDefault: 'desc' }, { sortOrder: 'asc' }],
+    });
+    if (!branch) {
+      throw new Error('No hay sucursales activas. Corré pnpm db:seed primero.');
+    }
     building = await prisma.building.create({
       data: {
         name: BUILDING_NAME,
@@ -76,6 +83,7 @@ async function main() {
         longitude: -58.3816,
         gpsRadiusM: 5000,
         isActive: true,
+        branchId: branch.id,
       },
     });
     console.log(`  ✓ Edificio creado: ${building.name}`);

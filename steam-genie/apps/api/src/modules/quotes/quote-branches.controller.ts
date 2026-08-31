@@ -12,7 +12,9 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequiredRoles } from '../../common/decorators/required-roles.decorator';
+import type { AuthUser } from '@steam-genie/shared-types';
 import { QuoteBranchesService } from './quote-branches.service';
 import {
   CreateQuoteBranchDto,
@@ -27,8 +29,8 @@ export class QuoteBranchesController {
 
   @Get()
   @RequiredRoles('admin', 'manager')
-  findAll(@Query() query: QueryQuoteBranchesDto) {
-    return this.quoteBranchesService.findAll(query);
+  findAll(@Query() query: QueryQuoteBranchesDto, @CurrentUser() user: AuthUser) {
+    return this.quoteBranchesService.findAll(query, user);
   }
 
   @Post()

@@ -23,6 +23,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { AssignBuildingRoleDto } from './dto/assign-building-role.dto';
 import { SyncBuildingRolesDto } from './dto/sync-building-roles.dto';
 import { SyncExcludedBuildingsDto } from './dto/sync-excluded-buildings.dto';
+import { SyncExcludedBranchesDto } from './dto/sync-excluded-branches.dto';
 import { RegisterDeviceDto } from './dto/register-device.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
 
@@ -92,6 +93,22 @@ export class UsersController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.usersService.syncExcludedBuildings(id, dto, user.id);
+  }
+
+  @Get(':id/excluded-branches')
+  @RequiredRoles('admin', 'manager')
+  getExcludedBranches(@Param('id', ParseUUIDPipe) id: string) {
+    return this.usersService.getExcludedBranches(id);
+  }
+
+  @Put(':id/excluded-branches')
+  @RequiredRoles('admin')
+  syncExcludedBranches(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SyncExcludedBranchesDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.usersService.syncExcludedBranches(id, dto, user.id);
   }
 
   @Put(':id/building-roles/bulk')

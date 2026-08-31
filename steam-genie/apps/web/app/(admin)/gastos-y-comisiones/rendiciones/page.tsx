@@ -21,6 +21,8 @@ export default function RendicionesPage() {
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [total, setTotal] = useState(0);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -47,6 +49,30 @@ export default function RendicionesPage() {
     void load();
   }, [load]);
 
+  async function handleDelete(item: CommissionSettlementListItem) {
+    const period = `${formatStoredCalendarDate(item.dateFrom)} → ${formatStoredCalendarDate(item.dateTo)}`;
+    if (
+      !window.confirm(
+        `¿Eliminar la rendición de ${item.beneficiaryName} (${period})?\n\nSe borra el PDF y el detalle. Esta acción no se puede deshacer.`,
+      )
+    ) {
+      return;
+    }
+
+    setDeletingId(item.id);
+    setError(null);
+    setSuccess(null);
+    try {
+      await api.delete(`/commissions/${item.id}`);
+      setSuccess(`Rendición de ${item.beneficiaryName} eliminada.`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo eliminar la rendición');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <>
       <div className="page-header">
@@ -62,6 +88,7 @@ export default function RendicionesPage() {
       <FinanceSubnav />
 
       {error ? <div className="alert alert-error">{error}</div> : null}
+      {success ? <div className="alert alert-success">{success}</div> : null}
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="form-row">
@@ -137,12 +164,22 @@ export default function RendicionesPage() {
                       <td>{new Date(item.createdAt).toLocaleString('es-AR')}</td>
                       <td>v{item.currentPdfVersion}</td>
                       <td>
-                        <Link
-                          href={`/gastos-y-comisiones/rendiciones/${item.id}`}
-                          className="btn btn-secondary btn-sm"
-                        >
-                          Ver
-                        </Link>
+                        <div className="table-actions">
+                          <Link
+                            href={`/gastos-y-comisiones/rendiciones/${item.id}`}
+                            className="btn btn-secondary btn-sm"
+                          >
+                            Ver
+                          </Link>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-sm"
+                            disabled={deletingId === item.id}
+                            onClick={() => void handleDelete(item)}
+                          >
+                            {deletingId === item.id ? 'Eliminando…' : 'Eliminar'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

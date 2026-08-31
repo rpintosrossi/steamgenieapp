@@ -9,6 +9,7 @@ import {
   IsEnum,
   Min,
   ValidateIf,
+  IsUUID,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { BuildingMode, PhotoEvidenceMode } from '@prisma/client';
@@ -73,4 +74,8 @@ export class UpdateBuildingDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
 }

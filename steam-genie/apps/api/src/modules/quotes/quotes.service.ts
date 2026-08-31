@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { BuildingMode, Prisma, QuoteStatus, WorkOrderStatus } from '@prisma/client';
 import {
@@ -32,6 +33,12 @@ import {
   loadBuildingAccessScope,
   mergeBuildingIdConstraint,
 } from '../../common/building-access';
+import {
+  isBranchAccessible,
+  listAccessibleBranchIds,
+  loadBranchAccessScope,
+  mergeBranchIdConstraint,
+} from '../../common/branch-access';
 
 const QUOTE_INCLUDE = {
   items: { orderBy: { sortOrder: 'asc' as const } },
@@ -242,8 +249,14 @@ export class QuotesService {
     }
 
     if (user) {
-      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      const [scope, branchIds] = await Promise.all([
+        loadBuildingAccessScope(this.prisma, user.id),
+        listAccessibleBranchIds(this.prisma, user.id),
+      ]);
       if (!mergeBuildingIdConstraint(where, scope, { allowNull: true })) {
+        return { data: [], total: 0, page, limit, pages: 0 };
+      }
+      if (!mergeBranchIdConstraint(where, branchIds, branchId)) {
         return { data: [], total: 0, page, limit, pages: 0 };
       }
     }
@@ -307,8 +320,14 @@ export class QuotesService {
     }
 
     if (user) {
-      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      const [scope, branchIds] = await Promise.all([
+        loadBuildingAccessScope(this.prisma, user.id),
+        listAccessibleBranchIds(this.prisma, user.id),
+      ]);
       if (!mergeBuildingIdConstraint(where, scope, { allowNull: true })) {
+        return emptyPaymentsDashboard();
+      }
+      if (!mergeBranchIdConstraint(where, branchIds, branchId)) {
         return emptyPaymentsDashboard();
       }
     }
@@ -386,8 +405,14 @@ export class QuotesService {
 
   async findOne(id: string, user?: AuthUser) {
     const quote = await this.assertExists(id);
-    if (user && quote.buildingId) {
-      await assertBuildingAccess(this.prisma, user.id, quote.buildingId);
+    if (user) {
+      if (quote.buildingId) {
+        await assertBuildingAccess(this.prisma, user.id, quote.buildingId);
+      }
+      const branchScope = await loadBranchAccessScope(this.prisma, user.id);
+      if (!isBranchAccessible(branchScope, quote.branchId)) {
+        throw new ForbiddenException('No tenés acceso a esta sucursal.');
+      }
     }
     return this.formatQuote(quote);
   }
@@ -896,6 +921,7 @@ export class QuotesService {
         name: eventual.name,
         taxId: eventual.taxId,
         address,
+        branchId: quote.branchId,
       });
     } else {
       const matches = address ? await this.findParticularClientsByAddress(address) : [];
@@ -921,6 +947,10 @@ export class QuotesService {
           if (quote.branchId && chosen.id) {
             await this.prisma.particularClient.update({
               where: { id: chosen.id },
+              data: { branchId: quote.branchId },
+            });
+            await this.prisma.building.update({
+              where: { id: chosen.buildingId },
               data: { branchId: quote.branchId },
             });
           }
@@ -1077,6 +1107,7 @@ export class QuotesService {
     name: string;
     taxId?: string | null;
     address: string | null;
+    branchId: string;
   }) {
     const { randomUUID } = await import('crypto');
     const name = input.name.trim();
@@ -1092,6 +1123,7 @@ export class QuotesService {
           requireGpsValidation: false,
           buildingMode: BuildingMode.SIMPLE,
           isActive: true,
+          branchId: input.branchId,
         },
       });
 
@@ -1138,6 +1170,7 @@ export class QuotesService {
           requireGpsValidation: false,
           buildingMode: BuildingMode.SIMPLE,
           isActive: true,
+          branchId: input.branchId,
         },
       });
 

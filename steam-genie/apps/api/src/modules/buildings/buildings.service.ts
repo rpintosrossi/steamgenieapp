@@ -18,6 +18,7 @@ import {
   assertBuildingAccess,
   loadBuildingAccessScope,
 } from '../../common/building-access';
+import { resolveQuoteBranch } from '../quotes/quote-branches.service';
 
 const ACTIVE_ASSIGNMENT_STATUSES = ['PENDING', 'ACCEPTED'] as const;
 const ACTIVE_WORK_ORDER_STATUSES = ['ASSIGNED', 'ACCEPTED', 'IN_PROGRESS'] as const;
@@ -346,6 +347,7 @@ export class BuildingsService {
   }
 
   async create(dto: CreateBuildingDto) {
+    const branch = await resolveQuoteBranch(this.prisma, dto.branchId);
     return this.prisma.building.create({
       data: {
         name: dto.name,
@@ -356,6 +358,7 @@ export class BuildingsService {
         latitude: dto.latitude,
         longitude: dto.longitude,
         gpsRadiusM: dto.gpsRadiusM,
+        branchId: branch.id,
         ...(dto.requireGpsValidation !== undefined
           ? { requireGpsValidation: dto.requireGpsValidation }
           : {}),
@@ -369,6 +372,10 @@ export class BuildingsService {
 
   async update(id: string, dto: UpdateBuildingDto) {
     await this.assertBuildingExists(id);
+    const nextBranchId =
+      dto.branchId !== undefined
+        ? (await resolveQuoteBranch(this.prisma, dto.branchId)).id
+        : undefined;
     const building = await this.prisma.building.update({
       where: { id },
       data: {
@@ -388,6 +395,7 @@ export class BuildingsService {
           ? { photoEvidenceMode: dto.photoEvidenceMode }
           : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+        ...(nextBranchId ? { branchId: nextBranchId } : {}),
       },
     });
 
@@ -395,7 +403,8 @@ export class BuildingsService {
       dto.name !== undefined ||
       dto.taxId !== undefined ||
       dto.address !== undefined ||
-      dto.isActive !== undefined
+      dto.isActive !== undefined ||
+      nextBranchId
     ) {
       await this.prisma.particularClient.updateMany({
         where: { buildingId: id, deletedAt: null },
@@ -404,6 +413,7 @@ export class BuildingsService {
           ...(dto.taxId !== undefined ? { taxId: dto.taxId?.trim() || null } : {}),
           ...(dto.address !== undefined ? { address: dto.address } : {}),
           ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+          ...(nextBranchId ? { branchId: nextBranchId } : {}),
         },
       });
     }
@@ -596,8 +606,11 @@ export class BuildingsService {
           await tx.taskExecutionRecord.deleteMany({ where: { id: { in: taskExecIds } } });
         }
 
-        // 2) Ejecuciones de servicio
+        // 2) Ejecuciones de servicio (fotos primero: no tienen onDelete Cascade)
         if (seIds.length) {
+          await tx.serviceExecutionPhoto.deleteMany({
+            where: { serviceExecutionId: { in: seIds } },
+          });
           await tx.serviceExecutionParticipant.deleteMany({
             where: { serviceExecutionId: { in: seIds } },
           });
@@ -713,9 +726,23 @@ export class BuildingsService {
           await tx.fixedExpense.deleteMany({ where: { id: { in: fixedExpenseIds } } });
         }
         await tx.userBuildingRole.deleteMany({ where: { buildingId: id } });
+        await tx.userExcludedBuilding.deleteMany({ where: { buildingId: id } });
         if (attendanceIds.length) {
           await tx.attendance.deleteMany({ where: { id: { in: attendanceIds } } });
         }
+
+        await tx.quote.updateMany({
+          where: { buildingId: id },
+          data: { buildingId: null },
+        });
+        await tx.stockWarehouse.updateMany({
+          where: { buildingId: id, deletedAt: null },
+          data: { buildingId: null },
+        });
+        await tx.particularClient.updateMany({
+          where: { buildingId: id, deletedAt: null },
+          data: { deletedAt: now, isActive: false },
+        });
 
         // 8) Jerarquía + edificio (soft delete)
         await tx.subzone.updateMany({

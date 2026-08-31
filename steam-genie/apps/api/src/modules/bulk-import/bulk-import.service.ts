@@ -11,6 +11,7 @@ import {
   parseImportWorkbook,
   parseStartDate,
 } from './bulk-import.excel';
+import { resolveQuoteBranch } from '../quotes/quote-branches.service';
 import type {
   BulkImportResult,
   BulkImportRowInterpretation,
@@ -670,6 +671,7 @@ export class BulkImportService {
           }
         }
 
+        const branch = await resolveQuoteBranch(this.prisma);
         const created = await this.prisma.building.create({
           data: {
             name: row.name,
@@ -683,6 +685,7 @@ export class BulkImportService {
                 ? Math.round(row.gpsRadiusM)
                 : 200,
             requireGpsValidation: options.requireGpsValidation,
+            branchId: branch.id,
           },
         });
 

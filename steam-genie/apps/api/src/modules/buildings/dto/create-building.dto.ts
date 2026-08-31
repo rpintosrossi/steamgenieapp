@@ -8,6 +8,7 @@ import {
   IsBoolean,
   IsEnum,
   Min,
+  IsUUID,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { BuildingMode, PhotoEvidenceMode } from '@prisma/client';
@@ -68,4 +69,8 @@ export class CreateBuildingDto {
   @IsOptional()
   @IsEnum(PhotoEvidenceMode)
   photoEvidenceMode?: PhotoEvidenceMode;
+
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
 }

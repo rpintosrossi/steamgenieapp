@@ -12,6 +12,7 @@ import {
   loadBuildingAccessScope,
   mergeBuildingIdConstraint,
 } from '../../common/building-access';
+import { listAccessibleBranchIds, mergeBranchIdConstraint } from '../../common/branch-access';
 
 const BUILDING_SELECT = {
   id: true,
@@ -79,8 +80,14 @@ export class ParticularClientsService {
     }
 
     if (user) {
-      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      const [scope, branchIds] = await Promise.all([
+        loadBuildingAccessScope(this.prisma, user.id),
+        listAccessibleBranchIds(this.prisma, user.id),
+      ]);
       if (!mergeBuildingIdConstraint(where, scope)) {
+        return [];
+      }
+      if (!mergeBranchIdConstraint(where, branchIds)) {
         return [];
       }
     }
@@ -121,6 +128,7 @@ export class ParticularClientsService {
           gpsRadiusM: dto.gpsRadiusM,
           requireGpsValidation,
           isActive: true,
+          branchId: (await resolveQuoteBranch(tx, dto.branchId)).id,
         },
       });
 
@@ -183,6 +191,12 @@ export class ParticularClientsService {
       const address =
         dto.address !== undefined ? emptyToNull(dto.address) : undefined;
 
+      let nextBranchId: string | undefined;
+      if (dto.branchId && dto.branchId !== existing.branchId) {
+        const branch = await resolveQuoteBranch(tx, dto.branchId);
+        nextBranchId = branch.id;
+      }
+
       await tx.building.update({
         where: { id: existing.buildingId },
         data: {
@@ -197,14 +211,9 @@ export class ParticularClientsService {
             ? { requireGpsValidation: dto.requireGpsValidation }
             : {}),
           ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+          ...(nextBranchId ? { branchId: nextBranchId } : {}),
         },
       });
-
-      let nextBranchId: string | undefined;
-      if (dto.branchId && dto.branchId !== existing.branchId) {
-        const branch = await resolveQuoteBranch(tx, dto.branchId);
-        nextBranchId = branch.id;
-      }
 
       return tx.particularClient.update({
         where: { id },

@@ -13,6 +13,7 @@ import {
   filterRequestedBuildingIds,
   loadBuildingAccessScope,
 } from '../../common/building-access';
+import { isBranchAccessible, loadBranchAccessScope } from '../../common/branch-access';
 
 const LOCATION_SELECT = {
   building: { select: { id: true, name: true } },
@@ -46,6 +47,13 @@ export class EventualCalendarService {
     if (user && buildingIds.length) {
       const scope = await loadBuildingAccessScope(this.prisma, user.id);
       allowedBuildingIds = filterRequestedBuildingIds(scope, buildingIds);
+    }
+
+    if (user && branchId) {
+      const branchScope = await loadBranchAccessScope(this.prisma, user.id);
+      if (!isBranchAccessible(branchScope, branchId)) {
+        allowedBuildingIds = [];
+      }
     }
 
     if (!allowedBuildingIds.length) {

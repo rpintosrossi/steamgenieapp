@@ -1,5 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import type { PrismaService } from '../infrastructure/prisma/prisma.service';
+import { loadBranchAccessScope } from './branch-access';
 
 export type BuildingAccessScope = {
   /** Rol global (buildingId = null): ve todos salvo exclusiones. */
@@ -18,7 +19,7 @@ export async function loadBuildingAccessScope(
   prisma: PrismaService,
   userId: string,
 ): Promise<BuildingAccessScope> {
-  const [assignments, exclusions] = await Promise.all([
+  const [assignments, exclusions, branchScope] = await Promise.all([
     prisma.userBuildingRole.findMany({
       where: { userId },
       select: { buildingId: true },
@@ -27,6 +28,7 @@ export async function loadBuildingAccessScope(
       where: { userId },
       select: { buildingId: true },
     }),
+    loadBranchAccessScope(prisma, userId),
   ]);
 
   const hasGlobalAccess = assignments.some((row) => row.buildingId === null);
@@ -38,6 +40,16 @@ export async function loadBuildingAccessScope(
     ),
   ];
   const excludedIds = [...new Set(exclusions.map((row) => row.buildingId))];
+
+  if (branchScope.excludedIds.length > 0) {
+    const hiddenByBranch = await prisma.building.findMany({
+      where: { deletedAt: null, branchId: { in: branchScope.excludedIds } },
+      select: { id: true },
+    });
+    for (const row of hiddenByBranch) {
+      if (!excludedIds.includes(row.id)) excludedIds.push(row.id);
+    }
+  }
 
   return { hasGlobalAccess, scopedIds, excludedIds };
 }

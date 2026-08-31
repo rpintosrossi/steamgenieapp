@@ -214,6 +214,7 @@ model User {
   buildingRoles     UserBuildingRole[] @relation("UserBuildingRoles")
   grantedRoles      UserBuildingRole[] @relation("GrantedByUser")
   excludedBuildings UserExcludedBuilding[]
+  excludedBranches  UserExcludedBranch[]
   devices           UserDevice[]
   attendances       Attendance[]
   assignments       WorkOrderAssignment[]
@@ -304,6 +305,21 @@ model UserExcludedBuilding {
   @@map("user_excluded_buildings")
 }
 
+/// Sucursales (QuoteBranch) que el usuario no debe ver. Por defecto ve todas.
+model UserExcludedBranch {
+  id        String      @id @default(uuid()) @db.Uuid
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String      @db.Uuid
+  branch    QuoteBranch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  branchId  String      @db.Uuid
+  createdAt DateTime    @default(now())
+
+  @@unique([userId, branchId])
+  @@index([userId])
+  @@index([branchId])
+  @@map("user_excluded_branches")
+}
+
 model UserDevice {
   id          String   @id @default(uuid()) @db.Uuid
   user        User     @relation(fields: [userId], references: [id])
@@ -345,6 +361,10 @@ model Building {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  /// Sucursal operativa. Segmenta quién ve este edificio.
+  branch   QuoteBranch @relation(fields: [branchId], references: [id])
+  branchId String      @db.Uuid
+
   floors            Floor[]
   zones             Zone[]
   subzones          Subzone[]
@@ -365,6 +385,7 @@ model Building {
   particularClient  ParticularClient?
 
   @@index([deletedAt])
+  @@index([branchId])
   @@map("buildings")
 }
 
@@ -437,6 +458,8 @@ model QuoteBranch {
 
   quotes            Quote[]
   particularClients ParticularClient[]
+  buildings         Building[]
+  excludedForUsers  UserExcludedBranch[]
 
   @@index([deletedAt, sortOrder])
   @@map("quote_branches")

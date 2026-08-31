@@ -28,6 +28,7 @@ export interface Building {
   photoEvidenceMode?: PhotoEvidenceMode;
   isActive?: boolean;
   createdAt?: string;
+  branchId?: string;
 }
 
 export interface Floor {

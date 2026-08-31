@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import type { AuthUser } from '@steam-genie/shared-types';
+import { listAccessibleBranchIds } from '../../common/branch-access';
 import {
   CreateQuoteBranchDto,
   QueryQuoteBranchesDto,
@@ -15,12 +17,20 @@ import {
 export class QuoteBranchesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll(query: QueryQuoteBranchesDto) {
+  async findAll(query: QueryQuoteBranchesDto, user?: AuthUser) {
+    const where: Prisma.QuoteBranchWhereInput = {
+      deletedAt: null,
+      ...(query.includeInactive ? {} : { isActive: true }),
+    };
+    if (user) {
+      const branchIds = await listAccessibleBranchIds(this.prisma, user.id);
+      if (branchIds !== null) {
+        if (branchIds.length === 0) return [];
+        where.id = { in: branchIds };
+      }
+    }
     return this.prisma.quoteBranch.findMany({
-      where: {
-        deletedAt: null,
-        ...(query.includeInactive ? {} : { isActive: true }),
-      },
+      where,
       orderBy: [{ isDefault: 'desc' }, { sortOrder: 'asc' }, { name: 'asc' }],
       include: { _count: { select: { quotes: true } } },
     });

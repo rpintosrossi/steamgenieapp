@@ -1,8 +1,8 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { api } from '../lib/api-client';
-import type { Building } from '../lib/types';
+import type { Building, QuoteBranchItem } from '../lib/types';
 import {
   BuildingLocationFields,
   type BuildingLocationFieldsValue,
@@ -34,6 +34,26 @@ export function CreateBuildingModal({ onClose, onCreated }: CreateBuildingModalP
   });
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [branches, setBranches] = useState<QuoteBranchItem[]>([]);
+  const [branchId, setBranchId] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .get<QuoteBranchItem[]>('/quote-branches?includeInactive=false')
+      .then((data) => {
+        if (cancelled) return;
+        setBranches(data);
+        const preferred = data.find((row) => row.isDefault) ?? data[0];
+        if (preferred) setBranchId(preferred.id);
+      })
+      .catch(() => {
+        if (!cancelled) setError('No se pudieron cargar las sucursales');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -51,6 +71,12 @@ export function CreateBuildingModal({ onClose, onCreated }: CreateBuildingModalP
         return;
       }
 
+      if (!branchId) {
+        setError('Seleccioná la sucursal del edificio.');
+        setCreating(false);
+        return;
+      }
+
       const building = await api.post<Building>('/buildings', {
         name: name.trim(),
         ...(taxId.trim() ? { taxId: taxId.trim() } : {}),
@@ -61,6 +87,7 @@ export function CreateBuildingModal({ onClose, onCreated }: CreateBuildingModalP
         latitude: lat,
         longitude: lng,
         gpsRadiusM: radius,
+        branchId,
       });
       onCreated(building);
     } catch (err) {
@@ -100,6 +127,21 @@ export function CreateBuildingModal({ onClose, onCreated }: CreateBuildingModalP
           </div>
 
           <div className="form-field">
+            <label>Sucursal *</label>
+            <select value={branchId} onChange={(e) => setBranchId(e.target.value)} required>
+              <option value="" disabled>
+                Seleccioná una sucursal
+              </option>
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}
+                  {branch.isDefault ? ' (predeterminada)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="form-field">
             <label>CUIT</label>
             <input
               value={taxId}
@@ -118,7 +160,7 @@ export function CreateBuildingModal({ onClose, onCreated }: CreateBuildingModalP
             <button type="button" className="btn btn-secondary" onClick={onClose}>
               Cancelar
             </button>
-            <button type="submit" className="btn btn-primary" disabled={creating || !name.trim()}>
+            <button type="submit" className="btn btn-primary" disabled={creating || !name.trim() || !branchId}>
               {creating ? 'Creando…' : 'Crear edificio'}
             </button>
           </div>

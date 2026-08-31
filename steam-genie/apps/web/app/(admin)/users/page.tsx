@@ -9,9 +9,10 @@ import {
 import { api } from '../../../lib/api-client';
 import { fetchBuildingsList, invalidateBuildingsListCache } from '../../../lib/buildings-cache';
 import { AssignBuildingsModal } from '../../../components/AssignBuildingsModal';
+import { AssignBranchesModal } from '../../../components/AssignBranchesModal';
 import { CreateUserModal } from '../../../components/CreateUserModal';
 import { ROLE_LABELS } from '../../../lib/labels';
-import type { Paginated, RoleItem, UserBuildingRoleItem, UserItem } from '../../../lib/types';
+import type { Paginated, QuoteBranchItem, RoleItem, UserBuildingRoleItem, UserItem } from '../../../lib/types';
 
 interface EditFormState {
   dni: string;
@@ -20,11 +21,16 @@ interface EditFormState {
   isActive: boolean;
 }
 
-interface AssignModalState {
+interface AssignBuildingsModalState {
   user: UserItem;
   buildings: Array<{ id: string; name: string }>;
   buildingRoles: UserBuildingRoleItem[];
-  excludedBuildingIds: string[];
+}
+
+interface AssignBranchesModalState {
+  user: UserItem;
+  branches: QuoteBranchItem[];
+  excludedBranchIds: string[];
 }
 
 const EMPTY_EDIT: EditFormState = {
@@ -53,7 +59,12 @@ export default function UsersPage() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [loadingAssign, setLoadingAssign] = useState(false);
   const [editingUser, setEditingUser] = useState<UserItem | null>(null);
-  const [assignModal, setAssignModal] = useState<AssignModalState | null>(null);
+  const [assignBuildingsModal, setAssignBuildingsModal] = useState<AssignBuildingsModalState | null>(
+    null,
+  );
+  const [assignBranchesModal, setAssignBranchesModal] = useState<AssignBranchesModalState | null>(
+    null,
+  );
   const [createOpen, setCreateOpen] = useState(false);
   const [editForm, setEditForm] = useState<EditFormState>(EMPTY_EDIT);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -96,22 +107,49 @@ export default function UsersPage() {
     });
   }
 
-  async function openAssign(user: UserItem) {
+  async function openAssignBranches(user: UserItem) {
+    setLoadingAssign(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const [branches, excluded] = await Promise.all([
+        api.get<QuoteBranchItem[]>('/quote-branches?includeInactive=true'),
+        api.get<{ branchIds: string[] }>(`/users/${user.id}/excluded-branches`),
+      ]);
+      setAssignBranchesModal({
+        user,
+        branches,
+        excludedBranchIds: excluded.branchIds ?? [],
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudieron cargar las sucursales');
+    } finally {
+      setLoadingAssign(false);
+    }
+  }
+
+  async function openAssignBuildings(user: UserItem) {
     setLoadingAssign(true);
     setError(null);
     setSuccess(null);
     try {
       invalidateBuildingsListCache();
-      const [buildingRoles, buildings, excluded] = await Promise.all([
+      const [buildingRoles, buildings, excludedBranches] = await Promise.all([
         api.get<UserBuildingRoleItem[]>(`/users/${user.id}/building-roles`),
         fetchBuildingsList(),
-        api.get<{ buildingIds: string[] }>(`/users/${user.id}/excluded-buildings`),
+        api.get<{ branchIds: string[] }>(`/users/${user.id}/excluded-branches`),
       ]);
-      setAssignModal({
+      const excludedBranchIds = new Set(excludedBranches.branchIds ?? []);
+      const visibleBuildings =
+        excludedBranchIds.size === 0
+          ? buildings
+          : buildings.filter(
+              (building) => !building.branchId || !excludedBranchIds.has(building.branchId),
+            );
+      setAssignBuildingsModal({
         user,
-        buildings,
+        buildings: visibleBuildings,
         buildingRoles,
-        excludedBuildingIds: excluded.buildingIds ?? [],
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudieron cargar las asignaciones');
@@ -125,8 +163,12 @@ export default function UsersPage() {
     setEditForm(EMPTY_EDIT);
   }
 
-  function closeAssign() {
-    setAssignModal(null);
+  function closeAssignBuildings() {
+    setAssignBuildingsModal(null);
+  }
+
+  function closeAssignBranches() {
+    setAssignBranchesModal(null);
   }
 
   async function handleSaveEdit(e: FormEvent) {
@@ -167,8 +209,13 @@ export default function UsersPage() {
     void load();
   }
 
-  function handleAssignmentsSaved() {
+  function handleBuildingsSaved() {
     invalidateBuildingsListCache();
+    setSuccess('Edificios actualizados. Solo se asignaron edificios de sucursales permitidas.');
+    void load();
+  }
+
+  function handleBranchesSaved() {
     setSuccess('Sucursales actualizadas. El usuario verá todas salvo las excluidas.');
     void load();
   }
@@ -228,7 +275,7 @@ export default function UsersPage() {
             ← Configuración
           </Link>
           <h1 className="page-title">Usuarios</h1>
-          <p className="page-subtitle">Gestioná altas, roles y asignación por edificio.</p>
+          <p className="page-subtitle">Gestioná altas, sucursales y asignación por edificio.</p>
         </div>
         <button type="button" className="btn btn-primary" onClick={() => setCreateOpen(true)}>
           Crear usuario
@@ -282,10 +329,18 @@ export default function UsersPage() {
                         <button
                           type="button"
                           className="btn btn-secondary btn-sm"
-                          onClick={() => void openAssign(user)}
+                          onClick={() => void openAssignBranches(user)}
                           disabled={loadingAssign}
                         >
                           Gestionar sucursales
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => void openAssignBuildings(user)}
+                          disabled={loadingAssign}
+                        >
+                          Gestionar edificios
                         </button>
                         {user.isActive ? (
                           <button
@@ -339,16 +394,29 @@ export default function UsersPage() {
         />
       ) : null}
 
-      {assignModal ? (
+      {assignBranchesModal ? (
+        <AssignBranchesModal
+          userId={assignBranchesModal.user.id}
+          userFullName={assignBranchesModal.user.fullName}
+          userDni={assignBranchesModal.user.dni}
+          branches={assignBranchesModal.branches}
+          excludedBranchIds={assignBranchesModal.excludedBranchIds}
+          onClose={closeAssignBranches}
+          onSaved={handleBranchesSaved}
+        />
+      ) : null}
+
+      {assignBuildingsModal ? (
         <AssignBuildingsModal
-          userId={assignModal.user.id}
-          userFullName={assignModal.user.fullName}
-          userDni={assignModal.user.dni}
-          buildings={assignModal.buildings}
-          buildingRoles={assignModal.buildingRoles}
-          excludedBuildingIds={assignModal.excludedBuildingIds}
-          onClose={closeAssign}
-          onSaved={handleAssignmentsSaved}
+          userId={assignBuildingsModal.user.id}
+          userFullName={assignBuildingsModal.user.fullName}
+          userDni={assignBuildingsModal.user.dni}
+          primaryRole={assignBuildingsModal.user.primaryRole}
+          roles={roles}
+          buildings={assignBuildingsModal.buildings}
+          buildingRoles={assignBuildingsModal.buildingRoles}
+          onClose={closeAssignBuildings}
+          onSaved={handleBuildingsSaved}
         />
       ) : null}
 
@@ -402,9 +470,9 @@ export default function UsersPage() {
               </label>
 
               <p className="muted">
-                Para asignar edificios usá el botón &quot;Gestionar Edificios&quot; en el listado. Si
-                cambiás la fecha de nacimiento, la contraseña pasa a ser esa fecha (DDMMYYYY). Sin
-                fecha, es 01012000.
+                Para asignar sucursales o edificios usá los botones del listado. Si cambiás la fecha
+                de nacimiento, la contraseña pasa a ser esa fecha (DDMMYYYY). Sin fecha, es
+                01012000.
               </p>
 
               <div className="form-actions">
