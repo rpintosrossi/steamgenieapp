@@ -137,7 +137,13 @@ export default function UsersPage() {
         isActive: editForm.isActive,
       });
 
-      setSuccess('Usuario actualizado.');
+      const birthChanged =
+        calendarDateKeyFromStored(editingUser.birthDate) !== (editForm.birthDate || '');
+      setSuccess(
+        birthChanged
+          ? 'Usuario actualizado. La contraseña ahora es la fecha de nacimiento (DDMMYYYY).'
+          : 'Usuario actualizado.',
+      );
       closeEdit();
       await load();
     } catch (err) {
@@ -389,8 +395,9 @@ export default function UsersPage() {
               </label>
 
               <p className="muted">
-                Para asignar edificios usá el botón &quot;Gestionar Edificios&quot; en el listado. La
-                contraseña no se modifica automáticamente al editar la fecha de nacimiento.
+                Para asignar edificios usá el botón &quot;Gestionar Edificios&quot; en el listado. Si
+                cambiás la fecha de nacimiento, la contraseña pasa a ser esa fecha (DDMMYYYY). Sin
+                fecha, es 01012000.
               </p>
 
               <div className="form-actions">

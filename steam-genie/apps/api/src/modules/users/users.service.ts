@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import {
+  calendarDateKeyFromStored,
   calendarDatePasswordDdMmYyyy,
   parseCalendarDateInput,
 } from '@steam-genie/shared-constants';
@@ -150,18 +151,8 @@ export class UsersService {
     const existing = await this.prisma.user.findUnique({ where: { dni: dto.dni } });
     if (existing) throw new ConflictException('DNI already registered');
 
-    // Default password = birthDate as DDMMYYYY, or '01012000' if no birthDate
-    let rawPassword: string;
-    let birthDateObj: Date | undefined;
-
-    if (dto.birthDate) {
-      birthDateObj = parseCalendarDateInput(dto.birthDate);
-      rawPassword = calendarDatePasswordDdMmYyyy(birthDateObj);
-    } else {
-      rawPassword = '01012000';
-    }
-
-    const passwordHash = await bcrypt.hash(rawPassword, 12);
+    const birthDateObj = dto.birthDate ? parseCalendarDateInput(dto.birthDate) : undefined;
+    const passwordHash = await bcrypt.hash(this.initialPasswordFromBirthDate(birthDateObj), 12);
 
     // Determine primaryRole from initial roles (highest hierarchy)
     let primaryRole = 'cleaner';
@@ -206,7 +197,7 @@ export class UsersService {
   }
 
   async update(id: string, dto: UpdateUserDto) {
-    await this.assertExists(id);
+    const existing = await this.assertExists(id);
 
     if (dto.dni) {
       const duplicate = await this.prisma.user.findFirst({
@@ -215,16 +206,28 @@ export class UsersService {
       if (duplicate) throw new ConflictException('DNI already registered');
     }
 
+    const nextBirthDate =
+      dto.birthDate === undefined
+        ? undefined
+        : dto.birthDate
+          ? parseCalendarDateInput(dto.birthDate)
+          : null;
+
+    const birthDateChanged =
+      nextBirthDate !== undefined &&
+      calendarDateKeyFromStored(existing.birthDate) !== calendarDateKeyFromStored(nextBirthDate);
+
+    const passwordHash = birthDateChanged
+      ? await bcrypt.hash(this.initialPasswordFromBirthDate(nextBirthDate), 12)
+      : undefined;
+
     return this.prisma.user.update({
       where: { id },
       data: {
         ...(dto.dni !== undefined ? { dni: dto.dni } : {}),
         ...(dto.fullName !== undefined ? { fullName: dto.fullName } : {}),
-        ...(dto.birthDate !== undefined
-          ? {
-              birthDate: dto.birthDate ? parseCalendarDateInput(dto.birthDate) : null,
-            }
-          : {}),
+        ...(nextBirthDate !== undefined ? { birthDate: nextBirthDate } : {}),
+        ...(passwordHash !== undefined ? { passwordHash } : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       },
       select: USER_SELECT,
@@ -735,6 +738,10 @@ export class UsersService {
         return tx.user.update({ where: { id: userId }, data: { primaryRole } });
       }),
     );
+  }
+
+  private initialPasswordFromBirthDate(birthDate: Date | null | undefined): string {
+    return birthDate ? calendarDatePasswordDdMmYyyy(birthDate) : '01012000';
   }
 
   private async assertExists(id: string) {

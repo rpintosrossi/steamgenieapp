@@ -117,7 +117,7 @@ El menú lateral solo muestra lo que el usuario tiene habilitado. Eso se define 
 
 **Notas útiles**
 - La contraseña inicial de un usuario nuevo suele ser la **fecha de nacimiento en formato DDMMYYYY**. Si no hay fecha, puede ser `01012000`.
-- Cambiar la fecha de nacimiento después **no** cambia sola la contraseña.
+- Cambiar la fecha de nacimiento **actualiza** la contraseña a esa fecha (DDMMYYYY). Si se quita la fecha, la contraseña pasa a `01012000`.
 - Si ves un error de acceso denegado, ese usuario no tiene módulos web habilitados (típico de limpiadores).
 
 ### 5.2 Cerrar sesión
