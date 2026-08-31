@@ -3,22 +3,37 @@ import { computeStockStatus } from '@steam-genie/shared-constants';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { QueryStockMonitoringDto } from './dto/query-stock-monitoring.dto';
 import { syncBuildingProductsFromShipments, toNumber } from './stock-logistics.helpers';
+import type { AuthUser } from '@steam-genie/shared-types';
+import { Prisma } from '@prisma/client';
+import {
+  applyBuildingRecordConstraint,
+  loadBuildingAccessScope,
+} from '../../common/building-access';
 
 @Injectable()
 export class StockMonitoringService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getMatrix(query: QueryStockMonitoringDto) {
+  async getMatrix(query: QueryStockMonitoringDto, user?: AuthUser) {
     if (query.buildingId) {
       await syncBuildingProductsFromShipments(this.prisma, query.buildingId);
     }
 
+    const where: Prisma.BuildingWhereInput = {
+      deletedAt: null,
+      isActive: true,
+      ...(query.buildingId ? { id: query.buildingId } : {}),
+    };
+
+    if (user) {
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      if (applyBuildingRecordConstraint(where, scope) === 'empty') {
+        where.id = { in: [] };
+      }
+    }
+
     const buildings = await this.prisma.building.findMany({
-      where: {
-        deletedAt: null,
-        isActive: true,
-        ...(query.buildingId ? { id: query.buildingId } : {}),
-      },
+      where,
       select: { id: true, name: true },
       orderBy: { name: 'asc' },
     });

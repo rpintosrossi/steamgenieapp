@@ -8,6 +8,11 @@ import {
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { QueryEventualCalendarDto } from './dto/query-eventual-calendar.dto';
 import { workOrderBranchWhere } from '../work-orders/work-order-branch.filter';
+import type { AuthUser } from '@steam-genie/shared-types';
+import {
+  filterRequestedBuildingIds,
+  loadBuildingAccessScope,
+} from '../../common/building-access';
 
 const LOCATION_SELECT = {
   building: { select: { id: true, name: true } },
@@ -22,7 +27,7 @@ const ACTIVE_ASSIGNMENT_STATUSES = ['PENDING', 'ACCEPTED'] as const;
 export class EventualCalendarService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getEvents(query: QueryEventualCalendarDto) {
+  async getEvents(query: QueryEventualCalendarDto, user?: AuthUser) {
     const {
       from,
       to,
@@ -36,8 +41,14 @@ export class EventualCalendarService {
 
     const buildingIds = query.buildingIds ?? [];
     const branchId = query.branchId;
+    let allowedBuildingIds = buildingIds;
 
-    if (!buildingIds.length) {
+    if (user && buildingIds.length) {
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      allowedBuildingIds = filterRequestedBuildingIds(scope, buildingIds);
+    }
+
+    if (!allowedBuildingIds.length) {
       return {
         reservations: [],
         services: [],
@@ -49,7 +60,7 @@ export class EventualCalendarService {
     }
 
     const buildingFilter =
-      buildingIds.length === 1 ? buildingIds[0]! : { in: buildingIds };
+      allowedBuildingIds.length === 1 ? allowedBuildingIds[0]! : { in: allowedBuildingIds };
 
     const fromDate = parseCalendarDateInput(from);
     const toDate = parseCalendarDateInput(to);

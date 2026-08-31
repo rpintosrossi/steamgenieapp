@@ -13,6 +13,10 @@ import { StorageService } from '../../infrastructure/storage/storage.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateBuildingStockAlertDto } from './dto/create-building-stock-alert.dto';
 import { syncBuildingProductsFromShipments } from './stock-logistics.helpers';
+import {
+  loadBuildingAccessScope,
+  mergeBuildingIdConstraint,
+} from '../../common/building-access';
 
 const ALERT_SELECT = {
   id: true,
@@ -66,12 +70,20 @@ export class BuildingStockAlertsService {
     return rows.map((row) => this.formatAlert(row));
   }
 
-  async listOpenForMonitoring(buildingId?: string) {
+  async listOpenForMonitoring(buildingId?: string, user?: AuthUser) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const where: any = {
+      status: { in: ['OPEN', 'IN_TRANSIT'] },
+      ...(buildingId ? { buildingId } : {}),
+    };
+    if (user) {
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      if (!mergeBuildingIdConstraint(where, scope)) {
+        return [];
+      }
+    }
     const rows = await this.prisma.buildingStockAlert.findMany({
-      where: {
-        status: { in: ['OPEN', 'IN_TRANSIT'] },
-        ...(buildingId ? { buildingId } : {}),
-      },
+      where,
       select: {
         ...ALERT_SELECT,
         building: { select: { id: true, name: true } },

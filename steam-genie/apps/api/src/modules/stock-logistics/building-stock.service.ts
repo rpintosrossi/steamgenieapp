@@ -7,6 +7,8 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { UpsertBuildingStockDto } from './dto/upsert-building-stock.dto';
 import { syncBuildingProductsFromShipments, toNumber } from './stock-logistics.helpers';
 import { recordStockMovement } from './stock-movements.record';
+import type { AuthUser } from '@steam-genie/shared-types';
+import { assertBuildingAccess } from '../../common/building-access';
 
 const ITEM_SELECT = {
   id: true,
@@ -31,7 +33,10 @@ const ITEM_SELECT = {
 export class BuildingStockService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async listByBuilding(buildingId: string) {
+  async listByBuilding(buildingId: string, user?: AuthUser) {
+    if (user) {
+      await assertBuildingAccess(this.prisma, user.id, buildingId);
+    }
     await this.assertBuilding(buildingId);
     await syncBuildingProductsFromShipments(this.prisma, buildingId);
 
@@ -45,6 +50,7 @@ export class BuildingStockService {
   }
 
   async upsert(buildingId: string, dto: UpsertBuildingStockDto, performedById: string) {
+    await assertBuildingAccess(this.prisma, performedById, buildingId);
     await this.assertBuilding(buildingId);
 
     const product = await this.prisma.stockProduct.findFirst({

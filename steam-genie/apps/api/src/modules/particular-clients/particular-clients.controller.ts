@@ -17,6 +17,8 @@ import { ParticularClientsService } from './particular-clients.service';
 import { QueryParticularClientsDto } from './dto/query-particular-clients.dto';
 import { CreateParticularClientDto } from './dto/create-particular-client.dto';
 import { UpdateParticularClientDto } from './dto/update-particular-client.dto';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import type { AuthUser } from '@steam-genie/shared-types';
 
 @Controller('particular-clients')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -25,14 +27,14 @@ export class ParticularClientsController {
 
   @Get()
   @RequiredRoles('admin', 'manager')
-  findAll(@Query() query: QueryParticularClientsDto) {
-    return this.particularClientsService.findAll(query);
+  findAll(@Query() query: QueryParticularClientsDto, @CurrentUser() user: AuthUser) {
+    return this.particularClientsService.findAll(query, user);
   }
 
   @Get(':id')
   @RequiredRoles('admin', 'manager')
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.particularClientsService.findOne(id);
+  findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
+    return this.particularClientsService.findOne(id, user);
   }
 
   @Post()

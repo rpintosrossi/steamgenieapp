@@ -12,10 +12,12 @@ import type {
   PaymentMethodItem,
   Quote,
   QuoteBranchItem,
+  QuoteInternalPhoto,
   QuoteItemInput,
   QuotePaymentInput,
   UserItem,
 } from '../lib/types';
+import { QuoteInternalPhotos, uploadQuoteInternalPhoto } from './QuoteInternalPhotos';
 
 type ClientKind = 'particular' | 'building' | 'eventual';
 
@@ -139,6 +141,10 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
     initialQuote?.observations ?? 'ESTE PRESUPUESTO ES VALIDO POR UN MES',
   );
   const [internalNotes, setInternalNotes] = useState(initialQuote?.internalNotes ?? '');
+  const [internalPhotos, setInternalPhotos] = useState<QuoteInternalPhoto[]>(
+    initialQuote?.internalPhotos ?? [],
+  );
+  const [pendingInternalFiles, setPendingInternalFiles] = useState<File[]>([]);
   const [serviceIncludes, setServiceIncludes] = useState(
     initialQuote?.serviceIncludes?.trim()
       ? initialQuote.serviceIncludes
@@ -393,6 +399,19 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
           payments: paymentsPayload,
           items: payloadItems,
         });
+        const failedUploads: string[] = [];
+        for (const file of pendingInternalFiles) {
+          try {
+            await uploadQuoteInternalPhoto(quote.id, file);
+          } catch {
+            failedUploads.push(file.name);
+          }
+        }
+        if (failedUploads.length > 0) {
+          setError(
+            `Presupuesto creado, pero no se pudieron subir: ${failedUploads.join(', ')}. Podés agregarlas desde el detalle.`,
+          );
+        }
         router.push(`/presupuestos/${quote.id}`);
       }
     } catch (err) {
@@ -707,6 +726,17 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
               onChange={(e) => setInternalNotes(e.target.value)}
               placeholder="Solo visibles en el panel, no van al PDF ni al cliente"
             />
+            <div style={{ marginTop: 10 }}>
+              <QuoteInternalPhotos
+                quoteId={mode === 'edit' ? initialQuote?.id : null}
+                photos={internalPhotos}
+                onPhotosChange={setInternalPhotos}
+                pendingFiles={pendingInternalFiles}
+                onPendingFilesChange={setPendingInternalFiles}
+                disabled={saving}
+                onError={setError}
+              />
+            </div>
           </div>
           <div className="form-field">
             <label htmlFor="q-includes">El servicio incluye</label>

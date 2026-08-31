@@ -54,15 +54,18 @@ export class StockLogisticsController {
   @Get('monitoring')
   @RequiredRoles('admin', 'manager', 'stock')
   @RequiredModules(APP_MODULES.STOCK_MONITORING)
-  getMonitoring(@Query() query: QueryStockMonitoringDto) {
-    return this.monitoringService.getMatrix(query);
+  getMonitoring(@Query() query: QueryStockMonitoringDto, @CurrentUser() user: AuthUser) {
+    return this.monitoringService.getMatrix(query, user);
   }
 
   @Get('alerts')
   @RequiredRoles('admin', 'manager', 'stock')
   @RequiredModules(APP_MODULES.STOCK_MONITORING)
-  listAlerts(@Query('buildingId') buildingId?: string) {
-    return this.alertsService.listOpenForMonitoring(buildingId);
+  listAlerts(
+    @Query('buildingId') buildingId: string | undefined,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.alertsService.listOpenForMonitoring(buildingId, user);
   }
 
   @Post('alerts/:id/resolve')
@@ -84,8 +87,11 @@ export class StockLogisticsController {
   @Get('buildings/:buildingId/items')
   @RequiredRoles('admin', 'manager', 'stock')
   @RequiredModules(APP_MODULES.STOCK, APP_MODULES.STOCK_MONITORING)
-  listBuildingStock(@Param('buildingId', ParseUUIDPipe) buildingId: string) {
-    return this.buildingStockService.listByBuilding(buildingId);
+  listBuildingStock(
+    @Param('buildingId', ParseUUIDPipe) buildingId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.buildingStockService.listByBuilding(buildingId, user);
   }
 
   @Post('buildings/:buildingId/items')
@@ -102,8 +108,11 @@ export class StockLogisticsController {
   @Get('movements')
   @RequiredRoles('admin', 'manager', 'stock')
   @RequiredModules(APP_MODULES.STOCK, APP_MODULES.STOCK_MONITORING)
-  listMovements(@Query() query: QueryStockMovementsDto) {
-    return this.movementsService.list(query);
+  listMovements(
+    @Query() query: QueryStockMovementsDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.movementsService.list(query, user);
   }
 
   // ─── Órdenes de envío ──────────────────────────────────────────────────────
@@ -111,8 +120,8 @@ export class StockLogisticsController {
   @Get('shipments')
   @RequiredRoles('admin', 'manager', 'stock')
   @RequiredModules(APP_MODULES.STOCK_SHIPMENTS)
-  listShipments() {
-    return this.shipmentsService.findAll();
+  listShipments(@CurrentUser() user: AuthUser) {
+    return this.shipmentsService.findAll(user);
   }
 
   @Get('shipments/:id')

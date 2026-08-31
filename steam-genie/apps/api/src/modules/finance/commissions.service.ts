@@ -19,6 +19,11 @@ import {
   QuerySettlementsDto,
   UpdateCommissionSettlementDto,
 } from './dto/commissions.dto';
+import {
+  filterRequestedBuildingIds,
+  loadBuildingAccessScope,
+  mergeBuildingIdConstraint,
+} from '../../common/building-access';
 
 function daysBetweenInclusive(from: Date, to: Date): number {
   const ms = to.getTime() - from.getTime();
@@ -64,7 +69,7 @@ export class CommissionsService {
     return users;
   }
 
-  async listCandidateServices(query: QueryCommissionServicesDto) {
+  async listCandidateServices(query: QueryCommissionServicesDto, user?: AuthUser) {
     const dateFrom = parseCalendarDateInput(query.dateFrom);
     const dateTo = parseCalendarDateInput(query.dateTo);
     if (dateTo < dateFrom) {
@@ -97,6 +102,13 @@ export class CommissionsService {
       where.clientAmountCharged = { not: null };
     } else if (query.amountFilter === 'without_amount') {
       where.clientAmountCharged = null;
+    }
+
+    if (user) {
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      if (!mergeBuildingIdConstraint(where, scope)) {
+        return [];
+      }
     }
 
     const rows = await this.prisma.workOrder.findMany({
@@ -149,10 +161,20 @@ export class CommissionsService {
     });
   }
 
-  async previewFixedExpenses(dateFromStr: string, dateToStr: string, buildingIds?: string[]) {
+  async previewFixedExpenses(
+    dateFromStr: string,
+    dateToStr: string,
+    buildingIds?: string[],
+    user?: AuthUser,
+  ) {
+    let ids = buildingIds ?? [];
+    if (user && ids.length) {
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      ids = filterRequestedBuildingIds(scope, ids);
+    }
     const dateFrom = parseCalendarDateInput(dateFromStr);
     const dateTo = parseCalendarDateInput(dateToStr);
-    return this.computeProratedFixedExpenses(dateFrom, dateTo, buildingIds ?? []);
+    return this.computeProratedFixedExpenses(dateFrom, dateTo, ids);
   }
 
   private async computeProratedFixedExpenses(

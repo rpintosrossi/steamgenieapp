@@ -228,13 +228,14 @@ export class QuotePdfService {
       // ── Client card ───────────────────────────────────────────────────────
       const leftFacts: Array<[string, string]> = [];
       const rightFacts: Array<[string, string]> = [];
-      if (payload.clientTaxId) leftFacts.push(['CUIT', payload.clientTaxId]);
+      const clientTaxId = payload.clientTaxId?.trim() || '';
+      if (clientTaxId) leftFacts.push(['CUIT', clientTaxId]);
       if (payload.clientAddress) leftFacts.push(['Domicilio', payload.clientAddress]);
       if (payload.clientContact) leftFacts.push(['Contacto', payload.clientContact]);
-      if (payload.clientEmail) rightFacts.push(['Correo', payload.clientEmail]);
-      if (payload.clientPhone) rightFacts.push(['Tel', payload.clientPhone]);
-      if (payload.paymentCondition) rightFacts.push(['Condición', payload.paymentCondition]);
+      if (payload.clientEmail) leftFacts.push(['Correo', payload.clientEmail]);
+      if (payload.clientPhone) leftFacts.push(['Tel', payload.clientPhone]);
       if (payload.sellerName) rightFacts.push(['Vendedor', payload.sellerName]);
+      if (payload.paymentCondition) rightFacts.push(['Condición', payload.paymentCondition]);
 
       const factRows = Math.max(leftFacts.length, rightFacts.length, 1);
       const clientBoxH = density.clientPad + factRows * density.clientFactH;
@@ -494,15 +495,15 @@ export class QuotePdfService {
       }
 
       const leftFacts =
-        [payload.clientTaxId, payload.clientAddress, payload.clientContact].filter(Boolean)
-          .length || 1;
-      const rightFacts =
         [
+          payload.clientTaxId?.trim(),
+          payload.clientAddress,
+          payload.clientContact,
           payload.clientEmail,
           payload.clientPhone,
-          payload.paymentCondition,
-          payload.sellerName,
         ].filter(Boolean).length || 1;
+      const rightFacts =
+        [payload.sellerName, payload.paymentCondition].filter(Boolean).length || 1;
       const clientH = d.clientPad + Math.max(leftFacts, rightFacts) * d.clientFactH;
 
       const serviceH = payload.serviceType

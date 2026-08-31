@@ -53,16 +53,26 @@ export class RolesGuard implements CanActivate {
       (request.body['buildingId'] as string | undefined) ??
       null;
 
-    const match = await this.prisma.userBuildingRole.findFirst({
-      where: {
-        userId: user.id,
-        role: { name: { in: requiredRoles } },
-        OR: [
-          { buildingId: null },
-          ...(buildingId ? [{ buildingId }] : []),
-        ],
-      },
-    });
+    const excluded =
+      buildingId
+        ? await this.prisma.userExcludedBuilding.findFirst({
+            where: { userId: user.id, buildingId },
+            select: { id: true },
+          })
+        : null;
+
+    const match = excluded
+      ? null
+      : await this.prisma.userBuildingRole.findFirst({
+          where: {
+            userId: user.id,
+            role: { name: { in: requiredRoles } },
+            OR: [
+              { buildingId: null },
+              ...(buildingId ? [{ buildingId }] : []),
+            ],
+          },
+        });
 
     if (match) return true;
 
@@ -77,8 +87,8 @@ export class RolesGuard implements CanActivate {
       if (anyAssignment) return true;
     }
 
-    // Compat: primaryRole denormalizado
-    if (requiredRoles.includes(user.primaryRole as RoleName)) {
+    // Compat: primaryRole denormalizado (no aplica si el edificio está excluido).
+    if (!excluded && requiredRoles.includes(user.primaryRole as RoleName)) {
       return true;
     }
 

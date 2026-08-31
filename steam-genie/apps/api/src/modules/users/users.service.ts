@@ -18,8 +18,13 @@ import { QueryUsersDto } from './dto/query-users.dto';
 import { QueryUserDetailDto } from './dto/query-user-detail.dto';
 import { AssignBuildingRoleDto } from './dto/assign-building-role.dto';
 import { SyncBuildingRolesDto } from './dto/sync-building-roles.dto';
+import { SyncExcludedBuildingsDto } from './dto/sync-excluded-buildings.dto';
 import { SyncBuildingUsersDto } from './dto/sync-building-users.dto';
 import { RegisterDeviceDto } from './dto/register-device.dto';
+import {
+  listAccessibleBuildingIds,
+  loadBuildingAccessScope,
+} from '../../common/building-access';
 
 const USER_SELECT = {
   id: true,
@@ -562,6 +567,95 @@ export class UsersService {
     return this.getBuildingRoles(userId);
   }
 
+  async getExcludedBuildings(userId: string) {
+    await this.assertExists(userId);
+    const rows = await this.prisma.userExcludedBuilding.findMany({
+      where: { userId },
+      select: {
+        buildingId: true,
+        building: { select: { id: true, name: true } },
+      },
+      orderBy: { building: { name: 'asc' } },
+    });
+    return {
+      buildingIds: rows.map((row) => row.buildingId),
+      buildings: rows
+        .map((row) => row.building)
+        .filter((building): building is { id: string; name: string } => Boolean(building)),
+    };
+  }
+
+  async syncExcludedBuildings(
+    userId: string,
+    dto: SyncExcludedBuildingsDto,
+    actorId: string,
+  ) {
+    const user = await this.assertExists(userId);
+
+    if (dto.buildingIds.length > 0) {
+      const validCount = await this.prisma.building.count({
+        where: { id: { in: dto.buildingIds }, deletedAt: null },
+      });
+      if (validCount !== dto.buildingIds.length) {
+        throw new BadRequestException('One or more buildings are invalid');
+      }
+    }
+
+    const actorScope = await loadBuildingAccessScope(this.prisma, actorId);
+    const actorIsRestricted = !actorScope.hasGlobalAccess || actorScope.excludedIds.length > 0;
+    let nextIds = [...new Set(dto.buildingIds)];
+
+    if (actorIsRestricted) {
+      const actorAccessible = new Set(await listAccessibleBuildingIds(this.prisma, actorId));
+      const existing = await this.prisma.userExcludedBuilding.findMany({
+        where: { userId },
+        select: { buildingId: true },
+      });
+      const preserved = existing
+        .map((row) => row.buildingId)
+        .filter((id) => !actorAccessible.has(id));
+      nextIds = [...new Set([...preserved, ...nextIds.filter((id) => actorAccessible.has(id))])];
+    }
+
+    const role = await this.prisma.role.findFirst({
+      where: { name: user.primaryRole },
+      select: { id: true },
+    });
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.userExcludedBuilding.deleteMany({ where: { userId } });
+      if (nextIds.length > 0) {
+        await tx.userExcludedBuilding.createMany({
+          data: nextIds.map((buildingId) => ({ userId, buildingId })),
+        });
+      }
+
+      // Segmentar no quita el rol: el usuario sigue viendo todo salvo exclusiones,
+      // incluidos edificios nuevos. Convertimos allowlist legado a rol global.
+      if (role) {
+        const global = await tx.userBuildingRole.findFirst({
+          where: { userId, buildingId: null },
+          select: { id: true },
+        });
+        if (!global) {
+          await tx.userBuildingRole.create({
+            data: {
+              userId,
+              roleId: role.id,
+              buildingId: null,
+              grantedById: actorId,
+            },
+          });
+        }
+        await tx.userBuildingRole.deleteMany({
+          where: { userId, buildingId: { not: null } },
+        });
+      }
+    });
+
+    return this.getExcludedBuildings(userId);
+  }
+
   async getBuildingUserRoles(buildingId: string) {
     const building = await this.prisma.building.findFirst({
       where: { id: buildingId, deletedAt: null },
@@ -612,7 +706,16 @@ export class UsersService {
       }),
     ]);
 
-    return { assignments, globalAccess };
+    const excludedUserIds = await this.prisma.userExcludedBuilding.findMany({
+      where: { buildingId },
+      select: { userId: true },
+    });
+    const excludedSet = new Set(excludedUserIds.map((row) => row.userId));
+
+    return {
+      assignments: assignments.filter((row) => !excludedSet.has(row.userId)),
+      globalAccess: globalAccess.filter((row) => !excludedSet.has(row.userId)),
+    };
   }
 
   async syncBuildingUsers(

@@ -25,6 +25,11 @@ import { AdjustStockProductDto } from './dto/adjust-stock-product.dto';
 import { BulkAdjustStockDto } from './dto/bulk-adjust-stock.dto';
 import { CreateStockWarehouseDto } from './dto/create-stock-warehouse.dto';
 import { UpdateStockWarehouseDto } from './dto/update-stock-warehouse.dto';
+import type { AuthUser } from '@steam-genie/shared-types';
+import {
+  loadBuildingAccessScope,
+  mergeBuildingIdConstraint,
+} from '../../common/building-access';
 
 const DATASHEET_MAX_BYTES = 15 * 1024 * 1024;
 const DATASHEET_ALLOWED_MIME = new Set([
@@ -115,12 +120,19 @@ export class StockService {
 
   // ─── Warehouses ────────────────────────────────────────────────────────────
 
-  async findAllWarehouses(includeInactive = false) {
+  async findAllWarehouses(includeInactive = false, user?: AuthUser) {
+    const where: Prisma.StockWarehouseWhereInput = {
+      deletedAt: null,
+      ...(includeInactive ? {} : { isActive: true }),
+    };
+    if (user) {
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      if (!mergeBuildingIdConstraint(where, scope, { allowNull: true })) {
+        return [];
+      }
+    }
     const warehouses = await this.prisma.stockWarehouse.findMany({
-      where: {
-        deletedAt: null,
-        ...(includeInactive ? {} : { isActive: true }),
-      },
+      where,
       select: {
         ...WAREHOUSE_SELECT,
         _count: { select: { balances: true } },
@@ -327,6 +339,10 @@ export class StockService {
     }
     await this.assertWarehouseExists(query.warehouseId);
 
+    if (query.summaries) {
+      return this.findProductCategorySummaries(query);
+    }
+
     const where = this.buildProductWhere(query);
     const orderBy = [
       { category: { sortOrder: 'asc' as const } },
@@ -390,6 +406,98 @@ export class StockService {
       limit,
       pages,
     };
+  }
+
+  private async findProductCategorySummaries(query: QueryStockProductsDto) {
+    const warehouseId = query.warehouseId!;
+    const where = this.buildProductWhere(query);
+
+    const products = await this.prisma.stockProduct.findMany({
+      where,
+      select: {
+        id: true,
+        category: { select: { id: true, name: true, sortOrder: true } },
+      },
+    });
+
+    if (products.length === 0) {
+      return { groups: [], total: 0 };
+    }
+
+    const balances = await this.prisma.stockBalance.findMany({
+      where: {
+        warehouseId,
+        productId: { in: products.map((product) => product.id) },
+      },
+      select: {
+        productId: true,
+        quantity: true,
+        reservedQuantity: true,
+        minQuantity: true,
+      },
+    });
+    const byProduct = new Map(balances.map((balance) => [balance.productId, balance]));
+
+    type CategoryStatusCounts = {
+      category: { id: string; name: string; sortOrder: number };
+      okCount: number;
+      lowCount: number;
+      outCount: number;
+    };
+    const counts = new Map<string, CategoryStatusCounts>();
+
+    for (const product of products) {
+      const balance = byProduct.get(product.id);
+      const available =
+        this.toNumber(balance?.quantity ?? 0) - this.toNumber(balance?.reservedQuantity ?? 0);
+      const status = computeStockStatus(
+        available,
+        this.toNumber(balance?.minQuantity ?? 5),
+      );
+
+      let acc = counts.get(product.category.id);
+      if (!acc) {
+        acc = {
+          category: product.category,
+          okCount: 0,
+          lowCount: 0,
+          outCount: 0,
+        };
+        counts.set(product.category.id, acc);
+      }
+      if (status === 'OUT') acc.outCount += 1;
+      else if (status === 'LOW') acc.lowCount += 1;
+      else acc.okCount += 1;
+    }
+
+    let groups = [...counts.values()]
+      .sort(
+        (a, b) =>
+          a.category.sortOrder - b.category.sortOrder ||
+          a.category.name.localeCompare(b.category.name),
+      )
+      .map((group) => ({
+        ...group,
+        productCount: group.okCount + group.lowCount + group.outCount,
+        products: [],
+      }));
+
+    if (query.status) {
+      groups = groups.filter((group) => {
+        if (query.status === 'OUT') return group.outCount > 0;
+        if (query.status === 'LOW') return group.lowCount > 0;
+        return group.okCount > 0;
+      });
+    }
+
+    const total = groups.reduce((sum, group) => {
+      if (query.status === 'OUT') return sum + group.outCount;
+      if (query.status === 'LOW') return sum + group.lowCount;
+      if (query.status === 'OK') return sum + group.okCount;
+      return sum + group.productCount;
+    }, 0);
+
+    return { groups, total };
   }
 
   // ─── Categories ────────────────────────────────────────────────────────────

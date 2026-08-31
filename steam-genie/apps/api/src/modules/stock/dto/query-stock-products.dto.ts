@@ -25,6 +25,12 @@ export class QueryStockProductsDto {
   @IsBoolean()
   includeInactive?: boolean;
 
+  /** Solo categorías con conteo, sin el detalle de productos. */
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  summaries?: boolean;
+
   @IsOptional()
   @IsIn(STOCK_STATUSES)
   status?: StockStatus;

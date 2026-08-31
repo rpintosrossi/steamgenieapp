@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { BuildingMode, Prisma, QuoteStatus } from '@prisma/client';
+import { BuildingMode, Prisma, QuoteStatus, WorkOrderStatus } from '@prisma/client';
 import {
   QUOTE_STATUS_LABELS,
   QUOTE_VAT_RATE,
@@ -13,15 +13,25 @@ import {
   calendarDateKeyInBusinessTz,
 } from '@steam-genie/shared-constants';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { StorageService } from '../../infrastructure/storage/storage.service';
 import { WorkOrdersService } from '../work-orders/work-orders.service';
 import { CreateQuoteDto } from './dto/create-quote.dto';
 import { UpdateQuoteDto } from './dto/update-quote.dto';
-import { QueryQuotesDto } from './dto/query-quotes.dto';
+import { QueryQuotesDto, QueryPaymentsDashboardDto } from './dto/query-quotes.dto';
 import { ConvertQuoteDto, EventualSiteKind, ParticularClientAction } from './dto/convert-quote.dto';
 import { QuoteItemDto } from './dto/quote-item.dto';
 import { QuotePaymentInputDto } from './dto/payment-method.dto';
 import { QuotePdfService } from './quote-pdf.service';
 import { resolveQuoteBranch } from './quote-branches.service';
+import * as crypto from 'crypto';
+import * as path from 'path';
+import type { Response } from 'express';
+import type { AuthUser } from '@steam-genie/shared-types';
+import {
+  assertBuildingAccess,
+  loadBuildingAccessScope,
+  mergeBuildingIdConstraint,
+} from '../../common/building-access';
 
 const QUOTE_INCLUDE = {
   items: { orderBy: { sortOrder: 'asc' as const } },
@@ -85,7 +95,100 @@ const QUOTE_INCLUDE = {
   createdBy: {
     select: { id: true, fullName: true },
   },
+  internalPhotos: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'asc' as const },
+    select: {
+      id: true,
+      originalFilename: true,
+      mimeType: true,
+      fileSizeBytes: true,
+      createdAt: true,
+      uploadedBy: { select: { id: true, fullName: true } },
+    },
+  },
 } satisfies Prisma.QuoteInclude;
+
+const PAYMENTS_DASHBOARD_INCLUDE = {
+  payments: {
+    orderBy: { sortOrder: 'asc' as const },
+    include: {
+      paymentMethod: { select: { id: true, name: true, isActive: true } },
+    },
+  },
+  particularClient: { select: { id: true, name: true } },
+  building: { select: { id: true, name: true } },
+  eventualClient: { select: { id: true, name: true } },
+  workOrders: {
+    where: { deletedAt: null },
+    orderBy: { scheduledDate: 'asc' as const },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      scheduledDate: true,
+    },
+  },
+  branch: { select: { id: true, name: true } },
+} satisfies Prisma.QuoteInclude;
+
+type PaymentsDashboardServiceStatus = 'done' | 'partial' | 'pending' | 'none';
+type PaymentsDashboardClientKind = 'particular' | 'building' | 'eventual';
+
+type PaymentsDashboardMethodSlice = {
+  paymentMethodId: string;
+  name: string;
+  amount: number;
+};
+
+type PaymentsDashboardPaidSlice = {
+  paymentMethodId: string;
+  name: string;
+  percent: number;
+  amount: number;
+};
+
+type PaymentsDashboardQuote = {
+  id: string;
+  number: number;
+  status: QuoteStatus;
+  requestDate: Date;
+  total: number;
+  paidPercent: number;
+  paidAmount: number;
+  pendingPercent: number;
+  pendingAmount: number;
+  serviceStatus: PaymentsDashboardServiceStatus;
+  clientKind: PaymentsDashboardClientKind | null;
+  clientId: string | null;
+  clientName: string;
+  branchName: string | null;
+  pendingByMethod: PaymentsDashboardMethodSlice[];
+  paidByMethod: PaymentsDashboardPaidSlice[];
+  workOrders: Array<{
+    id: string;
+    title: string;
+    status: WorkOrderStatus;
+    scheduledDate: Date | null;
+  }>;
+};
+
+type PaymentsDashboardMethodStat = {
+  paymentMethodId: string | null;
+  name: string;
+  amount: number;
+  quoteCount: number;
+};
+
+const ALLOWED_INTERNAL_PHOTO_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+];
+const MAX_INTERNAL_PHOTO_BYTES = 8 * 1024 * 1024;
+const MAX_INTERNAL_PHOTOS = 20;
 
 @Injectable()
 export class QuotesService {
@@ -93,9 +196,10 @@ export class QuotesService {
     private readonly prisma: PrismaService,
     private readonly workOrdersService: WorkOrdersService,
     private readonly quotePdfService: QuotePdfService,
+    private readonly storage: StorageService,
   ) {}
 
-  async findAll(query: QueryQuotesDto) {
+  async findAll(query: QueryQuotesDto, user?: AuthUser) {
     const {
       page = 1,
       limit = 20,
@@ -137,6 +241,13 @@ export class QuotesService {
       where.OR = or;
     }
 
+    if (user) {
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      if (!mergeBuildingIdConstraint(where, scope, { allowNull: true })) {
+        return { data: [], total: 0, page, limit, pages: 0 };
+      }
+    }
+
     const [data, total] = await Promise.all([
       this.prisma.quote.findMany({
         where,
@@ -148,11 +259,137 @@ export class QuotesService {
       this.prisma.quote.count({ where }),
     ]);
 
-    return { data, total, page, limit, pages: Math.ceil(total / limit) || 1 };
+    return {
+      data: data.map((quote) => this.formatQuote(quote)),
+      total,
+      page,
+      limit,
+      pages: Math.ceil(total / limit) || 1,
+    };
   }
 
-  async findOne(id: string) {
-    return this.assertExists(id);
+  async getPaymentsDashboard(query: QueryPaymentsDashboardDto, user?: AuthUser) {
+    const { branchId, search } = query;
+    const where: Prisma.QuoteWhereInput = {
+      deletedAt: null,
+      status: { not: QuoteStatus.RECHAZADO },
+      AND: [
+        {
+          OR: [
+            { particularClientId: null },
+            { particularClient: { deletedAt: null } },
+          ],
+        },
+        {
+          OR: [
+            { buildingId: null },
+            { building: { deletedAt: null } },
+          ],
+        },
+      ],
+    };
+    if (branchId) where.branchId = branchId;
+
+    const q = search?.trim();
+    if (q) {
+      const or: Prisma.QuoteWhereInput[] = [
+        { particularClient: { name: { contains: q, mode: 'insensitive' } } },
+        { building: { name: { contains: q, mode: 'insensitive' } } },
+        { eventualClient: { name: { contains: q, mode: 'insensitive' } } },
+      ];
+      if (/^\d+$/.test(q)) {
+        const asNumber = Number(q.replace(/^0+/, '') || '0');
+        if (Number.isFinite(asNumber) && asNumber >= 0) {
+          or.push({ number: asNumber });
+        }
+      }
+      where.OR = or;
+    }
+
+    if (user) {
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      if (!mergeBuildingIdConstraint(where, scope, { allowNull: true })) {
+        return emptyPaymentsDashboard();
+      }
+    }
+
+    const quotes = await this.prisma.quote.findMany({
+      where,
+      include: PAYMENTS_DASHBOARD_INCLUDE,
+      orderBy: [{ requestDate: 'desc' }, { number: 'desc' }],
+    });
+
+    const pendingQuotes: PaymentsDashboardQuote[] = [];
+    for (const quote of quotes) {
+      const row = toPaymentsDashboardQuote(quote);
+      if (row.pendingAmount < 0.01) continue;
+      if (quote.status === QuoteStatus.COTIZADO && quote.payments.length === 0) continue;
+      pendingQuotes.push(row);
+    }
+
+    const methodMap = new Map<string, PaymentsDashboardMethodStat>();
+    for (const quote of pendingQuotes) {
+      for (const slice of quote.pendingByMethod) {
+        const current = methodMap.get(slice.paymentMethodId) ?? {
+          paymentMethodId: slice.paymentMethodId === 'unassigned' ? null : slice.paymentMethodId,
+          name: slice.name,
+          amount: 0,
+          quoteCount: 0,
+        };
+        current.amount = round2(current.amount + slice.amount);
+        current.quoteCount += 1;
+        methodMap.set(slice.paymentMethodId, current);
+      }
+    }
+
+    const pendingAmount = round2(
+      pendingQuotes.reduce((acc, quote) => acc + quote.pendingAmount, 0),
+    );
+    const byPaymentMethod = [...methodMap.values()]
+      .map((item) => ({
+        ...item,
+        amount: round2(item.amount),
+        percent: pendingAmount > 0 ? round2((item.amount / pendingAmount) * 100) : 0,
+      }))
+      .sort((a, b) => b.amount - a.amount);
+
+    const clients = groupPaymentsDashboardClients(pendingQuotes);
+    const doneServicesAmount = round2(
+      pendingQuotes
+        .filter((quote) => quote.serviceStatus === 'done')
+        .reduce((acc, quote) => acc + quote.pendingAmount, 0),
+    );
+    const pendingServicesAmount = round2(
+      pendingQuotes
+        .filter((quote) => quote.serviceStatus === 'pending' || quote.serviceStatus === 'partial')
+        .reduce((acc, quote) => acc + quote.pendingAmount, 0),
+    );
+    const noServiceAmount = round2(
+      pendingQuotes
+        .filter((quote) => quote.serviceStatus === 'none')
+        .reduce((acc, quote) => acc + quote.pendingAmount, 0),
+    );
+
+    return {
+      totals: {
+        pendingAmount,
+        pendingClients: clients.length,
+        pendingQuotes: pendingQuotes.length,
+        doneServicesAmount,
+        pendingServicesAmount,
+        noServiceAmount,
+      },
+      byPaymentMethod,
+      clients,
+    };
+  }
+
+  async findOne(id: string, user?: AuthUser) {
+    const quote = await this.assertExists(id);
+    if (user && quote.buildingId) {
+      await assertBuildingAccess(this.prisma, user.id, quote.buildingId);
+    }
+    return this.formatQuote(quote);
   }
 
   async create(dto: CreateQuoteDto, createdById: string) {
@@ -258,7 +495,7 @@ export class QuotesService {
         });
       }
 
-      return quote;
+      return this.formatQuote(quote);
     });
   }
 
@@ -457,7 +694,7 @@ export class QuotesService {
         }
       }
 
-      return updated;
+      return this.formatQuote(updated);
     });
   }
 
@@ -622,7 +859,7 @@ export class QuotesService {
     });
 
     return {
-      quote: updated,
+      quote: this.formatQuote(updated),
       workOrders: workOrders.map(toConvertWorkOrderSummary),
       workOrder: toConvertWorkOrderSummary(workOrders[0]),
       warning:
@@ -768,7 +1005,7 @@ export class QuotesService {
     });
 
     return {
-      quote: updated,
+      quote: this.formatQuote(updated),
       workOrders: workOrders.map(toConvertWorkOrderSummary),
       workOrder: toConvertWorkOrderSummary(workOrders[0]),
       warning:
@@ -1098,6 +1335,179 @@ export class QuotesService {
     if (!quote) throw new NotFoundException('Presupuesto no encontrado');
     return quote;
   }
+
+  async uploadInternalPhoto(quoteId: string, file: Express.Multer.File, uploadedById: string) {
+    if (!file) {
+      throw new BadRequestException('La imagen es obligatoria (campo: photo).');
+    }
+    if (!ALLOWED_INTERNAL_PHOTO_MIME_TYPES.includes(file.mimetype)) {
+      throw new BadRequestException(
+        `Tipo de archivo no permitido "${file.mimetype}". Usá JPEG, PNG, WebP o HEIC.`,
+      );
+    }
+    if (file.size > MAX_INTERNAL_PHOTO_BYTES) {
+      throw new BadRequestException(
+        `La imagen es demasiado grande (${(file.size / 1024 / 1024).toFixed(1)} MB). Máximo: 8 MB.`,
+      );
+    }
+
+    await this.assertExists(quoteId);
+
+    const count = await this.prisma.quoteInternalPhoto.count({
+      where: { quoteId, deletedAt: null },
+    });
+    if (count >= MAX_INTERNAL_PHOTOS) {
+      throw new BadRequestException(
+        `Este presupuesto ya tiene ${MAX_INTERNAL_PHOTOS} fotos internas. Eliminá alguna para agregar otra.`,
+      );
+    }
+
+    const key = buildQuoteInternalPhotoKey(quoteId, file.originalname, file.mimetype);
+    await this.storage.upload(key, file.buffer, file.mimetype);
+
+    const photo = await this.prisma.quoteInternalPhoto.create({
+      data: {
+        quoteId,
+        storageKey: key,
+        storageBucket: this.storage.storageBucketName,
+        originalFilename: file.originalname,
+        mimeType: file.mimetype,
+        fileSizeBytes: file.size,
+        uploadedById,
+      },
+      include: { uploadedBy: { select: { id: true, fullName: true } } },
+    });
+
+    return this.formatInternalPhoto(quoteId, photo);
+  }
+
+  async listInternalPhotos(quoteId: string) {
+    await this.assertExists(quoteId);
+    const photos = await this.prisma.quoteInternalPhoto.findMany({
+      where: { quoteId, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+      include: { uploadedBy: { select: { id: true, fullName: true } } },
+    });
+    return photos.map((photo) => this.formatInternalPhoto(quoteId, photo));
+  }
+
+  async deleteInternalPhoto(quoteId: string, photoId: string, deletedById: string) {
+    await this.assertExists(quoteId);
+    const photo = await this.prisma.quoteInternalPhoto.findFirst({
+      where: { id: photoId, quoteId, deletedAt: null },
+    });
+    if (!photo) throw new NotFoundException('Foto no encontrada');
+
+    await this.prisma.quoteInternalPhoto.update({
+      where: { id: photo.id },
+      data: { deletedAt: new Date(), deletedBy: deletedById },
+    });
+
+    try {
+      await this.storage.delete(photo.storageKey);
+    } catch {
+      // Soft delete ya aplicado; el archivo puede limpiarse después.
+    }
+
+    return { ok: true as const, id: photo.id };
+  }
+
+  async serveInternalPhoto(quoteId: string, photoId: string, res: Response) {
+    await this.assertExists(quoteId);
+    const photo = await this.prisma.quoteInternalPhoto.findFirst({
+      where: { id: photoId, quoteId, deletedAt: null },
+      select: { storageKey: true, mimeType: true },
+    });
+    if (!photo) throw new NotFoundException('Foto no encontrada');
+
+    const contentType = photo.mimeType ?? mimeFromStorageKey(photo.storageKey);
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+
+    const stream = this.storage.getLocalStream(photo.storageKey);
+    if (stream) {
+      stream.pipe(res);
+      return;
+    }
+
+    const buffer = await this.storage.readBuffer(photo.storageKey);
+    if (!buffer) throw new NotFoundException('Archivo no encontrado');
+    res.send(buffer);
+  }
+
+  private formatQuote<
+    T extends {
+      id: string;
+      internalPhotos?: Array<{
+        id: string;
+        originalFilename: string | null;
+        mimeType: string | null;
+        fileSizeBytes: number | null;
+        createdAt: Date;
+        uploadedBy?: { id: string; fullName: string } | null;
+      }>;
+    },
+  >(quote: T) {
+    const { internalPhotos, ...rest } = quote;
+    return {
+      ...rest,
+      internalPhotos: (internalPhotos ?? []).map((photo) =>
+        this.formatInternalPhoto(quote.id, photo),
+      ),
+    };
+  }
+
+  private formatInternalPhoto(
+    quoteId: string,
+    photo: {
+      id: string;
+      originalFilename?: string | null;
+      mimeType?: string | null;
+      fileSizeBytes?: number | null;
+      createdAt: Date;
+      uploadedBy?: { id: string; fullName: string } | null;
+    },
+  ) {
+    return {
+      id: photo.id,
+      url: `/quotes/${quoteId}/internal-photos/${photo.id}/file`,
+      originalFilename: photo.originalFilename ?? null,
+      mimeType: photo.mimeType ?? null,
+      fileSizeBytes: photo.fileSizeBytes ?? null,
+      createdAt: photo.createdAt,
+      uploadedBy: photo.uploadedBy ?? null,
+    };
+  }
+}
+
+function buildQuoteInternalPhotoKey(
+  quoteId: string,
+  filename: string,
+  mimeType: string,
+): string {
+  const extFromName = path.extname(filename).toLowerCase();
+  const mimeToExt: Record<string, string> = {
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'image/heic': '.heic',
+    'image/heif': '.heif',
+  };
+  const ext = extFromName || mimeToExt[mimeType] || '.jpg';
+  return `quote-internal-photos/${quoteId}/${crypto.randomUUID()}${ext}`;
+}
+
+function mimeFromStorageKey(key: string): string {
+  const ext = path.extname(key).toLowerCase();
+  const map: Record<string, string> = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+    '.heic': 'image/heic',
+    '.heif': 'image/heif',
+  };
+  return map[ext] ?? 'application/octet-stream';
 }
 
 /** Numeración segura: SELECT FOR UPDATE vía update atómico. */
@@ -1126,6 +1536,229 @@ function lineTotal(item: QuoteItemDto): number {
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+function emptyPaymentsDashboard() {
+  return {
+    totals: {
+      pendingAmount: 0,
+      pendingClients: 0,
+      pendingQuotes: 0,
+      doneServicesAmount: 0,
+      pendingServicesAmount: 0,
+      noServiceAmount: 0,
+    },
+    byPaymentMethod: [] as Array<PaymentsDashboardMethodStat & { percent: number }>,
+    clients: [] as ReturnType<typeof groupPaymentsDashboardClients>,
+  };
+}
+
+function quoteServiceStatus(
+  workOrders: Array<{ status: WorkOrderStatus }>,
+): PaymentsDashboardServiceStatus {
+  const active = workOrders.filter((wo) => wo.status !== WorkOrderStatus.REJECTED);
+  if (active.length === 0) return 'none';
+  const completed = active.filter((wo) => wo.status === WorkOrderStatus.COMPLETED).length;
+  if (completed === active.length) return 'done';
+  if (completed > 0) return 'partial';
+  return 'pending';
+}
+
+function rollupServiceStatus(
+  statuses: PaymentsDashboardServiceStatus[],
+): PaymentsDashboardServiceStatus {
+  const unique = new Set(statuses);
+  if (unique.size === 1) return statuses[0] ?? 'none';
+  if (unique.has('done') && unique.size > 1) return 'partial';
+  if (unique.has('partial')) return 'partial';
+  if (unique.has('pending')) return 'pending';
+  return 'none';
+}
+
+function toPaymentsDashboardQuote(quote: {
+  id: string;
+  number: number;
+  status: QuoteStatus;
+  requestDate: Date;
+  total: Prisma.Decimal | number;
+  particularClient: { id: string; name: string } | null;
+  building: { id: string; name: string } | null;
+  eventualClient: { id: string; name: string } | null;
+  branch: { id: string; name: string } | null;
+  payments: Array<{
+    isPending: boolean;
+    percent: Prisma.Decimal | number | null;
+    paymentMethodId: string;
+    paymentMethod: { id: string; name: string } | null;
+  }>;
+  workOrders: Array<{
+    id: string;
+    title: string;
+    status: WorkOrderStatus;
+    scheduledDate: Date | null;
+  }>;
+}): PaymentsDashboardQuote {
+  const total = round2(toNumber(quote.total));
+  const paidPercent = round2(
+    quote.payments
+      .filter((payment) => !payment.isPending)
+      .reduce((acc, payment) => acc + toNumber(payment.percent ?? 0), 0),
+  );
+  const cappedPaid = Math.min(100, Math.max(0, paidPercent));
+  const pendingPercent = round2(Math.max(0, 100 - cappedPaid));
+  const pendingAmount = round2((total * pendingPercent) / 100);
+  const paidAmount = round2(total - pendingAmount);
+
+  const paidByMethod: PaymentsDashboardPaidSlice[] = quote.payments
+    .filter((payment) => !payment.isPending && toNumber(payment.percent ?? 0) > 0)
+    .map((payment) => {
+      const percent = round2(toNumber(payment.percent ?? 0));
+      return {
+        paymentMethodId: payment.paymentMethodId,
+        name: payment.paymentMethod?.name ?? 'Medio de pago',
+        percent,
+        amount: round2((total * percent) / 100),
+      };
+    });
+
+  const pendingMethods = quote.payments.filter((payment) => payment.isPending);
+  const pendingByMethod: PaymentsDashboardMethodSlice[] = [];
+  if (pendingAmount >= 0.01) {
+    if (pendingMethods.length === 0) {
+      pendingByMethod.push({
+        paymentMethodId: 'unassigned',
+        name: 'Sin medio asignado',
+        amount: pendingAmount,
+      });
+    } else {
+      const share = round2(pendingAmount / pendingMethods.length);
+      let allocated = 0;
+      pendingMethods.forEach((payment, index) => {
+        const amount =
+          index === pendingMethods.length - 1
+            ? round2(pendingAmount - allocated)
+            : share;
+        allocated = round2(allocated + amount);
+        pendingByMethod.push({
+          paymentMethodId: payment.paymentMethodId,
+          name: payment.paymentMethod?.name ?? 'Medio de pago',
+          amount,
+        });
+      });
+    }
+  }
+
+  let clientKind: PaymentsDashboardClientKind | null = null;
+  let clientId: string | null = null;
+  let clientName = 'Sin cliente';
+  if (quote.particularClient) {
+    clientKind = 'particular';
+    clientId = quote.particularClient.id;
+    clientName = quote.particularClient.name;
+  } else if (quote.building) {
+    clientKind = 'building';
+    clientId = quote.building.id;
+    clientName = quote.building.name;
+  } else if (quote.eventualClient) {
+    clientKind = 'eventual';
+    clientId = quote.eventualClient.id;
+    clientName = quote.eventualClient.name;
+  }
+
+  return {
+    id: quote.id,
+    number: quote.number,
+    status: quote.status,
+    requestDate: quote.requestDate,
+    total,
+    paidPercent: cappedPaid,
+    paidAmount,
+    pendingPercent,
+    pendingAmount,
+    serviceStatus: quoteServiceStatus(quote.workOrders),
+    clientKind,
+    clientId,
+    clientName,
+    branchName: quote.branch?.name ?? null,
+    pendingByMethod,
+    paidByMethod,
+    workOrders: quote.workOrders,
+  };
+}
+
+function groupPaymentsDashboardClients(quotes: PaymentsDashboardQuote[]) {
+  const groups = new Map<
+    string,
+    {
+      key: string;
+      kind: PaymentsDashboardClientKind | 'unknown';
+      kindLabel: string;
+      clientId: string | null;
+      name: string;
+      pendingAmount: number;
+      paidAmount: number;
+      quotes: PaymentsDashboardQuote[];
+    }
+  >();
+
+  for (const quote of quotes) {
+    const kind = quote.clientKind ?? 'unknown';
+    const key = quote.clientId ? `${kind}:${quote.clientId}` : `quote:${quote.id}`;
+    const current = groups.get(key) ?? {
+      key,
+      kind,
+      kindLabel:
+        kind === 'particular'
+          ? 'Particular'
+          : kind === 'building'
+            ? 'Edificio'
+            : kind === 'eventual'
+              ? 'Eventual'
+              : '—',
+      clientId: quote.clientId,
+      name: quote.clientName,
+      pendingAmount: 0,
+      paidAmount: 0,
+      quotes: [],
+    };
+    current.pendingAmount = round2(current.pendingAmount + quote.pendingAmount);
+    current.paidAmount = round2(current.paidAmount + quote.paidAmount);
+    current.quotes.push(quote);
+    groups.set(key, current);
+  }
+
+  return [...groups.values()]
+    .map((group) => ({
+      key: group.key,
+      kind: group.kind,
+      kindLabel: group.kindLabel,
+      clientId: group.clientId,
+      name: group.name,
+      quoteCount: group.quotes.length,
+      pendingAmount: group.pendingAmount,
+      paidAmount: group.paidAmount,
+      serviceStatus: rollupServiceStatus(group.quotes.map((quote) => quote.serviceStatus)),
+      quotes: group.quotes
+        .slice()
+        .sort((a, b) => b.pendingAmount - a.pendingAmount)
+        .map((quote) => ({
+          id: quote.id,
+          number: quote.number,
+          status: quote.status,
+          requestDate: quote.requestDate,
+          total: quote.total,
+          paidPercent: quote.paidPercent,
+          paidAmount: quote.paidAmount,
+          pendingPercent: quote.pendingPercent,
+          pendingAmount: quote.pendingAmount,
+          serviceStatus: quote.serviceStatus,
+          branchName: quote.branchName,
+          pendingByMethod: quote.pendingByMethod,
+          paidByMethod: quote.paidByMethod,
+          workOrders: quote.workOrders,
+        })),
+    }))
+    .sort((a, b) => b.pendingAmount - a.pendingAmount);
 }
 
 function emptyToNull(value?: string | null): string | null {

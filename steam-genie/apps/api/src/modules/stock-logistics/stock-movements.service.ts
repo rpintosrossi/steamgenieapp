@@ -3,6 +3,12 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { QueryStockMovementsDto } from './dto/query-stock-movements.dto';
 import { toNumber } from './stock-logistics.helpers';
+import type { AuthUser } from '@steam-genie/shared-types';
+import {
+  isBuildingAccessible,
+  loadBuildingAccessScope,
+  mergeBuildingIdConstraint,
+} from '../../common/building-access';
 
 const MOVEMENT_SELECT = {
   id: true,
@@ -36,7 +42,7 @@ const MOVEMENT_SELECT = {
 export class StockMovementsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(query: QueryStockMovementsDto) {
+  async list(query: QueryStockMovementsDto, user?: AuthUser) {
     const limit = query.limit ?? 50;
 
     const where: Prisma.StockMovementWhereInput = {
@@ -51,6 +57,15 @@ export class StockMovementsService {
           }
         : {}),
     };
+
+    if (user) {
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      if (query.buildingId) {
+        if (!isBuildingAccessible(scope, query.buildingId)) return [];
+      } else if (!mergeBuildingIdConstraint(where, scope, { allowNull: true })) {
+        return [];
+      }
+    }
 
     const rows = await this.prisma.stockMovement.findMany({
       where,

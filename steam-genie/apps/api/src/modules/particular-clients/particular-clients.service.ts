@@ -6,6 +6,12 @@ import { resolveQuoteBranch } from '../quotes/quote-branches.service';
 import { CreateParticularClientDto } from './dto/create-particular-client.dto';
 import { UpdateParticularClientDto } from './dto/update-particular-client.dto';
 import { QueryParticularClientsDto } from './dto/query-particular-clients.dto';
+import type { AuthUser } from '@steam-genie/shared-types';
+import {
+  assertBuildingAccess,
+  loadBuildingAccessScope,
+  mergeBuildingIdConstraint,
+} from '../../common/building-access';
 
 const BUILDING_SELECT = {
   id: true,
@@ -53,7 +59,7 @@ const CLIENT_SELECT = {
 export class ParticularClientsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(query: QueryParticularClientsDto) {
+  async findAll(query: QueryParticularClientsDto, user?: AuthUser) {
     const { search, includeInactive } = query;
     const where: Prisma.ParticularClientWhereInput = { deletedAt: null };
 
@@ -72,6 +78,13 @@ export class ParticularClientsService {
       ];
     }
 
+    if (user) {
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      if (!mergeBuildingIdConstraint(where, scope)) {
+        return [];
+      }
+    }
+
     return this.prisma.particularClient.findMany({
       where,
       select: CLIENT_SELECT,
@@ -79,8 +92,12 @@ export class ParticularClientsService {
     });
   }
 
-  async findOne(id: string) {
-    return this.assertExists(id);
+  async findOne(id: string, user?: AuthUser) {
+    const client = await this.assertExists(id);
+    if (user) {
+      await assertBuildingAccess(this.prisma, user.id, client.buildingId);
+    }
+    return client;
   }
 
   async create(dto: CreateParticularClientDto) {

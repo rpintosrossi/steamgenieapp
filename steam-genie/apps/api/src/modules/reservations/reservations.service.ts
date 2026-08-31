@@ -12,6 +12,11 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { UpdateReservationDto } from './dto/update-reservation.dto';
 import { QueryReservationsDto } from './dto/query-reservations.dto';
+import type { AuthUser } from '@steam-genie/shared-types';
+import {
+  loadBuildingAccessScope,
+  mergeBuildingIdConstraint,
+} from '../../common/building-access';
 
 @Injectable()
 export class ReservationsService {
@@ -19,7 +24,7 @@ export class ReservationsService {
 
   // ─── LIST ─────────────────────────────────────────────────────────────────
 
-  async findAll(query: QueryReservationsDto) {
+  async findAll(query: QueryReservationsDto, user?: AuthUser) {
     const {
       page = 1,
       limit = 20,
@@ -47,6 +52,13 @@ export class ReservationsService {
           where.checkoutAt.gte && where.checkoutAt.gte > startOfToday
             ? where.checkoutAt.gte
             : startOfToday;
+      }
+    }
+
+    if (user) {
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      if (!mergeBuildingIdConstraint(where, scope)) {
+        return { data: [], total: 0, page, limit, pages: 0 };
       }
     }
 

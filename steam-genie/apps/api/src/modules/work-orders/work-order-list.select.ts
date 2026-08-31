@@ -11,6 +11,16 @@ export const WORK_ORDER_LIST_SELECT = {
   scheduledTime: true,
   deadlineAt: true,
   createdAt: true,
+  completedAt: true,
+  serviceExecutions: {
+    select: {
+      completedAt: true,
+      startedBy: { select: { id: true, fullName: true } },
+      participants: {
+        select: { user: { select: { id: true, fullName: true } } },
+      },
+    },
+  },
   building: { select: { id: true, name: true } },
   zone: { select: { id: true, name: true } },
   assignments: {

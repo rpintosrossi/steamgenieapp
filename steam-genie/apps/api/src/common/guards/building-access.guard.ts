@@ -64,6 +64,14 @@ export class BuildingAccessGuard implements CanActivate {
       );
     }
 
+    const excluded = await this.prisma.userExcludedBuilding.findFirst({
+      where: { userId: user.id, buildingId },
+      select: { id: true },
+    });
+    if (excluded) {
+      throw new ForbiddenException('You do not have access to this building.');
+    }
+
     return true;
   }
 }

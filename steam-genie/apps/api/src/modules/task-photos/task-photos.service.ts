@@ -7,6 +7,7 @@ import { Response } from 'express';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StorageService } from '../../infrastructure/storage/storage.service';
 import type { AuthUser } from '@steam-genie/shared-types';
+import { isBuildingAccessible, loadBuildingAccessScope } from '../../common/building-access';
 
 type PhotoKind = 'task' | 'service' | 'periodic';
 
@@ -38,6 +39,11 @@ export class TaskPhotosService {
       throw new ForbiddenException(
         'Only admin or manager can delete photos.',
       );
+    }
+
+    const scope = await loadBuildingAccessScope(this.prisma, user.id);
+    if (resolved.buildingId && !isBuildingAccessible(scope, resolved.buildingId)) {
+      throw new ForbiddenException('Only admin or manager can delete photos.');
     }
 
     if (resolved.kind === 'task') {

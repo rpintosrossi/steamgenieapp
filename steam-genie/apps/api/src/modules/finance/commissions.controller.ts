@@ -43,8 +43,11 @@ export class CommissionsController {
   @Get('services')
   @RequiredRoles('admin', 'manager')
   @RequiredModules(APP_MODULES.COMISIONES)
-  listServices(@Query() query: QueryCommissionServicesDto) {
-    return this.commissions.listCandidateServices(query);
+  listServices(
+    @Query() query: QueryCommissionServicesDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.commissions.listCandidateServices(query, user);
   }
 
   @Get('fixed-expenses-preview')
@@ -53,12 +56,13 @@ export class CommissionsController {
   previewFixed(
     @Query('dateFrom') dateFrom: string,
     @Query('dateTo') dateTo: string,
+    @CurrentUser() user: AuthUser,
     @Query('buildingIds') buildingIds?: string,
   ) {
     const ids = buildingIds
       ? buildingIds.split(',').map((s) => s.trim()).filter(Boolean)
       : [];
-    return this.commissions.previewFixedExpenses(dateFrom, dateTo, ids);
+    return this.commissions.previewFixedExpenses(dateFrom, dateTo, ids, user);
   }
 
   @Post()

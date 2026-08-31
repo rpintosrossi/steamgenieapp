@@ -7,6 +7,10 @@ import type { AuthUser } from '@steam-genie/shared-types';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
+  isBuildingAccessible,
+  loadBuildingAccessScope,
+} from '../../common/building-access';
+import {
   CreateShipmentOrderDto,
   DispatchShipmentOrderDto,
   UpdateShipmentOrderDto,
@@ -70,12 +74,23 @@ export class StockShipmentsService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
-  async findAll() {
+  async findAll(user?: AuthUser) {
     const orders = await this.prisma.stockShipmentOrder.findMany({
       select: ORDER_SELECT,
       orderBy: { createdAt: 'desc' },
     });
-    return orders.map((order) => this.mapOrder(order));
+    const mapped = orders.map((order) => this.mapOrder(order));
+    if (!user) return mapped;
+
+    const scope = await loadBuildingAccessScope(this.prisma, user.id);
+    return mapped
+      .map((order) => ({
+        ...order,
+        destinations: order.destinations.filter((dest) =>
+          isBuildingAccessible(scope, dest.buildingId),
+        ),
+      }))
+      .filter((order) => order.destinations.length > 0);
   }
 
   async findOne(id: string) {

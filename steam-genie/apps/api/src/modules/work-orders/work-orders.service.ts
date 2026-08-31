@@ -14,7 +14,7 @@ import {
   formatStoredCalendarDate,
   TASK_CATEGORY_UNCATEGORIZED,
 } from '@steam-genie/shared-constants';
-import { snapshotEventualTasks } from '../../common/work-order-snapshot';
+import { cloneWorkOrderTasks, snapshotEventualTasks } from '../../common/work-order-snapshot';
 import { resolvePhotoEvidenceMode } from '../../common/building-mode';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StorageService } from '../../infrastructure/storage/storage.service';
@@ -24,6 +24,7 @@ import { RejectWorkOrderDto } from './dto/reject-work-order.dto';
 import { CreateCheckoutCleaningDto } from './dto/create-checkout-cleaning.dto';
 import { CreateAdditionalRequestDto } from './dto/create-additional-request.dto';
 import { RescheduleWorkOrderDto } from './dto/reschedule-work-order.dto';
+import { RepeatWorkOrderDto } from './dto/repeat-work-order.dto';
 import { UpdateWorkOrderChecklistDto } from './dto/update-work-order-checklist.dto';
 import { WORK_ORDER_LIST_SELECT } from './work-order-list.select';
 import { workOrderBranchWhere } from './work-order-branch.filter';
@@ -34,6 +35,11 @@ import {
   type ServiceReportTask,
 } from './service-report-pdf.service';
 import type { AuthUser } from '@steam-genie/shared-types';
+import {
+  isBuildingAccessible,
+  loadBuildingAccessScope,
+  mergeBuildingIdConstraint,
+} from '../../common/building-access';
 
 const EXTERNAL_VIEWER_ROLES = new Set(['client', 'provider']);
 const EXTERNAL_VIEWER_STATUSES: WorkOrderStatus[] = [
@@ -93,6 +99,7 @@ const WO_DETAIL_INCLUDE = {
   serviceExecutions: {
     select: {
       id: true, status: true, startedAt: true, completedAt: true,
+      startedBy: { select: { id: true, fullName: true } },
       participants: {
         select: {
           id: true,
@@ -107,6 +114,7 @@ const WO_DETAIL_INCLUDE = {
     select: {
       id: true,
       number: true,
+      sellerName: true,
       particularClient: { select: { name: true } },
       eventualClient: { select: { name: true } },
       building: { select: { name: true } },
@@ -208,6 +216,11 @@ export class WorkOrdersService {
             effectiveAssignedTo = effectiveAssignedTo ?? user.id;
           }
         }
+      }
+
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      if (!mergeBuildingIdConstraint(where, scope)) {
+        return { data: [], total: 0, page, limit, pages: 0 };
       }
     }
 
@@ -527,6 +540,11 @@ export class WorkOrdersService {
             }
           }
         }
+      }
+
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      if (!isBuildingAccessible(scope, wo.buildingId)) {
+        throw new ForbiddenException('No tenés acceso a servicios de este edificio.');
       }
     }
 
@@ -1086,17 +1104,8 @@ export class WorkOrdersService {
     });
     if (!wo) throw new NotFoundException('Work order not found');
 
-    const globalStaff = await this.hasGlobalStaffAccess(user.id);
-    if (!globalStaff) {
-      const staffBuildingIds = await this.getStaffBuildingIds(user.id);
-      if (!staffBuildingIds.includes(wo.buildingId)) {
-        throw new ForbiddenException('No tenés acceso a servicios de este edificio.');
-      }
-    }
+    await this.assertCanManageWorkOrderBuilding(user.id, wo.buildingId);
 
-    if (wo.status === WorkOrderStatus.IN_PROGRESS) {
-      throw new ConflictException('No se puede reprogramar un servicio en curso.');
-    }
     if (wo.status === WorkOrderStatus.COMPLETED) {
       throw new ConflictException('No se puede reprogramar un servicio completado.');
     }
@@ -1144,6 +1153,68 @@ export class WorkOrdersService {
     return this.findOneForList(id);
   }
 
+  // ─── REPEAT ────────────────────────────────────────────────────────────────
+
+  async repeat(id: string, dto: RepeatWorkOrderDto, user: AuthUser) {
+    const source = await this.prisma.workOrder.findFirst({
+      where: { id, deletedAt: null },
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        title: true,
+        description: true,
+        buildingId: true,
+        floorId: true,
+        zoneId: true,
+        subzoneId: true,
+        quoteId: true,
+      },
+    });
+    if (!source) throw new NotFoundException('Work order not found');
+
+    await this.assertCanManageWorkOrderBuilding(user.id, source.buildingId);
+
+    if (source.status !== WorkOrderStatus.COMPLETED) {
+      throw new ConflictException(
+        'Solo se puede crear otro servicio a partir de uno ya completado. Si todavía no se completó, reprogramalo.',
+      );
+    }
+
+    const scheduledAt = new Date(dto.scheduledAt);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      throw new BadRequestException('scheduledAt is invalid');
+    }
+
+    const scheduledDate = calendarDateFromInstant(scheduledAt);
+
+    const createdId = await this.prisma.$transaction(async (tx) => {
+      const workOrder = await tx.workOrder.create({
+        data: {
+          type: source.type,
+          reservationId: null,
+          buildingId: source.buildingId,
+          floorId: source.floorId,
+          zoneId: source.zoneId,
+          subzoneId: source.subzoneId,
+          title: source.title,
+          description: source.description,
+          scheduledDate,
+          scheduledTime: scheduledAt,
+          deadlineAt: null,
+          status: WorkOrderStatus.UNASSIGNED,
+          quoteId: source.quoteId,
+          createdById: user.id,
+        },
+      });
+
+      await cloneWorkOrderTasks(tx, source.id, workOrder.id);
+      return workOrder.id;
+    });
+
+    return this.findOneForList(createdId);
+  }
+
   // ─── CHECKLIST ────────────────────────────────────────────────────────────
 
   async updateChecklist(id: string, dto: UpdateWorkOrderChecklistDto, user: AuthUser) {
@@ -1153,13 +1224,7 @@ export class WorkOrdersService {
     });
     if (!wo) throw new NotFoundException('Work order not found');
 
-    const globalStaff = await this.hasGlobalStaffAccess(user.id);
-    if (!globalStaff) {
-      const staffBuildingIds = await this.getStaffBuildingIds(user.id);
-      if (!staffBuildingIds.includes(wo.buildingId)) {
-        throw new ForbiddenException('No tenés acceso a servicios de este edificio.');
-      }
-    }
+    await this.assertCanManageWorkOrderBuilding(user.id, wo.buildingId);
 
     if (wo.status === WorkOrderStatus.COMPLETED) {
       throw new ConflictException(
@@ -1271,13 +1336,7 @@ export class WorkOrdersService {
     });
     if (!wo) throw new NotFoundException('Work order not found');
 
-    const globalStaff = await this.hasGlobalStaffAccess(user.id);
-    if (!globalStaff) {
-      const staffBuildingIds = await this.getStaffBuildingIds(user.id);
-      if (!staffBuildingIds.includes(wo.buildingId)) {
-        throw new ForbiddenException('No tenés acceso a servicios de este edificio.');
-      }
-    }
+    await this.assertCanManageWorkOrderBuilding(user.id, wo.buildingId);
 
     if (wo.status === WorkOrderStatus.COMPLETED) {
       throw new ConflictException('No se puede eliminar un servicio completado.');
@@ -1423,6 +1482,19 @@ export class WorkOrdersService {
       if (endOfDay.getTime() < now.getTime()) {
         throw new UnprocessableEntityException('Work order has expired');
       }
+    }
+  }
+
+  private async assertCanManageWorkOrderBuilding(userId: string, buildingId: string) {
+    const scope = await loadBuildingAccessScope(this.prisma, userId);
+    if (!isBuildingAccessible(scope, buildingId)) {
+      throw new ForbiddenException('No tenés acceso a servicios de este edificio.');
+    }
+    const globalStaff = await this.hasGlobalStaffAccess(userId);
+    if (globalStaff) return;
+    const staffBuildingIds = await this.getStaffBuildingIds(userId);
+    if (!staffBuildingIds.includes(buildingId)) {
+      throw new ForbiddenException('No tenés acceso a servicios de este edificio.');
     }
   }
 

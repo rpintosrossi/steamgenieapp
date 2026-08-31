@@ -87,8 +87,11 @@ export class ExpensesController {
   @Get('fixed-expenses')
   @RequiredRoles('admin', 'manager')
   @RequiredModules(APP_MODULES.GASTOS_FIJOS, APP_MODULES.COMISIONES)
-  listFixedExpenses(@Query('includeInactive') includeInactive?: string) {
-    return this.fixedExpenses.findAll(includeInactive === 'true');
+  listFixedExpenses(
+    @Query('includeInactive') includeInactive: string | undefined,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.fixedExpenses.findAll(includeInactive === 'true', user);
   }
 
   @Post('fixed-expenses')

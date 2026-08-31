@@ -31,3 +31,15 @@ export class QueryQuotesDto extends PaginationDto {
   @MaxLength(120)
   search?: string;
 }
+
+export class QueryPaymentsDashboardDto {
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
+
+  /** Busca por número de presupuesto o nombre de cliente (particular / edificio / eventual) */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  search?: string;
+}

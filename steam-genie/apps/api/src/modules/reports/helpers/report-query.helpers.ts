@@ -1,5 +1,10 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import type { PrismaService } from '../../../infrastructure/prisma/prisma.service';
+import { BadRequestException } from '@nestjs/common';
+
+export {
+  assertBuildingAccess,
+  buildingIdFilter,
+  resolveAccessibleBuildingIds,
+} from '../../../common/building-access';
 
 export const MAX_REPORT_RANGE_DAYS = 90;
 export const MAX_REPORT_PAGE_SIZE = 50;
@@ -54,56 +59,3 @@ export function paginateArray<T>(
   };
 }
 
-export async function resolveAccessibleBuildingIds(
-  prisma: PrismaService,
-  userId: string,
-  buildingId?: string,
-): Promise<string[]> {
-  const assignments = await prisma.userBuildingRole.findMany({
-    where: { userId },
-    select: { buildingId: true },
-  });
-
-  const hasGlobal = assignments.some((a) => a.buildingId === null);
-  if (hasGlobal) {
-    if (buildingId) return [buildingId];
-    const buildings = await prisma.building.findMany({
-      where: { deletedAt: null },
-      select: { id: true },
-    });
-    return buildings.map((b) => b.id);
-  }
-
-  const scopedIds = [
-    ...new Set(
-      assignments
-        .map((a) => a.buildingId)
-        .filter((id): id is string => Boolean(id)),
-    ),
-  ];
-
-  if (buildingId) {
-    if (!scopedIds.includes(buildingId)) {
-      throw new ForbiddenException('No tenés acceso a este edificio.');
-    }
-    return [buildingId];
-  }
-
-  if (scopedIds.length === 0) {
-    throw new ForbiddenException('No tenés edificios asignados.');
-  }
-
-  return scopedIds;
-}
-
-export async function assertBuildingAccess(
-  prisma: PrismaService,
-  userId: string,
-  buildingId: string,
-): Promise<void> {
-  await resolveAccessibleBuildingIds(prisma, userId, buildingId);
-}
-
-export function buildingIdFilter(buildingIds: string[]): string | { in: string[] } {
-  return buildingIds.length === 1 ? buildingIds[0]! : { in: buildingIds };
-}

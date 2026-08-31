@@ -26,8 +26,8 @@ export class ReservationsController {
 
   @Get()
   @RequiredRoles('admin', 'manager')
-  findAll(@Query() query: QueryReservationsDto) {
-    return this.reservationsService.findAll(query);
+  findAll(@Query() query: QueryReservationsDto, @Request() req: { user: AuthUser }) {
+    return this.reservationsService.findAll(query, req.user);
   }
 
   @Post()

@@ -18,6 +18,7 @@ import type {
   TaskPhotoSummary,
 } from './dto/task-execution-item';
 import type { AuthUser } from '@steam-genie/shared-types';
+import { isBuildingAccessible, loadBuildingAccessScope } from '../../common/building-access';
 import {
   validateTaskFieldValues,
   upsertTaskFieldValues,
@@ -573,6 +574,13 @@ export class ServiceExecutionsService {
       },
     });
     if (!hasManagerRole) {
+      throw new ForbiddenException(
+        'You must be a participant in this execution or have a manager/admin role to access it',
+      );
+    }
+
+    const scope = await loadBuildingAccessScope(this.prisma, user.id);
+    if (!isBuildingAccessible(scope, se.workOrder.buildingId)) {
       throw new ForbiddenException(
         'You must be a participant in this execution or have a manager/admin role to access it',
       );

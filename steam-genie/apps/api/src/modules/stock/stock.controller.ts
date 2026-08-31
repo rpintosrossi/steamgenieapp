@@ -53,8 +53,11 @@ export class StockController {
 
   @Get('warehouses')
   @RequiredRoles(...STOCK_ROLES)
-  findAllWarehouses(@Query() query: QueryStockCatalogDto) {
-    return this.stockService.findAllWarehouses(query.includeInactive);
+  findAllWarehouses(
+    @Query() query: QueryStockCatalogDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.stockService.findAllWarehouses(query.includeInactive, user);
   }
 
   @Get('warehouses/:id')

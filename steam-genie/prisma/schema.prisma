@@ -213,6 +213,7 @@ model User {
 
   buildingRoles     UserBuildingRole[] @relation("UserBuildingRoles")
   grantedRoles      UserBuildingRole[] @relation("GrantedByUser")
+  excludedBuildings UserExcludedBuilding[]
   devices           UserDevice[]
   attendances       Attendance[]
   assignments       WorkOrderAssignment[]
@@ -240,6 +241,7 @@ model User {
   commissionsCreated         CommissionSettlement[]   @relation("CommissionCreator")
   commissionPdfVersions      CommissionSettlementPdfVersion[] @relation("CommissionPdfCreator")
   createdQuotes              Quote[]                          @relation("QuoteCreator")
+  uploadedQuoteInternalPhotos QuoteInternalPhoto[]            @relation("QuoteInternalPhotoUploader")
 
   @@index([deletedAt, fullName])
   @@map("users")
@@ -284,6 +286,22 @@ model UserBuildingRole {
 
   @@index([userId, buildingId, roleId])
   @@map("user_building_roles")
+}
+
+/// Edificios que el usuario no debe ver. Por defecto ve todos (rol global);
+/// esta tabla permite segmentar a cualquier usuario, incluido admin.
+model UserExcludedBuilding {
+  id         String   @id @default(uuid()) @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String   @db.Uuid
+  building   Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  buildingId String   @db.Uuid
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, buildingId])
+  @@index([userId])
+  @@index([buildingId])
+  @@map("user_excluded_buildings")
 }
 
 model UserDevice {
@@ -332,6 +350,7 @@ model Building {
   subzones          Subzone[]
   tasks             Task[]
   userBuildingRoles UserBuildingRole[]
+  excludedForUsers  UserExcludedBuilding[]
   attendances       Attendance[]
   workOrders        WorkOrder[]
   reservations      Reservation[]
@@ -469,9 +488,10 @@ model Quote {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  items      QuoteItem[]
-  payments   QuotePayment[]
-  workOrders WorkOrder[]
+  items          QuoteItem[]
+  payments       QuotePayment[]
+  workOrders     WorkOrder[]
+  internalPhotos QuoteInternalPhoto[]
 
   @@index([status, requestDate])
   @@index([particularClientId])
@@ -480,6 +500,26 @@ model Quote {
   @@index([branchId])
   @@index([deletedAt, requestDate])
   @@map("quotes")
+}
+
+/// Fotos de observación interna (solo panel admin; no van al PDF ni al cliente).
+model QuoteInternalPhoto {
+  id               String    @id @default(uuid()) @db.Uuid
+  quote            Quote     @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  quoteId          String    @db.Uuid
+  storageKey       String    @db.VarChar(500)
+  storageBucket    String    @db.VarChar(100) @default("local")
+  originalFilename String?   @db.VarChar(500)
+  mimeType         String?   @db.VarChar(100)
+  fileSizeBytes    Int?
+  uploadedBy       User      @relation("QuoteInternalPhotoUploader", fields: [uploadedById], references: [id])
+  uploadedById     String    @db.Uuid
+  deletedAt        DateTime?
+  deletedBy        String?   @db.Uuid
+  createdAt        DateTime  @default(now())
+
+  @@index([quoteId, deletedAt, createdAt])
+  @@map("quote_internal_photos")
 }
 
 model QuoteItem {

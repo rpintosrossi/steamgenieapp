@@ -122,6 +122,7 @@ const NAV_ITEMS: NavItem[] = [
     ),
     children: [
       { href: '/presupuestos', label: 'Listado', module: APP_MODULES.PRESUPUESTOS },
+      { href: '/presupuestos/dashboard-pagos', label: 'Dashboard de Pagos', module: APP_MODULES.PRESUPUESTOS },
       { href: '/presupuestos/metodos-pago', label: 'Métodos de pago', module: APP_MODULES.PRESUPUESTOS },
     ],
   },

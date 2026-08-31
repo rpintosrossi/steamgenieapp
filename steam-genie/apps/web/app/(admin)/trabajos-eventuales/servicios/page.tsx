@@ -63,6 +63,47 @@ function formatScheduledTime(value: string | null): string {
   });
 }
 
+function formatWeekdayAndDateTime(value: string | null | undefined): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  const weekday = date.toLocaleDateString('es-AR', { weekday: 'long' });
+  const day = date.toLocaleDateString('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+  const time = date.toLocaleTimeString('es-AR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const weekdayLabel = weekday.charAt(0).toUpperCase() + weekday.slice(1);
+  return `${weekdayLabel} ${day} a las ${time}`;
+}
+
+function tomorrowDateKey(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function completedByLabel(wo: WorkOrderListItem): string {
+  const execution = wo.serviceExecutions?.[0];
+  const participantNames =
+    execution?.participants
+      .map((p) => p.user?.fullName?.trim())
+      .filter((name): name is string => Boolean(name)) ?? [];
+  if (participantNames.length > 0) return participantNames.join(', ');
+  const startedBy = execution?.startedBy?.fullName?.trim();
+  return startedBy && startedBy.length > 0 ? startedBy : 'No se registró el usuario';
+}
+
+function completedAtOf(wo: WorkOrderListItem): string | null {
+  return wo.completedAt ?? wo.serviceExecutions?.[0]?.completedAt ?? null;
+}
+
 function parseScheduleForForm(wo: WorkOrderListItem): { date: string; hour: string; minute: string } {
   const date = calendarDateKeyFromStored(wo.scheduledDate) || '';
   if (!wo.scheduledTime) {
@@ -133,7 +174,6 @@ function buildPriorRejectionAssignWarning(
 }
 
 const NON_DELETABLE_STATUSES = new Set(['COMPLETED']);
-const NON_RESCHEDULABLE_STATUSES = new Set(['IN_PROGRESS', 'COMPLETED']);
 const PURGE_CONFIRM_TOKEN = 'DELETE_ALL_WORK_ORDERS';
 
 function CleanerAssignOption({
@@ -252,6 +292,7 @@ function EventualServicesPageInner() {
   const [rescheduleHour, setRescheduleHour] = useState('11');
   const [rescheduleMinute, setRescheduleMinute] = useState('00');
   const [savingReschedule, setSavingReschedule] = useState(false);
+  const [rescheduleError, setRescheduleError] = useState<string | null>(null);
   const [financeWoId, setFinanceWoId] = useState<string | null>(null);
   const [detailWoId, setDetailWoId] = useState<string | null>(null);
   const [checklistWoId, setChecklistWoId] = useState<string | null>(null);
@@ -446,38 +487,53 @@ function EventualServicesPageInner() {
 
   function openReschedule(wo: WorkOrderListItem) {
     const parsed = parseScheduleForForm(wo);
+    const isCompleted = wo.status === 'COMPLETED';
     setReschedulingWo(wo);
-    setRescheduleDate(parsed.date);
+    setRescheduleDate(isCompleted ? tomorrowDateKey() : parsed.date);
     setRescheduleHour(parsed.hour);
     setRescheduleMinute(parsed.minute);
+    setRescheduleError(null);
     setError(null);
     setSuccess(null);
   }
 
   function closeReschedule() {
     setReschedulingWo(null);
+    setRescheduleError(null);
   }
 
   async function handleReschedule(e: FormEvent) {
     e.preventDefault();
     if (!reschedulingWo || !rescheduleDate) {
-      setError('Indicá la nueva fecha del servicio.');
+      setRescheduleError('Indicá la nueva fecha del servicio.');
       return;
     }
 
     setSavingReschedule(true);
+    setRescheduleError(null);
     setError(null);
     setSuccess(null);
     try {
       const scheduledAt = toIsoFromDatetimeLocal(
         `${rescheduleDate}T${rescheduleHour}:${rescheduleMinute}`,
       );
-      await api.patch(`/work-orders/${reschedulingWo.id}/reschedule`, { scheduledAt });
-      setSuccess('Servicio reprogramado.');
+      if (reschedulingWo.status === 'COMPLETED') {
+        await api.post(`/work-orders/${reschedulingWo.id}/repeat`, { scheduledAt });
+        setSuccess('Se creó un nuevo servicio con esa fecha. Quedó sin asignar.');
+      } else {
+        await api.patch(`/work-orders/${reschedulingWo.id}/reschedule`, { scheduledAt });
+        setSuccess('Servicio reprogramado.');
+      }
       closeReschedule();
       await loadServices();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo reprogramar el servicio');
+      setRescheduleError(
+        err instanceof Error
+          ? err.message
+          : reschedulingWo.status === 'COMPLETED'
+            ? 'No se pudo crear el nuevo servicio'
+            : 'No se pudo reprogramar el servicio',
+      );
     } finally {
       setSavingReschedule(false);
     }
@@ -698,8 +754,8 @@ function EventualServicesPageInner() {
                 {items.map((wo) => {
                   const canAssign = ASSIGNABLE_STATUSES.has(wo.status);
                   const canDelete = !NON_DELETABLE_STATUSES.has(wo.status);
-                  const canReschedule = !NON_RESCHEDULABLE_STATUSES.has(wo.status);
-                  const canEditTasks = wo.status !== 'COMPLETED';
+                  const isCompleted = wo.status === 'COMPLETED';
+                  const canEditTasks = !isCompleted;
                   const isFocused = focusId === wo.id;
                   return (
                     <tr
@@ -730,6 +786,13 @@ function EventualServicesPageInner() {
                         <span className="badge">
                           {WORK_ORDER_STATUS_LABELS[wo.status] ?? wo.status}
                         </span>
+                        {isCompleted ? (
+                          <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                            {completedByLabel(wo)}
+                            <br />
+                            {formatWeekdayAndDateTime(completedAtOf(wo))}
+                          </div>
+                        ) : null}
                       </td>
                       <td>{formatAssignments(wo)}</td>
                       <td>
@@ -768,15 +831,14 @@ function EventualServicesPageInner() {
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
-                            disabled={!canReschedule}
                             onClick={() => openReschedule(wo)}
                             title={
-                              canReschedule
-                                ? 'Cambiar fecha y hora del servicio'
-                                : 'No se puede reprogramar un servicio en curso o completado'
+                              isCompleted
+                                ? 'Este servicio ya se completó. Ver quién lo cerró o crear otro.'
+                                : 'Cambiar fecha y hora del servicio'
                             }
                           >
-                            Reprogramar
+                            {isCompleted ? 'Repetir' : 'Reprogramar'}
                           </button>
                           <button
                             type="button"
@@ -1068,7 +1130,11 @@ function EventualServicesPageInner() {
         <div className="modal-overlay" onClick={closeReschedule}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2 className="modal-title">Reprogramar servicio</h2>
+              <h2 className="modal-title">
+                {reschedulingWo.status === 'COMPLETED'
+                  ? 'Servicio completado'
+                  : 'Reprogramar servicio'}
+              </h2>
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
@@ -1084,14 +1150,45 @@ function EventualServicesPageInner() {
               {reschedulingWo.building?.name ?? 'Edificio'} ·{' '}
               {reschedulingWo.zone?.name ?? 'Zona'}
               <br />
-              Fecha actual: {formatDate(reschedulingWo.scheduledDate)}{' '}
+              Fecha programada: {formatDate(reschedulingWo.scheduledDate)}{' '}
               {formatScheduledTime(reschedulingWo.scheduledTime)}
             </p>
 
+            {reschedulingWo.status === 'COMPLETED' ? (
+              <div className="alert alert-info" style={{ marginBottom: 12 }}>
+                Este servicio ya fue reportado como completado. No se puede cambiar su fecha.
+                <br />
+                Completó: <strong>{completedByLabel(reschedulingWo)}</strong>
+                <br />
+                Día y fecha:{' '}
+                <strong>{formatWeekdayAndDateTime(completedAtOf(reschedulingWo))}</strong>
+              </div>
+            ) : reschedulingWo.status === 'IN_PROGRESS' ? (
+              <p className="muted" style={{ fontSize: 13 }}>
+                Este servicio está en curso. Se actualiza la fecha programada; la ejecución sigue
+                abierta.
+              </p>
+            ) : null}
+
+            {rescheduleError ? (
+              <div className="alert alert-error" style={{ marginBottom: 12 }}>
+                {rescheduleError}
+              </div>
+            ) : null}
+
             <form onSubmit={(e) => void handleReschedule(e)}>
+              {reschedulingWo.status === 'COMPLETED' ? (
+                <p style={{ marginTop: 0 }}>
+                  Si querés repetirlo, creá otro servicio en una fecha nueva. Se copia el checklist y
+                  queda sin asignar.
+                </p>
+              ) : null}
+
               <div className="form-grid" style={{ marginTop: 12 }}>
                 <div className="form-field">
-                  <label htmlFor="reschedule-date">Nueva fecha *</label>
+                  <label htmlFor="reschedule-date">
+                    {reschedulingWo.status === 'COMPLETED' ? 'Fecha del nuevo servicio *' : 'Nueva fecha *'}
+                  </label>
                   <input
                     id="reschedule-date"
                     className="input"
@@ -1132,7 +1229,7 @@ function EventualServicesPageInner() {
                 </div>
               </div>
 
-              {reschedulingWo.reservationId ? (
+              {reschedulingWo.reservationId && reschedulingWo.status !== 'COMPLETED' ? (
                 <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
                   Este servicio está ligado a una reserva: al reprogramar también se actualiza
                   el checkout de la reserva.
@@ -1145,7 +1242,13 @@ function EventualServicesPageInner() {
                   className="btn btn-primary"
                   disabled={savingReschedule || !rescheduleDate}
                 >
-                  {savingReschedule ? 'Guardando…' : 'Guardar nueva fecha'}
+                  {savingReschedule
+                    ? reschedulingWo.status === 'COMPLETED'
+                      ? 'Creando…'
+                      : 'Guardando…'
+                    : reschedulingWo.status === 'COMPLETED'
+                      ? 'Crear otro servicio'
+                      : 'Guardar nueva fecha'}
                 </button>
                 <button
                   type="button"

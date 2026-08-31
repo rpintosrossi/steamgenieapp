@@ -65,6 +65,7 @@ export function isPublicObjectStorageUrl(photoUrl: string): boolean {
 
     if (parsed.pathname.includes('/task-photos/serve/')) return false;
     if (/\/task-photos\/[^/]+\/file$/i.test(parsed.pathname)) return false;
+    if (/\/quotes\/[^/]+\/internal-photos\/[^/]+\/file$/i.test(parsed.pathname)) return false;
 
     return parsed.host !== apiBase.host;
   } catch {
@@ -80,7 +81,8 @@ function resolveApiPhotoUrl(photoUrl: string): string {
       const parsed = new URL(photoUrl);
       if (
         parsed.pathname.includes('/task-photos/serve/') ||
-        /\/task-photos\/[^/]+\/file$/i.test(parsed.pathname)
+        /\/task-photos\/[^/]+\/file$/i.test(parsed.pathname) ||
+        /\/quotes\/[^/]+\/internal-photos\/[^/]+\/file$/i.test(parsed.pathname)
       ) {
         return `${getApiBaseUrl()}${parsed.pathname}${parsed.search}`;
       }
@@ -107,9 +109,12 @@ export function taskPhotoNeedsAuthFetch(photoUrl: string): boolean {
 
   try {
     const path = new URL(photoUrl, getApiBaseUrl()).pathname;
-    return path.includes('/task-photos/');
+    return (
+      path.includes('/task-photos/') ||
+      /\/quotes\/[^/]+\/internal-photos\//.test(path)
+    );
   } catch {
-    return photoUrl.includes('/task-photos/');
+    return photoUrl.includes('/task-photos/') || photoUrl.includes('/internal-photos/');
   }
 }
 
@@ -315,8 +320,12 @@ export const api = {
     }),
   delete: <T>(path: string, opts?: FetchOptions) =>
     apiClient<T>(path, { method: 'DELETE', ...opts }),
-  upload: async <T>(path: string, file: File, opts?: FetchOptions): Promise<T> => {
-    const { skipAuth, _retried, ...fetchOptions } = opts ?? {};
+  upload: async <T>(
+    path: string,
+    file: File,
+    opts?: FetchOptions & { fieldName?: string },
+  ): Promise<T> => {
+    const { skipAuth, _retried, fieldName, ...fetchOptions } = opts ?? {};
 
     const bytes = await file.arrayBuffer();
     const snapshot = new File([bytes], file.name, {
@@ -326,7 +335,7 @@ export const api = {
 
     const send = async (retried: boolean): Promise<T> => {
       const formData = new FormData();
-      formData.append('file', snapshot);
+      formData.append(fieldName ?? 'file', snapshot);
 
       const headers: HeadersInit = { ...(fetchOptions.headers ?? {}) };
 

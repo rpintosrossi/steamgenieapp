@@ -84,8 +84,8 @@ export class BuildingsController {
 
   @Get(':id')
   @RequiredRoles('admin', 'manager')
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.buildingsService.findOne(id);
+  findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
+    return this.buildingsService.findOne(id, user);
   }
 
   @Patch(':id')

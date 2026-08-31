@@ -21,6 +21,13 @@ import { MarkTaskDto } from '../service-executions/dto/mark-task.dto';
 import { UploadPhotoDto } from '../service-executions/dto/upload-photo.dto';
 import { UploadPhasePhotoDto } from '../service-executions/dto/upload-phase-photo.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
+import {
+  assertBuildingAccess as assertUserBuildingAccess,
+  isBuildingAccessible,
+  loadBuildingAccessScope,
+  mergeBuildingIdConstraint,
+  resolveAccessibleBuildingIds,
+} from '../../common/building-access';
 import { QueryTasksDto } from './dto/query-tasks.dto';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -173,6 +180,13 @@ export class TasksService {
       }
     } else if (buildingId) {
       where.buildingId = buildingId;
+    }
+
+    if (user) {
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      if (!mergeBuildingIdConstraint(where, scope)) {
+        return { data: [], total: 0, page, limit, pages: 0 };
+      }
     }
 
     if (zoneId) where.zoneId = zoneId;
@@ -1758,69 +1772,22 @@ export class TasksService {
     user: AuthUser,
     buildingId?: string,
   ): Promise<string[] | null> {
-    const globalStaff = await this.prisma.userBuildingRole.findFirst({
-      where: {
-        userId: user.id,
-        buildingId: null,
-        role: { name: { in: ['admin', 'manager'] } },
-      },
-    });
-    if (globalStaff) {
-      return buildingId ? [buildingId] : null;
-    }
-
-    if (user.primaryRole === 'client') {
-      const clientAssignments = await this.prisma.userBuildingRole.findMany({
-        where: { userId: user.id, buildingId: { not: null } },
-        select: { buildingId: true },
-      });
-      const clientIds = [
-        ...new Set(
-          clientAssignments
-            .map((item) => item.buildingId)
-            .filter((id): id is string => Boolean(id)),
-        ),
-      ];
-      if (buildingId) {
-        return clientIds.includes(buildingId) ? [buildingId] : [];
-      }
-      return clientIds;
-    }
-
-    const assignments = await this.prisma.userBuildingRole.findMany({
-      where: {
-        userId: user.id,
-        buildingId: { not: null },
-        role: { name: { in: ['admin', 'manager'] } },
-      },
-      select: { buildingId: true },
-    });
-
-    const ids = [
-      ...new Set(
-        assignments
-          .map((item) => item.buildingId)
-          .filter((id): id is string => Boolean(id)),
-      ),
-    ];
-
+    const scope = await loadBuildingAccessScope(this.prisma, user.id);
     if (buildingId) {
-      return ids.includes(buildingId) ? [buildingId] : [];
+      return isBuildingAccessible(scope, buildingId) ? [buildingId] : [];
     }
-
-    return ids;
+    if (scope.hasGlobalAccess && scope.excludedIds.length === 0) {
+      return null;
+    }
+    try {
+      return await resolveAccessibleBuildingIds(this.prisma, user.id);
+    } catch {
+      return [];
+    }
   }
 
   private async assertBuildingAccess(userId: string, buildingId: string) {
-    const access = await this.prisma.userBuildingRole.findFirst({
-      where: {
-        userId,
-        OR: [{ buildingId: null }, { buildingId }],
-      },
-    });
-    if (!access) {
-      throw new ForbiddenException('You do not have access to this building');
-    }
+    await assertUserBuildingAccess(this.prisma, userId, buildingId);
   }
 
   private async assertActiveAttendance(userId: string, buildingId: string) {

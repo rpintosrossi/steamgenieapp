@@ -25,6 +25,7 @@ import { RejectWorkOrderDto } from './dto/reject-work-order.dto';
 import { CreateCheckoutCleaningDto } from './dto/create-checkout-cleaning.dto';
 import { CreateAdditionalRequestDto } from './dto/create-additional-request.dto';
 import { RescheduleWorkOrderDto } from './dto/reschedule-work-order.dto';
+import { RepeatWorkOrderDto } from './dto/repeat-work-order.dto';
 import { UpdateWorkOrderChecklistDto } from './dto/update-work-order-checklist.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
 
@@ -89,6 +90,16 @@ export class WorkOrdersController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.workOrdersService.reschedule(id, dto, user);
+  }
+
+  @Post(':id/repeat')
+  @RequiredRoles('admin', 'manager')
+  repeat(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RepeatWorkOrderDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.workOrdersService.repeat(id, dto, user);
   }
 
   @Patch(':id/checklist')

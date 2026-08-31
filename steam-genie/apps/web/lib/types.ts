@@ -365,6 +365,12 @@ export interface WorkOrderListItem {
   scheduledTime: string | null;
   deadlineAt: string | null;
   createdAt: string;
+  completedAt?: string | null;
+  serviceExecutions?: Array<{
+    completedAt: string | null;
+    startedBy?: { id: string; fullName: string } | null;
+    participants: Array<{ user?: { id: string; fullName: string } | null }>;
+  }>;
   building?: { id: string; name: string };
   zone?: { id: string; name: string } | null;
   assignments: WorkOrderAssignmentItem[];
@@ -425,6 +431,8 @@ export interface WorkOrderDetail {
   scheduledDate: string | null;
   scheduledTime: string | null;
   completedAt?: string | null;
+  reservationId?: string | null;
+  reservation?: { id: string } | null;
   building?: {
     id: string;
     name: string;
@@ -449,6 +457,7 @@ export interface WorkOrderDetail {
     status: string;
     startedAt: string | null;
     completedAt: string | null;
+    startedBy?: { id: string; fullName: string } | null;
     participants: Array<{
       id: string;
       userId: string;
@@ -459,6 +468,7 @@ export interface WorkOrderDetail {
   quote?: {
     id: string;
     number: number;
+    sellerName?: string | null;
     particularClient?: { name: string } | null;
     eventualClient?: { name: string } | null;
     building?: { name: string } | null;
@@ -637,6 +647,16 @@ export interface QuoteItemInput {
   discountPercent?: number;
 }
 
+export interface QuoteInternalPhoto {
+  id: string;
+  url: string;
+  originalFilename?: string | null;
+  mimeType?: string | null;
+  fileSizeBytes?: number | null;
+  createdAt: string;
+  uploadedBy?: { id: string; fullName: string } | null;
+}
+
 export interface Quote {
   id: string;
   number: number;
@@ -655,6 +675,7 @@ export interface Quote {
   paymentTerms?: string | null;
   observations?: string | null;
   internalNotes?: string | null;
+  internalPhotos?: QuoteInternalPhoto[];
   serviceIncludes?: string | null;
   validUntil?: string | null;
   subtotal: string | number;
@@ -723,6 +744,73 @@ export interface QuotePaymentInput {
   note?: string;
 }
 
+export type QuotePaymentServiceStatus = 'done' | 'partial' | 'pending' | 'none';
+
+export interface QuotePaymentsDashboardMethodStat {
+  paymentMethodId: string | null;
+  name: string;
+  amount: number;
+  quoteCount: number;
+  percent: number;
+}
+
+export interface QuotePaymentsDashboardQuote {
+  id: string;
+  number: number;
+  status: QuoteStatus;
+  requestDate: string;
+  total: number;
+  paidPercent: number;
+  paidAmount: number;
+  pendingPercent: number;
+  pendingAmount: number;
+  serviceStatus: QuotePaymentServiceStatus;
+  branchName?: string | null;
+  pendingByMethod: Array<{
+    paymentMethodId: string;
+    name: string;
+    amount: number;
+  }>;
+  paidByMethod: Array<{
+    paymentMethodId: string;
+    name: string;
+    percent: number;
+    amount: number;
+  }>;
+  workOrders: Array<{
+    id: string;
+    title: string;
+    status: string;
+    scheduledDate?: string | null;
+  }>;
+}
+
+export interface QuotePaymentsDashboardClient {
+  key: string;
+  kind: 'particular' | 'building' | 'eventual' | 'unknown';
+  kindLabel: string;
+  clientId: string | null;
+  name: string;
+  quoteCount: number;
+  pendingAmount: number;
+  paidAmount: number;
+  serviceStatus: QuotePaymentServiceStatus;
+  quotes: QuotePaymentsDashboardQuote[];
+}
+
+export interface QuotePaymentsDashboard {
+  totals: {
+    pendingAmount: number;
+    pendingClients: number;
+    pendingQuotes: number;
+    doneServicesAmount: number;
+    pendingServicesAmount: number;
+    noServiceAmount: number;
+  };
+  byPaymentMethod: QuotePaymentsDashboardMethodStat[];
+  clients: QuotePaymentsDashboardClient[];
+}
+
 export interface StockWarehouseItem {
   id: string;
   name: string;
@@ -766,6 +854,10 @@ export interface StockProductItem {
 export interface StockProductGroup {
   category: { id: string; name: string; sortOrder: number };
   products: StockProductItem[];
+  productCount?: number;
+  okCount?: number;
+  lowCount?: number;
+  outCount?: number;
 }
 
 export interface StockStats {

@@ -1,6 +1,5 @@
 import {
   Injectable,
-  ForbiddenException,
   NotFoundException,
   BadRequestException,
   HttpException,
@@ -15,6 +14,7 @@ import { TasksService } from '../tasks/tasks.service';
 import { PrefetchQueryDto } from './dto/prefetch-query.dto';
 import { SyncBatchDto, SyncOperationItemDto, SyncOperationType } from './dto/sync-batch.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
+import { assertBuildingAccess } from '../../common/building-access';
 
 // ─── Result types ────────────────────────────────────────────────────────────
 
@@ -56,16 +56,8 @@ export class SyncService {
   async prefetch(query: PrefetchQueryDto, user: AuthUser) {
     const { buildingId } = query;
 
-    // ── Validate building access via user_building_roles ─────────────────────
-    const access = await this.prisma.userBuildingRole.findFirst({
-      where: {
-        userId: user.id,
-        OR: [{ buildingId: null }, { buildingId }],
-      },
-    });
-    if (!access) {
-      throw new ForbiddenException('You do not have access to this building');
-    }
+    // ── Validate building access via user_building_roles + exclusiones ────────
+    await assertBuildingAccess(this.prisma, user.id, buildingId);
 
     const isManagerOrAdmin = !!(await this.prisma.userBuildingRole.findFirst({
       where: {

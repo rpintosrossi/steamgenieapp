@@ -13,6 +13,11 @@ import {
   UpdateFixedExpenseDto,
   UpdateWorkOrderExpenseDto,
 } from './dto/expenses.dto';
+import type { AuthUser } from '@steam-genie/shared-types';
+import {
+  loadBuildingAccessScope,
+  mergeBuildingIdConstraint,
+} from '../../common/building-access';
 
 @Injectable()
 export class WorkOrderExpensesService {
@@ -169,12 +174,19 @@ export class FixedExpensesService {
     };
   }
 
-  async findAll(includeInactive = false) {
+  async findAll(includeInactive = false, user?: AuthUser) {
+    const where: Prisma.FixedExpenseWhereInput = {
+      deletedAt: null,
+      ...(includeInactive ? {} : { isActive: true }),
+    };
+    if (user) {
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      if (!mergeBuildingIdConstraint(where, scope, { allowNull: true })) {
+        return [];
+      }
+    }
     const rows = await this.prisma.fixedExpense.findMany({
-      where: {
-        deletedAt: null,
-        ...(includeInactive ? {} : { isActive: true }),
-      },
+      where,
       include: { building: { select: { id: true, name: true } } },
       orderBy: [{ startDate: 'desc' }, { concept: 'asc' }],
     });

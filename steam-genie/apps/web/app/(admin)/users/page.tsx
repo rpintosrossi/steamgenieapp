@@ -24,6 +24,7 @@ interface AssignModalState {
   user: UserItem;
   buildings: Array<{ id: string; name: string }>;
   buildingRoles: UserBuildingRoleItem[];
+  excludedBuildingIds: string[];
 }
 
 const EMPTY_EDIT: EditFormState = {
@@ -101,11 +102,17 @@ export default function UsersPage() {
     setSuccess(null);
     try {
       invalidateBuildingsListCache();
-      const [buildingRoles, buildings] = await Promise.all([
+      const [buildingRoles, buildings, excluded] = await Promise.all([
         api.get<UserBuildingRoleItem[]>(`/users/${user.id}/building-roles`),
         fetchBuildingsList(),
+        api.get<{ buildingIds: string[] }>(`/users/${user.id}/excluded-buildings`),
       ]);
-      setAssignModal({ user, buildings, buildingRoles });
+      setAssignModal({
+        user,
+        buildings,
+        buildingRoles,
+        excludedBuildingIds: excluded.buildingIds ?? [],
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudieron cargar las asignaciones');
     } finally {
@@ -161,7 +168,8 @@ export default function UsersPage() {
   }
 
   function handleAssignmentsSaved() {
-    setSuccess('Edificios asignados correctamente.');
+    invalidateBuildingsListCache();
+    setSuccess('Sucursales actualizadas. El usuario verá todas salvo las excluidas.');
     void load();
   }
 
@@ -277,7 +285,7 @@ export default function UsersPage() {
                           onClick={() => void openAssign(user)}
                           disabled={loadingAssign}
                         >
-                          Gestionar Edificios
+                          Gestionar sucursales
                         </button>
                         {user.isActive ? (
                           <button
@@ -336,10 +344,9 @@ export default function UsersPage() {
           userId={assignModal.user.id}
           userFullName={assignModal.user.fullName}
           userDni={assignModal.user.dni}
-          primaryRole={assignModal.user.primaryRole}
-          roles={roles}
           buildings={assignModal.buildings}
           buildingRoles={assignModal.buildingRoles}
+          excludedBuildingIds={assignModal.excludedBuildingIds}
           onClose={closeAssign}
           onSaved={handleAssignmentsSaved}
         />

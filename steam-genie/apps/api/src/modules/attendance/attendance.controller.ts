@@ -9,6 +9,7 @@ import {
   UseGuards,
   ParseUUIDPipe,
   Req,
+  ForbiddenException,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { Observable, merge, interval, map, filter } from 'rxjs';
@@ -23,6 +24,11 @@ import { QueryAttendanceDto } from './dto/query-attendance.dto';
 import { QueryAttendanceTimelineDto } from './dto/query-attendance-timeline.dto';
 import { CorrectAttendanceDto } from './dto/correct-attendance.dto';
 import { TimelineEventsService } from '../../common/events/timeline-events.service';
+import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import {
+  isBuildingAccessible,
+  loadBuildingAccessScope,
+} from '../../common/building-access';
 import type { AuthUser } from '@steam-genie/shared-types';
 
 @Controller('attendance')
@@ -31,6 +37,7 @@ export class AttendanceController {
   constructor(
     private readonly attendanceService: AttendanceService,
     private readonly timelineEvents: TimelineEventsService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Post('check-in')
@@ -74,17 +81,21 @@ export class AttendanceController {
 
   @Get('timeline')
   @RequiredRoles('admin', 'manager')
-  findTimeline(@Query() query: QueryAttendanceTimelineDto) {
-    return this.attendanceService.findTimeline(query);
+  findTimeline(
+    @Query() query: QueryAttendanceTimelineDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.attendanceService.findTimeline(query, user);
   }
 
   @Get('timeline/tasks')
   @RequiredRoles('admin', 'manager')
   findTimelineTasks(
     @Query('buildingId', ParseUUIDPipe) buildingId: string,
+    @CurrentUser() user: AuthUser,
     @Query('date') date?: string,
   ) {
-    return this.attendanceService.findTimelineTasks(buildingId, date);
+    return this.attendanceService.findTimelineTasks(buildingId, date, user);
   }
 
   /**
@@ -95,11 +106,21 @@ export class AttendanceController {
    */
   @Sse('timeline/stream')
   @RequiredRoles('admin', 'manager')
-  timelineStream(
+  async timelineStream(
+    @CurrentUser() user: AuthUser,
     @Query('buildingId') buildingId?: string,
-  ): Observable<{ data: unknown; type?: string }> {
+  ): Promise<Observable<{ data: unknown; type?: string }>> {
+    const scope = await loadBuildingAccessScope(this.prisma, user.id);
+    if (buildingId && !isBuildingAccessible(scope, buildingId)) {
+      throw new ForbiddenException('No tenés acceso a este edificio.');
+    }
+
     const events$ = this.timelineEvents.stream$.pipe(
-      filter((event) => !buildingId || event.buildingId === buildingId),
+      filter(
+        (event) =>
+          isBuildingAccessible(scope, event.buildingId) &&
+          (!buildingId || event.buildingId === buildingId),
+      ),
       map((event) => ({ type: 'timeline', data: event })),
     );
 
@@ -115,8 +136,8 @@ export class AttendanceController {
 
   @Get()
   @RequiredRoles('admin', 'manager')
-  findAll(@Query() query: QueryAttendanceDto) {
-    return this.attendanceService.findAll(query);
+  findAll(@Query() query: QueryAttendanceDto, @CurrentUser() user: AuthUser) {
+    return this.attendanceService.findAll(query, user);
   }
 
   @Post(':id/correct')

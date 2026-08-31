@@ -13,6 +13,11 @@ import { UpdateSubzoneDto } from './dto/update-subzone.dto';
 import { parseCalendarDateInput } from '@steam-genie/shared-constants';
 import type { AuthUser } from '@steam-genie/shared-types';
 import type { QueryAssignableCleanersDto } from './dto/query-assignable-cleaners.dto';
+import {
+  applyBuildingRecordConstraint,
+  assertBuildingAccess,
+  loadBuildingAccessScope,
+} from '../../common/building-access';
 
 const ACTIVE_ASSIGNMENT_STATUSES = ['PENDING', 'ACCEPTED'] as const;
 const ACTIVE_WORK_ORDER_STATUSES = ['ASSIGNED', 'ACCEPTED', 'IN_PROGRESS'] as const;
@@ -54,26 +59,23 @@ export class BuildingsService {
     }
 
     if (user) {
-      // El encargado se crea con rol global, así que el listado iba al catálogo
-      // general (20 más nuevos, sin sitios particulares) y no a lo habilitado.
-      // Si tiene edificios asignados uno a uno, esos son los que debe ver.
-      if (user.primaryRole !== 'admin') {
-        const buildingIds = await this.getScopedBuildingIds(user.id);
-        if (buildingIds.length > 0) {
-          delete where.particularClient;
-          where.id = { in: buildingIds };
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      const scopedIds = scope.scopedIds.filter((id) => !scope.excludedIds.includes(id));
+      // Allowlist legado: el usuario ve exactamente esos edificios (incluye sitios particulares).
+      if (!scope.hasGlobalAccess && scopedIds.length > 0) {
+        delete where.particularClient;
+        where.id = { in: scopedIds };
 
-          const data = await this.prisma.building.findMany({
-            where,
-            orderBy: { name: 'asc' },
-          });
-          const total = data.length;
-          return { data, total, page: 1, limit: total || limit, pages: total > 0 ? 1 : 0 };
-        }
+        const data = await this.prisma.building.findMany({
+          where,
+          orderBy: { name: 'asc' },
+        });
+        const total = data.length;
+        return { data, total, page: 1, limit: total || limit, pages: total > 0 ? 1 : 0 };
       }
 
-      const canListAll = await this.canListAllBuildings(user);
-      if (!canListAll) {
+      const constraint = applyBuildingRecordConstraint(where, scope);
+      if (constraint === 'empty') {
         return { data: [], total: 0, page, limit, pages: 0 };
       }
     }
@@ -86,7 +88,10 @@ export class BuildingsService {
     return { data, total, page, limit, pages: Math.ceil(total / limit) };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: AuthUser) {
+    if (user) {
+      await assertBuildingAccess(this.prisma, user.id, id);
+    }
     const building = await this.prisma.building.findFirst({
       where: { id, deletedAt: null },
       include: {
@@ -833,39 +838,6 @@ export class BuildingsService {
   }
 
   // ─── Assertions ────────────────────────────────────────────────────────────
-
-  /** Edificios habilitados en user_building_roles (buildingId concreto). */
-  private async getScopedBuildingIds(userId: string): Promise<string[]> {
-    const assignments = await this.prisma.userBuildingRole.findMany({
-      where: { userId, buildingId: { not: null } },
-      select: { buildingId: true },
-    });
-    return [
-      ...new Set(
-        assignments
-          .map((item) => item.buildingId)
-          .filter((id): id is string => Boolean(id)),
-      ),
-    ];
-  }
-
-  /**
-   * Catálogo completo solo si no hay edificios habilitados uno a uno.
-   * Un encargado se crea con rol global; si después le asignan edificios,
-   * esas filas concretas son las que debe ver en la app.
-   */
-  private async canListAllBuildings(user: AuthUser): Promise<boolean> {
-    if (user.primaryRole === 'admin') return true;
-
-    const globalStaff = await this.prisma.userBuildingRole.findFirst({
-      where: {
-        userId: user.id,
-        buildingId: null,
-        role: { name: { in: ['admin', 'manager'] } },
-      },
-    });
-    return Boolean(globalStaff);
-  }
 
   private async assertBuildingExists(id: string) {
     const b = await this.prisma.building.findFirst({ where: { id, deletedAt: null } });

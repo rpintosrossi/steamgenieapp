@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 
 const LINKS = [
   { href: '/presupuestos', label: 'Listado', exact: true },
+  { href: '/presupuestos/dashboard-pagos', label: 'Dashboard de Pagos', exact: false },
   { href: '/presupuestos/metodos-pago', label: 'Métodos de pago', exact: false },
   { href: '/configuracion/sucursales', label: 'Sucursales', exact: false },
 ];

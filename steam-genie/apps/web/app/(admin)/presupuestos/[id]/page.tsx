@@ -13,7 +13,8 @@ import {
 } from '@steam-genie/shared-constants';
 import { api } from '../../../../lib/api-client';
 import { shareQuoteEmail, shareQuoteWhatsApp } from '../../../../lib/quote-share';
-import type { Quote, QuoteBranchItem, QuoteStatus } from '../../../../lib/types';
+import type { Quote, QuoteBranchItem, QuoteInternalPhoto, QuoteStatus } from '../../../../lib/types';
+import { QuoteInternalPhotos } from '../../../../components/QuoteInternalPhotos';
 
 function money(value: string | number) {
   const n = typeof value === 'number' ? value : Number(value);
@@ -563,6 +564,14 @@ export default function QuoteDetailPage() {
             style={{ width: '100%', display: 'block', resize: 'vertical' }}
           />
         </div>
+        <QuoteInternalPhotos
+          quoteId={quote.id}
+          photos={quote.internalPhotos ?? []}
+          onPhotosChange={(photos: QuoteInternalPhoto[]) =>
+            setQuote((current) => (current ? { ...current, internalPhotos: photos } : current))
+          }
+          onError={setError}
+        />
         <div className="form-actions" style={{ marginTop: 0 }}>
           <button
             type="button"

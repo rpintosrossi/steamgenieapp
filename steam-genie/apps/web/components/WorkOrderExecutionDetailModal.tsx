@@ -1,14 +1,19 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api-client';
 import {
   TASK_EXECUTION_STATUS_LABELS,
   WORK_ORDER_STATUS_LABELS,
   WORK_ORDER_TYPE_LABELS,
 } from '../lib/labels';
-import { formatStoredCalendarDate, buildClientPdfFilename } from '@steam-genie/shared-constants';
+import {
+  calendarDateKeyFromStored,
+  formatStoredCalendarDate,
+  buildClientPdfFilename,
+} from '@steam-genie/shared-constants';
+import { toIsoFromDatetimeLocal } from './LocationPicker';
 import type {
   PhotoEvidenceMode,
   ServiceExecutionPhasePhoto,
@@ -34,6 +39,9 @@ type Props = {
   onChecklistSaved?: () => void;
 };
 
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0'));
+const MINUTE_OPTIONS = ['00', '15', '30', '45'] as const;
+
 const PHASE_LABELS: Record<string, string> = {
   BEFORE: 'Antes',
   DURING: 'Durante',
@@ -49,6 +57,25 @@ function formatDateTime(value: string | null | undefined): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function formatWeekdayAndDateTime(value: string | null | undefined): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  const weekday = date.toLocaleDateString('es-AR', { weekday: 'long' });
+  const day = date.toLocaleDateString('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+  const time = date.toLocaleTimeString('es-AR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const weekdayLabel = weekday.charAt(0).toUpperCase() + weekday.slice(1);
+  return `${weekdayLabel} ${day} a las ${time}`;
 }
 
 function formatScheduledTime(value: string | null | undefined): string {
@@ -92,7 +119,34 @@ function photoRequirementLabel(requiresPhoto: boolean, allowsPhoto?: boolean): s
   return 'Sin foto';
 }
 
-export function WorkOrderExecutionDetailModal({ workOrderId, onClose, onChecklistSaved }: Props) {
+function tomorrowDateKey(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function parseScheduleForForm(wo: WorkOrderDetail): { date: string; hour: string; minute: string } {
+  const date = calendarDateKeyFromStored(wo.scheduledDate) || '';
+  if (!wo.scheduledTime) {
+    return { date, hour: '11', minute: '00' };
+  }
+  const instant = new Date(wo.scheduledTime);
+  if (Number.isNaN(instant.getTime())) {
+    return { date, hour: '11', minute: '00' };
+  }
+  const hour = String(instant.getHours()).padStart(2, '0');
+  const minuteNum = instant.getMinutes();
+  const snapped = String(Math.min(45, Math.round(minuteNum / 15) * 15)).padStart(2, '0');
+  const minute = (MINUTE_OPTIONS as readonly string[]).includes(snapped) ? snapped : '00';
+  return { date, hour, minute };
+}
+
+export function WorkOrderExecutionDetailModal({
+  workOrderId,
+  onClose,
+  onChecklistSaved,
+}: Props) {
   const [wo, setWo] = useState<WorkOrderDetail | null>(null);
   const [tasks, setTasks] = useState<ServiceExecutionTaskItem[]>([]);
   const [phasePhotos, setPhasePhotos] = useState<ServiceExecutionPhasePhoto[]>([]);
@@ -101,6 +155,13 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose, onChecklis
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [editingChecklist, setEditingChecklist] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleHour, setScheduleHour] = useState('11');
+  const [scheduleMinute, setScheduleMinute] = useState('00');
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [scheduleSuccess, setScheduleSuccess] = useState<string | null>(null);
+  const scheduleSectionRef = useRef<HTMLElement | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -138,6 +199,56 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose, onChecklis
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!wo) return;
+    const parsed = parseScheduleForForm(wo);
+    const isCompleted = wo.status === 'COMPLETED';
+    setScheduleDate(isCompleted ? tomorrowDateKey() : parsed.date);
+    setScheduleHour(parsed.hour);
+    setScheduleMinute(parsed.minute);
+    setScheduleError(null);
+  }, [wo]);
+
+  function scrollToSchedule() {
+    scheduleSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  async function handleScheduleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!wo || !scheduleDate) {
+      setScheduleError('Indicá la fecha del servicio.');
+      return;
+    }
+
+    setSavingSchedule(true);
+    setScheduleError(null);
+    setScheduleSuccess(null);
+    try {
+      const scheduledAt = toIsoFromDatetimeLocal(
+        `${scheduleDate}T${scheduleHour}:${scheduleMinute}`,
+      );
+      if (wo.status === 'COMPLETED') {
+        await api.post(`/work-orders/${wo.id}/repeat`, { scheduledAt });
+        setScheduleSuccess('Se creó un nuevo servicio con esa fecha. Quedó sin asignar.');
+      } else {
+        await api.patch(`/work-orders/${wo.id}/reschedule`, { scheduledAt });
+        setScheduleSuccess('Servicio reprogramado.');
+        await load();
+      }
+      onChecklistSaved?.();
+    } catch (err) {
+      setScheduleError(
+        err instanceof Error
+          ? err.message
+          : wo.status === 'COMPLETED'
+            ? 'No se pudo crear el nuevo servicio'
+            : 'No se pudo reprogramar el servicio',
+      );
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
 
   async function handleDownloadPdf() {
     if (!wo) return;
@@ -246,6 +357,20 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose, onChecklis
                 Editar tareas
               </button>
             ) : null}
+            {wo ? (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={scrollToSchedule}
+                title={
+                  wo.status === 'COMPLETED'
+                    ? 'Crear otro servicio con el mismo checklist en una fecha nueva'
+                    : 'Cambiar fecha y hora del servicio'
+                }
+              >
+                {wo.status === 'COMPLETED' ? 'Repetir' : 'Reprogramar'}
+              </button>
+            ) : null}
             <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
               Cerrar
             </button>
@@ -299,11 +424,29 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose, onChecklis
               </div>
               <div className="recurring-task-meta-item">
                 <dt>Finalización</dt>
-                <dd>{formatDateTime(se?.completedAt ?? wo.completedAt)}</dd>
+                <dd>
+                  {wo.status === 'COMPLETED'
+                    ? formatWeekdayAndDateTime(se?.completedAt ?? wo.completedAt)
+                    : formatDateTime(se?.completedAt ?? wo.completedAt)}
+                </dd>
               </div>
+              {wo.status === 'COMPLETED' ? (
+                <div className="recurring-task-meta-item">
+                  <dt>Completó</dt>
+                  <dd>
+                    {participants.length > 0
+                      ? participants.join(', ')
+                      : se?.startedBy?.fullName || 'No se registró el usuario'}
+                  </dd>
+                </div>
+              ) : null}
               <div className="recurring-task-meta-item">
                 <dt>Limpiadores en el servicio</dt>
                 <dd>{participants.length > 0 ? participants.join(', ') : '—'}</dd>
+              </div>
+              <div className="recurring-task-meta-item">
+                <dt>Vendedor</dt>
+                <dd>{wo.quote?.sellerName?.trim() || '—'}</dd>
               </div>
               {wo.quote ? (
                 <div className="recurring-task-meta-item">
@@ -316,6 +459,123 @@ export function WorkOrderExecutionDetailModal({ workOrderId, onClose, onChecklis
                 </div>
               ) : null}
             </dl>
+
+            <section
+              ref={scheduleSectionRef}
+              className="stack"
+              style={{
+                gap: 10,
+                padding: 12,
+                border: '1px solid var(--border, #e5e7eb)',
+                borderRadius: 8,
+                background: 'var(--surface-muted, #f9fafb)',
+              }}
+            >
+              <h4 className="recurring-task-list-heading" style={{ margin: 0 }}>
+                {wo.status === 'COMPLETED' ? 'Crear otro servicio' : 'Reprogramar servicio'}
+              </h4>
+
+              {wo.status === 'COMPLETED' ? (
+                <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                  Este servicio ya fue reportado como completado. No se puede cambiar su fecha.
+                  Completó:{' '}
+                  <strong>
+                    {participants.length > 0
+                      ? participants.join(', ')
+                      : se?.startedBy?.fullName || 'No se registró el usuario'}
+                  </strong>
+                  . Día y fecha:{' '}
+                  <strong>
+                    {formatWeekdayAndDateTime(se?.completedAt ?? wo.completedAt)}
+                  </strong>
+                  . Si querés repetirlo, creá otro con el mismo checklist; queda sin asignar.
+                </p>
+              ) : wo.status === 'IN_PROGRESS' ? (
+                <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                  Este servicio está en curso. Se actualiza la fecha programada; la ejecución sigue
+                  abierta.
+                </p>
+              ) : (
+                <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                  Cambiá la fecha y hora si no pudieron hacerlo el día original.
+                </p>
+              )}
+
+              {scheduleError ? <div className="alert alert-error">{scheduleError}</div> : null}
+              {scheduleSuccess ? (
+                <div className="alert alert-success">{scheduleSuccess}</div>
+              ) : null}
+
+              <form onSubmit={(e) => void handleScheduleSubmit(e)}>
+                <div className="form-grid">
+                  <div className="form-field">
+                    <label htmlFor="detail-schedule-date">
+                      {wo.status === 'COMPLETED' ? 'Fecha del nuevo servicio *' : 'Nueva fecha *'}
+                    </label>
+                    <input
+                      id="detail-schedule-date"
+                      className="input"
+                      type="date"
+                      required
+                      value={scheduleDate}
+                      onChange={(e) => setScheduleDate(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="detail-schedule-hour">Hora</label>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <select
+                        id="detail-schedule-hour"
+                        className="input"
+                        value={scheduleHour}
+                        onChange={(e) => setScheduleHour(e.target.value)}
+                      >
+                        {HOUR_OPTIONS.map((h) => (
+                          <option key={h} value={h}>
+                            {h}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        id="detail-schedule-minute"
+                        className="input"
+                        value={scheduleMinute}
+                        onChange={(e) => setScheduleMinute(e.target.value)}
+                      >
+                        {MINUTE_OPTIONS.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {wo.reservationId && wo.status !== 'COMPLETED' ? (
+                  <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
+                    Este servicio está ligado a una reserva: al reprogramar también se actualiza el
+                    checkout de la reserva.
+                  </p>
+                ) : null}
+
+                <div className="form-actions" style={{ marginTop: 12 }}>
+                  <button
+                    type="submit"
+                    className="btn btn-primary btn-sm"
+                    disabled={savingSchedule || !scheduleDate}
+                  >
+                    {savingSchedule
+                      ? wo.status === 'COMPLETED'
+                        ? 'Creando…'
+                        : 'Guardando…'
+                      : wo.status === 'COMPLETED'
+                        ? 'Crear otro servicio'
+                        : 'Guardar nueva fecha'}
+                  </button>
+                </div>
+              </form>
+            </section>
 
             {wo.quote ? (
               <section className="stack" style={{ gap: 10 }}>

@@ -13,6 +13,12 @@ import { CorrectAttendanceDto } from './dto/correct-attendance.dto';
 import type { AuthUser } from '@steam-genie/shared-types';
 import { businessDayInstantRange } from '@steam-genie/shared-constants';
 import { PeriodicTaskInstanceStatus } from '@prisma/client';
+import {
+  assertBuildingAccess,
+  isBuildingAccessible,
+  loadBuildingAccessScope,
+  mergeBuildingIdConstraint,
+} from '../../common/building-access';
 
 const TIMELINE_SELECT = {
   id: true,
@@ -62,6 +68,7 @@ export class AttendanceService {
 
   async checkIn(user: AuthUser, dto: CheckInDto, ip?: string) {
     const now = new Date();
+    await assertBuildingAccess(this.prisma, user.id, dto.buildingId);
 
     // GPS: fuera de radio → advertencia (no bloquea el fichaje).
     const gps = await this.evaluateGpsProximity(
@@ -234,7 +241,7 @@ export class AttendanceService {
 
   // ─── FIND ALL (admin/manager) ─────────────────────────────────────────────
 
-  async findAll(query: QueryAttendanceDto) {
+  async findAll(query: QueryAttendanceDto, user?: AuthUser) {
     const { page = 1, limit = 20, userId, buildingId, date } = query;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = { deletedAt: null };
@@ -244,6 +251,13 @@ export class AttendanceService {
     if (date) {
       const { start, end } = businessDayInstantRange(date);
       where.checkInAt = { gte: start, lt: end };
+    }
+
+    if (user) {
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      if (!mergeBuildingIdConstraint(where, scope)) {
+        return { data: [], total: 0, page, limit, pages: 0 };
+      }
     }
 
     const [data, total] = await Promise.all([
@@ -265,7 +279,7 @@ export class AttendanceService {
 
   // ─── TIMELINE (admin/manager) ─────────────────────────────────────────────
 
-  async findTimeline(query: QueryAttendanceTimelineDto) {
+  async findTimeline(query: QueryAttendanceTimelineDto, user?: AuthUser) {
     const { start, end } = businessDayInstantRange(query.date);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -275,6 +289,13 @@ export class AttendanceService {
     };
     if (query.userId) where.userId = query.userId;
     if (query.buildingId) where.buildingId = query.buildingId;
+
+    if (user) {
+      const scope = await loadBuildingAccessScope(this.prisma, user.id);
+      if (!mergeBuildingIdConstraint(where, scope)) {
+        return { data: [], total: 0, truncated: false };
+      }
+    }
 
     const [data, total] = await Promise.all([
       this.prisma.attendance.findMany({
@@ -359,7 +380,10 @@ export class AttendanceService {
   // ─── TIMELINE TASK DETAIL (admin/manager) ─────────────────────────────────
   // Returns the same task set counted by buildTaskProgressMap, but with details
   // for the timeline expand-row UI. Mirrors that query exactly to avoid mismatch.
-  async findTimelineTasks(buildingId: string, dateStr?: string) {
+  async findTimelineTasks(buildingId: string, dateStr?: string, user?: AuthUser) {
+    if (user) {
+      await assertBuildingAccess(this.prisma, user.id, buildingId);
+    }
     const { calendarDateKeyInBusinessTz } = await import('@steam-genie/shared-constants');
     const key = dateStr ?? calendarDateKeyInBusinessTz(new Date());
     const refDate = new Date(`${key}T00:00:00.000Z`);
@@ -473,6 +497,13 @@ export class AttendanceService {
       },
     });
     if (!hasRole) {
+      throw new ForbiddenException(
+        'You do not have permission to correct attendance records for this building',
+      );
+    }
+
+    const scope = await loadBuildingAccessScope(this.prisma, adminUser.id);
+    if (!isBuildingAccessible(scope, attendance.buildingId)) {
       throw new ForbiddenException(
         'You do not have permission to correct attendance records for this building',
       );

@@ -21,9 +21,25 @@ import type {
 } from '../../../../../lib/types';
 
 const QUICK_AMOUNTS = [1, 5, 10, 25];
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 50;
 
 type StatusFilter = 'ALL' | 'OK' | 'LOW' | 'OUT';
+
+type CategorySummary = {
+  category: { id: string; name: string; sortOrder: number };
+  productCount: number;
+  okCount: number;
+  lowCount: number;
+  outCount: number;
+};
+
+type CategoryProductsState = {
+  products: StockProductItem[];
+  page: number;
+  pages: number;
+  total: number;
+  loading: boolean;
+};
 
 function statusBadgeClass(status: StockProductItem['status']) {
   if (status === 'OUT') return 'badge badge-error';
@@ -41,32 +57,19 @@ function formatDateTime(iso: string) {
   });
 }
 
-function computeStats(products: StockProductItem[]): StockStats {
-  const active = products.filter((p) => p.isActive);
-  let lowStock = 0;
-  let outOfStock = 0;
-
-  for (const product of active) {
-    if (product.status === 'OUT') outOfStock += 1;
-    else if (product.status === 'LOW') lowStock += 1;
-  }
-
-  return {
-    totalProducts: active.length,
-    lowStock,
-    outOfStock,
-  };
-}
-
-function patchGroups(
-  groups: StockProductGroup[],
+function patchCategoryData(
+  data: Record<string, CategoryProductsState>,
   updates: StockProductItem[],
-): StockProductGroup[] {
+): Record<string, CategoryProductsState> {
   const byId = new Map(updates.map((product) => [product.id, product]));
-  return groups.map((group) => ({
-    ...group,
-    products: group.products.map((product) => byId.get(product.id) ?? product),
-  }));
+  const next: Record<string, CategoryProductsState> = {};
+  for (const [categoryId, state] of Object.entries(data)) {
+    next[categoryId] = {
+      ...state,
+      products: state.products.map((product) => byId.get(product.id) ?? product),
+    };
+  }
+  return next;
 }
 
 export default function StockWarehouseInventoryPage() {
@@ -75,7 +78,10 @@ export default function StockWarehouseInventoryPage() {
 
   const [warehouse, setWarehouse] = useState<StockWarehouseItem | null>(null);
   const [stats, setStats] = useState<StockStats | null>(null);
-  const [groups, setGroups] = useState<StockProductGroup[]>([]);
+  const [summaries, setSummaries] = useState<CategorySummary[]>([]);
+  const [matchedTotal, setMatchedTotal] = useState(0);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [categoryData, setCategoryData] = useState<Record<string, CategoryProductsState>>({});
   const [categories, setCategories] = useState<StockCategoryItem[]>([]);
   const [suppliers, setSuppliers] = useState<StockSupplierItem[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -85,10 +91,8 @@ export default function StockWarehouseInventoryPage() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
+  const [categoryNameFilter, setCategoryNameFilter] = useState('');
   const [showInactive, setShowInactive] = useState(false);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [pages, setPages] = useState(1);
 
   const [adjustAmount, setAdjustAmount] = useState(1);
   const [adjustingId, setAdjustingId] = useState<string | null>(null);
@@ -102,13 +106,52 @@ export default function StockWarehouseInventoryPage() {
   const [historyProduct, setHistoryProduct] = useState<StockProductItem | null>(null);
   const [savingProduct, setSavingProduct] = useState(false);
   const hasLoadedOnce = useRef(false);
+  const expandedIdsRef = useRef(expandedIds);
+  expandedIdsRef.current = expandedIds;
+  const categoryDataRef = useRef(categoryData);
+  categoryDataRef.current = categoryData;
 
   const applyProductUpdates = useCallback((updates: StockProductItem[]) => {
-    setGroups((prev) => {
-      const next = patchGroups(prev, updates);
-      setStats(computeStats(next.flatMap((group) => group.products)));
-      return next;
-    });
+    const prevData = categoryDataRef.current;
+    const updatedById = new Map(updates.map((product) => [product.id, product]));
+    const previousById = new Map<string, StockProductItem>();
+    for (const state of Object.values(prevData)) {
+      for (const product of state.products) {
+        if (updatedById.has(product.id)) previousById.set(product.id, product);
+      }
+    }
+
+    setCategoryData((prev) => patchCategoryData(prev, updates));
+    setSummaries((prev) =>
+      prev.map((summary) => {
+        let okCount = summary.okCount;
+        let lowCount = summary.lowCount;
+        let outCount = summary.outCount;
+        let changed = false;
+
+        for (const updated of updates) {
+          if (updated.categoryId !== summary.category.id) continue;
+          const previous = previousById.get(updated.id);
+          if (!previous || previous.status === updated.status) continue;
+          changed = true;
+          if (previous.status === 'OK') okCount -= 1;
+          else if (previous.status === 'LOW') lowCount -= 1;
+          else outCount -= 1;
+          if (updated.status === 'OK') okCount += 1;
+          else if (updated.status === 'LOW') lowCount += 1;
+          else outCount += 1;
+        }
+
+        if (!changed) return summary;
+        return {
+          ...summary,
+          okCount: Math.max(0, okCount),
+          lowCount: Math.max(0, lowCount),
+          outCount: Math.max(0, outCount),
+          productCount: Math.max(0, okCount) + Math.max(0, lowCount) + Math.max(0, outCount),
+        };
+      }),
+    );
   }, []);
 
   useEffect(() => {
@@ -116,9 +159,15 @@ export default function StockWarehouseInventoryPage() {
     return () => window.clearTimeout(timer);
   }, [search]);
 
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch]);
+  const inventoryQuery = useMemo(() => {
+    const params = new URLSearchParams({
+      warehouseId,
+      includeInactive: showInactive ? 'true' : 'false',
+    });
+    if (debouncedSearch) params.set('search', debouncedSearch);
+    if (statusFilter !== 'ALL') params.set('status', statusFilter);
+    return params;
+  }, [debouncedSearch, showInactive, statusFilter, warehouseId]);
 
   const loadCatalog = useCallback(async () => {
     try {
@@ -135,55 +184,173 @@ export default function StockWarehouseInventoryPage() {
     }
   }, [warehouseId]);
 
-  const loadInventory = useCallback(async (silent = false) => {
+  const refreshStats = useCallback(async () => {
     if (!warehouseId) return;
-    if (!silent) {
-      setInventoryLoading(true);
-    }
-    setError(null);
     try {
-      const params = new URLSearchParams({
-        warehouseId,
-        includeInactive: showInactive ? 'true' : 'false',
-        page: String(page),
-        limit: String(PAGE_SIZE),
-      });
-      if (debouncedSearch) params.set('search', debouncedSearch);
-      if (statusFilter !== 'ALL') params.set('status', statusFilter);
+      const statsRes = await api.get<StockStats>(`/stock/stats?warehouseId=${warehouseId}`);
+      setStats(statsRes);
+    } catch {
+      // Conservar el último valor conocido.
+    }
+  }, [warehouseId]);
 
-      const [statsRes, groupedRes] = await Promise.all([
-        api.get<StockStats>(`/stock/stats?warehouseId=${warehouseId}`),
-        api.get<{
+  const fetchCategoryProducts = useCallback(
+    async (categoryId: string, page = 1) => {
+      setCategoryData((prev) => ({
+        ...prev,
+        [categoryId]: {
+          products: prev[categoryId]?.products ?? [],
+          page,
+          pages: prev[categoryId]?.pages ?? 1,
+          total: prev[categoryId]?.total ?? 0,
+          loading: true,
+        },
+      }));
+
+      try {
+        const params = new URLSearchParams(inventoryQuery);
+        params.set('categoryId', categoryId);
+        params.set('page', String(page));
+        params.set('limit', String(PAGE_SIZE));
+
+        const res = await api.get<{
           groups: StockProductGroup[];
           total: number;
           page: number;
-          limit: number;
           pages: number;
-        }>(`/stock/products/grouped?${params}`),
-      ]);
+        }>(`/stock/products/grouped?${params}`);
 
-      setStats(statsRes);
-      setGroups(groupedRes.groups);
-      setTotal(groupedRes.total);
-      setPages(Math.max(1, groupedRes.pages));
-      hasLoadedOnce.current = true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al cargar inventario');
-    } finally {
-      setInitialLoading(false);
-      setInventoryLoading(false);
-    }
-  }, [debouncedSearch, showInactive, statusFilter, page, warehouseId]);
+        const products = res.groups[0]?.products ?? [];
+        setCategoryData((prev) => ({
+          ...prev,
+          [categoryId]: {
+            products,
+            page: res.page,
+            pages: Math.max(1, res.pages),
+            total: res.total,
+            loading: false,
+          },
+        }));
+      } catch (e) {
+        setCategoryData((prev) => ({
+          ...prev,
+          [categoryId]: {
+            products: prev[categoryId]?.products ?? [],
+            page: prev[categoryId]?.page ?? 1,
+            pages: prev[categoryId]?.pages ?? 1,
+            total: prev[categoryId]?.total ?? 0,
+            loading: false,
+          },
+        }));
+        setError(e instanceof Error ? e.message : 'Error al cargar productos');
+      }
+    },
+    [inventoryQuery],
+  );
+
+  const loadSummaries = useCallback(
+    async (options?: { silent?: boolean; ensureExpanded?: string[] }) => {
+      if (!warehouseId) return;
+      if (!options?.silent) {
+        setInventoryLoading(true);
+      }
+      setError(null);
+      try {
+        const [statsRes, groupedRes] = await Promise.all([
+          api.get<StockStats>(`/stock/stats?warehouseId=${warehouseId}`),
+          api.get<{ groups: StockProductGroup[]; total?: number }>(
+            `/stock/products/grouped?${inventoryQuery}&summaries=true`,
+          ),
+        ]);
+
+        const nextSummaries: CategorySummary[] = groupedRes.groups.map((group) => {
+          const okCount = group.okCount ?? 0;
+          const lowCount = group.lowCount ?? 0;
+          const outCount = group.outCount ?? 0;
+          return {
+            category: group.category,
+            okCount,
+            lowCount,
+            outCount,
+            productCount: group.productCount ?? okCount + lowCount + outCount,
+          };
+        });
+
+        setStats(statsRes);
+        setSummaries(nextSummaries);
+        setMatchedTotal(groupedRes.total ?? nextSummaries.reduce((sum, item) => sum + item.productCount, 0));
+        setCategoryData({});
+
+        const available = new Set(nextSummaries.map((item) => item.category.id));
+        const nextExpanded = new Set<string>();
+        for (const id of expandedIdsRef.current) {
+          if (available.has(id)) nextExpanded.add(id);
+        }
+        for (const id of options?.ensureExpanded ?? []) {
+          if (available.has(id)) nextExpanded.add(id);
+        }
+        if (nextSummaries.length === 1) {
+          nextExpanded.add(nextSummaries[0].category.id);
+        } else if (debouncedSearch && nextSummaries.length > 0 && nextSummaries.length <= 3) {
+          for (const item of nextSummaries) nextExpanded.add(item.category.id);
+        }
+
+        expandedIdsRef.current = nextExpanded;
+        setExpandedIds(nextExpanded);
+        hasLoadedOnce.current = true;
+
+        await Promise.all([...nextExpanded].map((id) => fetchCategoryProducts(id, 1)));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Error al cargar inventario');
+      } finally {
+        setInitialLoading(false);
+        setInventoryLoading(false);
+      }
+    },
+    [debouncedSearch, fetchCategoryProducts, inventoryQuery, warehouseId],
+  );
 
   useEffect(() => {
     void loadCatalog();
   }, [loadCatalog]);
 
   useEffect(() => {
-    void loadInventory(hasLoadedOnce.current);
-  }, [loadInventory]);
+    void loadSummaries({ silent: hasLoadedOnce.current });
+  }, [loadSummaries]);
 
-  const allVisibleProducts = useMemo(() => groups.flatMap((g) => g.products), [groups]);
+  const visibleSummaries = useMemo(() => {
+    const term = categoryNameFilter.trim().toLowerCase();
+    if (!term) return summaries;
+    return summaries.filter((item) => item.category.name.toLowerCase().includes(term));
+  }, [summaries, categoryNameFilter]);
+
+  const allVisibleProducts = useMemo(
+    () =>
+      visibleSummaries.flatMap((item) =>
+        expandedIds.has(item.category.id) ? (categoryData[item.category.id]?.products ?? []) : [],
+      ),
+    [visibleSummaries, expandedIds, categoryData],
+  );
+
+  function toggleCategory(categoryId: string) {
+    const isOpen = expandedIds.has(categoryId);
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (isOpen) next.delete(categoryId);
+      else next.add(categoryId);
+      expandedIdsRef.current = next;
+      return next;
+    });
+    if (!isOpen && !categoryData[categoryId]) {
+      void fetchCategoryProducts(categoryId, 1);
+    }
+  }
+
+  function collapseAll() {
+    const empty = new Set<string>();
+    expandedIdsRef.current = empty;
+    setExpandedIds(empty);
+  }
 
   function toggleSelect(id: string) {
     setSelectedIds((prev) => {
@@ -211,6 +378,7 @@ export default function StockWarehouseInventoryPage() {
         delta,
       });
       applyProductUpdates([updated]);
+      void refreshStats();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo ajustar el stock');
     } finally {
@@ -234,6 +402,7 @@ export default function StockWarehouseInventoryPage() {
         adjustments: [...selectedIds].map((productId) => ({ productId, delta })),
       });
       applyProductUpdates(result.updated);
+      void refreshStats();
       setSuccess(
         `Ajuste masivo aplicado a ${selectedIds.size} producto(s): ${delta > 0 ? '+' : ''}${delta}.`,
       );
@@ -296,7 +465,7 @@ export default function StockWarehouseInventoryPage() {
       setSuccess(editing ? 'Producto actualizado.' : 'Producto creado.');
       setModalOpen(false);
       setEditing(null);
-      await loadInventory(true);
+      await loadSummaries({ silent: true, ensureExpanded: [form.categoryId] });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo guardar el producto');
       throw e;
@@ -314,7 +483,7 @@ export default function StockWarehouseInventoryPage() {
     try {
       await api.delete(`/stock/products/${product.id}?warehouseId=${warehouseId}`);
       setSuccess('Producto eliminado de este depósito.');
-      await loadInventory(true);
+      await loadSummaries({ silent: true, ensureExpanded: [product.categoryId] });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo eliminar el producto');
     } finally {
@@ -342,7 +511,7 @@ export default function StockWarehouseInventoryPage() {
           </p>
           <h1 className="page-title">{warehouse?.name ?? 'Inventario'}</h1>
           <p className="page-subtitle">
-            Inventario de este depósito, con ajustes rápidos individuales o masivos.
+            Inventario de este depósito. Abrí una categoría para ver y ajustar sus productos.
           </p>
         </div>
         <button type="button" className="btn btn-primary" onClick={openCreate}>
@@ -394,7 +563,6 @@ export default function StockWarehouseInventoryPage() {
               value={statusFilter}
               onChange={(e) => {
                 setStatusFilter(e.target.value as StatusFilter);
-                setPage(1);
               }}
             >
               <option value="ALL">Todos</option>
@@ -426,7 +594,6 @@ export default function StockWarehouseInventoryPage() {
               checked={showInactive}
               onChange={(e) => {
                 setShowInactive(e.target.checked);
-                setPage(1);
               }}
             />
             Incluir inactivos
@@ -453,177 +620,279 @@ export default function StockWarehouseInventoryPage() {
             <div className="spinner" role="status" aria-label="Cargando" />
           </div>
         </div>
-      ) : groups.length === 0 ? (
+      ) : summaries.length === 0 ? (
         <div className="card empty-state">
           <p>{inventoryLoading ? 'Actualizando inventario…' : 'No hay productos para mostrar.'}</p>
         </div>
       ) : (
         <>
+          <div className="stock-category-toolbar">
+            <p className="stock-category-toolbar-meta">
+              {visibleSummaries.length} categoría{visibleSummaries.length === 1 ? '' : 's'}
+              {visibleSummaries.length !== summaries.length ? ` de ${summaries.length}` : ''}
+              {' · '}
+              {matchedTotal} producto{matchedTotal === 1 ? '' : 's'}
+              {debouncedSearch || statusFilter !== 'ALL' ? ' con este filtro' : ''}
+            </p>
+            <div className="stock-category-toolbar-actions">
+              <input
+                className="input"
+                placeholder="Filtrar categorías…"
+                value={categoryNameFilter}
+                onChange={(e) => setCategoryNameFilter(e.target.value)}
+                aria-label="Filtrar categorías por nombre"
+                style={{ minWidth: 180, maxWidth: 260 }}
+              />
+              {expandedIds.size > 0 ? (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={collapseAll}>
+                  Cerrar todas
+                </button>
+              ) : null}
+            </div>
+          </div>
           {inventoryLoading ? (
             <p className="muted" style={{ margin: '0 0 12px' }}>
               Actualizando inventario…
             </p>
           ) : null}
-          {groups.map((group) => (
-          <div key={group.category.id} className="card" style={{ marginBottom: 16 }}>
-            <h2 className="stock-category-title">{group.category.name}</h2>
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th style={{ width: 36 }}>
-                      <input
-                        type="checkbox"
-                        aria-label="Seleccionar todos en esta categoría"
-                        checked={
-                          group.products.length > 0 &&
-                          group.products.every((p) => selectedIds.has(p.id))
-                        }
-                        onChange={() => {
-                          const allSelected = group.products.every((p) => selectedIds.has(p.id));
-                          setSelectedIds((prev) => {
-                            const next = new Set(prev);
-                            for (const p of group.products) {
-                              if (allSelected) next.delete(p.id);
-                              else next.add(p.id);
-                            }
-                            return next;
-                          });
-                        }}
-                      />
-                    </th>
-                    <th>Producto</th>
-                    <th>Stock</th>
-                    <th>Estado</th>
-                    <th>Proveedor</th>
-                    <th>Ficha</th>
-                    <th>Última actualización</th>
-                    <th>Ajuste rápido</th>
-                    <th style={{ width: 100 }} />
-                  </tr>
-                </thead>
-                <tbody>
-                  {group.products.map((product) => {
-                    const busy = adjustingId === product.id;
-                    const unitLabel = STOCK_UNIT_LABELS[product.unitType as keyof typeof STOCK_UNIT_LABELS] ?? product.unitType;
-                    return (
-                      <tr key={product.id} className={!product.isActive ? 'row-muted' : undefined}>
-                        <td>
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.has(product.id)}
-                            onChange={() => toggleSelect(product.id)}
-                            aria-label={`Seleccionar ${product.name}`}
-                          />
-                        </td>
-                        <td>
-                          <strong>{product.name}</strong>
-                          {product.sku ? (
-                            <div className="text-muted text-sm">SKU: {product.sku}</div>
+          <div className="stock-category-list">
+            {visibleSummaries.length === 0 ? (
+              <div className="card empty-state" style={{ margin: 0 }}>
+                <p>Ninguna categoría coincide con “{categoryNameFilter.trim()}”.</p>
+              </div>
+            ) : null}
+            {visibleSummaries.map((group) => {
+              const isExpanded = expandedIds.has(group.category.id);
+              const state = categoryData[group.category.id];
+              const products = state?.products ?? [];
+              const panelId = `stock-cat-${group.category.id}`;
+
+              return (
+                <div
+                  key={group.category.id}
+                  className={`stock-category-item${isExpanded ? ' is-expanded' : ''}`}
+                >
+                  <button
+                    type="button"
+                    className="stock-category-toggle"
+                    onClick={() => toggleCategory(group.category.id)}
+                    aria-expanded={isExpanded}
+                    aria-controls={panelId}
+                  >
+                    <span className={`stock-category-chevron${isExpanded ? ' is-expanded' : ''}`} aria-hidden>
+                      ▶
+                    </span>
+                    <span className="stock-category-toggle-title">{group.category.name}</span>
+                    <span className="stock-category-counts" aria-label="Estado del stock en esta categoría">
+                      <span className="stock-category-count stock-category-count--out">
+                        {group.outCount} sin stock
+                      </span>
+                      <span className="stock-category-count stock-category-count--low">
+                        {group.lowCount} alerta
+                      </span>
+                      <span className="stock-category-count stock-category-count--ok">
+                        {group.okCount} ok
+                      </span>
+                    </span>
+                  </button>
+
+                  {isExpanded ? (
+                    <div id={panelId} className="stock-category-body">
+                      {state?.loading && products.length === 0 ? (
+                        <div className="stock-category-loading">
+                          <div className="spinner" role="status" aria-label="Cargando productos" />
+                        </div>
+                      ) : products.length === 0 ? (
+                        <p className="muted" style={{ margin: 0, padding: '12px 16px' }}>
+                          No hay productos en esta categoría.
+                        </p>
+                      ) : (
+                        <>
+                          {state?.loading ? (
+                            <p className="muted" style={{ margin: '0 16px 8px' }}>
+                              Actualizando productos…
+                            </p>
                           ) : null}
-                          <div className="text-muted text-sm">{unitLabel}</div>
-                        </td>
-                        <td>
-                          <strong>{product.quantity}</strong>{' '}
-                          <span className="text-muted text-sm">{unitLabel}</span>
-                        </td>
-                        <td>
-                          <span className={statusBadgeClass(product.status)}>
-                            {STOCK_STATUS_LABELS[product.status]}
-                          </span>
-                        </td>
-                        <td>{product.supplier?.name ?? '—'}</td>
-                        <td>
-                          {product.hasDatasheet ? (
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => void downloadDatasheet(product)}
-                              title={product.datasheetFileName ?? 'Ficha técnica'}
-                            >
-                              Ver ficha
-                            </button>
-                          ) : (
-                            <span className="muted">—</span>
-                          )}
-                        </td>
-                        <td>{formatDateTime(product.stockUpdatedAt)}</td>
-                        <td>
-                          <div className="stock-quick-adjust">
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-secondary"
-                              disabled={busy}
-                              onClick={() => void adjustProduct(product.id, -adjustAmount)}
-                              aria-label={`Restar ${adjustAmount}`}
-                            >
-                              −{adjustAmount}
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-primary"
-                              disabled={busy}
-                              onClick={() => void adjustProduct(product.id, adjustAmount)}
-                              aria-label={`Sumar ${adjustAmount}`}
-                            >
-                              +{adjustAmount}
-                            </button>
+                          <div className="table-wrap">
+                            <table className="table">
+                              <thead>
+                                <tr>
+                                  <th style={{ width: 36 }}>
+                                    <input
+                                      type="checkbox"
+                                      aria-label="Seleccionar todos en esta categoría"
+                                      checked={
+                                        products.length > 0 &&
+                                        products.every((p) => selectedIds.has(p.id))
+                                      }
+                                      onChange={() => {
+                                        const allSelected = products.every((p) => selectedIds.has(p.id));
+                                        setSelectedIds((prev) => {
+                                          const next = new Set(prev);
+                                          for (const p of products) {
+                                            if (allSelected) next.delete(p.id);
+                                            else next.add(p.id);
+                                          }
+                                          return next;
+                                        });
+                                      }}
+                                    />
+                                  </th>
+                                  <th>Producto</th>
+                                  <th>Stock</th>
+                                  <th>Estado</th>
+                                  <th>Proveedor</th>
+                                  <th>Ficha</th>
+                                  <th>Última actualización</th>
+                                  <th>Ajuste rápido</th>
+                                  <th style={{ width: 100 }} />
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {products.map((product) => {
+                                  const busy = adjustingId === product.id;
+                                  const unitLabel =
+                                    STOCK_UNIT_LABELS[product.unitType as keyof typeof STOCK_UNIT_LABELS] ??
+                                    product.unitType;
+                                  return (
+                                    <tr
+                                      key={product.id}
+                                      className={!product.isActive ? 'row-muted' : undefined}
+                                    >
+                                      <td>
+                                        <input
+                                          type="checkbox"
+                                          checked={selectedIds.has(product.id)}
+                                          onChange={() => toggleSelect(product.id)}
+                                          aria-label={`Seleccionar ${product.name}`}
+                                        />
+                                      </td>
+                                      <td>
+                                        <strong>{product.name}</strong>
+                                        {product.sku ? (
+                                          <div className="text-muted text-sm">SKU: {product.sku}</div>
+                                        ) : null}
+                                        <div className="text-muted text-sm">{unitLabel}</div>
+                                      </td>
+                                      <td>
+                                        <strong>{product.quantity}</strong>{' '}
+                                        <span className="text-muted text-sm">{unitLabel}</span>
+                                      </td>
+                                      <td>
+                                        <span className={statusBadgeClass(product.status)}>
+                                          {STOCK_STATUS_LABELS[product.status]}
+                                        </span>
+                                      </td>
+                                      <td>{product.supplier?.name ?? '—'}</td>
+                                      <td>
+                                        {product.hasDatasheet ? (
+                                          <button
+                                            type="button"
+                                            className="btn btn-ghost btn-sm"
+                                            onClick={() => void downloadDatasheet(product)}
+                                            title={product.datasheetFileName ?? 'Ficha técnica'}
+                                          >
+                                            Ver ficha
+                                          </button>
+                                        ) : (
+                                          <span className="muted">—</span>
+                                        )}
+                                      </td>
+                                      <td>{formatDateTime(product.stockUpdatedAt)}</td>
+                                      <td>
+                                        <div className="stock-quick-adjust">
+                                          <button
+                                            type="button"
+                                            className="btn btn-sm btn-secondary"
+                                            disabled={busy}
+                                            onClick={() => void adjustProduct(product.id, -adjustAmount)}
+                                            aria-label={`Restar ${adjustAmount}`}
+                                          >
+                                            −{adjustAmount}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="btn btn-sm btn-primary"
+                                            disabled={busy}
+                                            onClick={() => void adjustProduct(product.id, adjustAmount)}
+                                            aria-label={`Sumar ${adjustAmount}`}
+                                          >
+                                            +{adjustAmount}
+                                          </button>
+                                        </div>
+                                      </td>
+                                      <td>
+                                        <div className="table-actions">
+                                          <button
+                                            type="button"
+                                            className="btn btn-ghost btn-sm"
+                                            onClick={() => setHistoryProduct(product)}
+                                          >
+                                            Historial
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="btn btn-ghost btn-sm"
+                                            onClick={() => openEdit(product)}
+                                          >
+                                            Editar
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="btn btn-ghost btn-sm"
+                                            disabled={busy}
+                                            onClick={() => void removeProduct(product)}
+                                          >
+                                            Eliminar
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
                           </div>
-                        </td>
-                        <td>
-                          <div className="table-actions">
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => setHistoryProduct(product)}
-                            >
-                              Historial
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => openEdit(product)}
-                            >
-                              Editar
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-sm"
-                              disabled={busy}
-                              onClick={() => void removeProduct(product)}
-                            >
-                              Eliminar
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          ))}
-          <div className="pagination" style={{ marginTop: 8 }}>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Anterior
-            </button>
-            <span className="pagination-info">
-              Página {page} de {pages} · {total} producto{total === 1 ? '' : 's'}
-            </span>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              disabled={page >= pages}
-              onClick={() => setPage((p) => Math.min(pages, p + 1))}
-            >
-              Siguiente
-            </button>
+                          {(state?.pages ?? 1) > 1 ? (
+                            <div className="pagination" style={{ margin: '8px 16px 12px' }}>
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                disabled={(state?.page ?? 1) <= 1 || Boolean(state?.loading)}
+                                onClick={() =>
+                                  void fetchCategoryProducts(group.category.id, Math.max(1, (state?.page ?? 1) - 1))
+                                }
+                              >
+                                Anterior
+                              </button>
+                              <span className="pagination-info">
+                                Página {state?.page ?? 1} de {state?.pages ?? 1} · {state?.total ?? products.length}{' '}
+                                producto{(state?.total ?? products.length) === 1 ? '' : 's'}
+                              </span>
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                disabled={
+                                  (state?.page ?? 1) >= (state?.pages ?? 1) || Boolean(state?.loading)
+                                }
+                                onClick={() =>
+                                  void fetchCategoryProducts(
+                                    group.category.id,
+                                    Math.min(state?.pages ?? 1, (state?.page ?? 1) + 1),
+                                  )
+                                }
+                              >
+                                Siguiente
+                              </button>
+                            </div>
+                          ) : null}
+                        </>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         </>
       )}
@@ -634,12 +903,11 @@ export default function StockWarehouseInventoryPage() {
             <input
               type="checkbox"
               checked={
-                allVisibleProducts.length > 0 &&
-                selectedIds.size === allVisibleProducts.length
+                allVisibleProducts.length > 0 && selectedIds.size === allVisibleProducts.length
               }
               onChange={toggleSelectAll}
             />
-            Seleccionar todos los productos de esta página ({allVisibleProducts.length})
+            Seleccionar todos los productos visibles ({allVisibleProducts.length})
           </label>
         </div>
       ) : null}

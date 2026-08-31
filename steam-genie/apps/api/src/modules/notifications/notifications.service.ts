@@ -142,7 +142,15 @@ export class NotificationsService {
       distinct: ['userId'],
     });
 
-    return assignments.map((row) => row.userId);
+    const userIds = assignments.map((row) => row.userId);
+    if (userIds.length === 0) return [];
+
+    const excluded = await this.prisma.userExcludedBuilding.findMany({
+      where: { buildingId, userId: { in: userIds } },
+      select: { userId: true },
+    });
+    const excludedSet = new Set(excluded.map((row) => row.userId));
+    return userIds.filter((id) => !excludedSet.has(id));
   }
 
   async notifyWorkOrderAssigned(params: {
