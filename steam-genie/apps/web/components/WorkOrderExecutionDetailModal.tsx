@@ -12,6 +12,7 @@ import {
   calendarDateKeyFromStored,
   formatStoredCalendarDate,
   buildClientPdfFilename,
+  formatQuoteNumber,
 } from '@steam-genie/shared-constants';
 import { toIsoFromDatetimeLocal } from './LocationPicker';
 import type {
@@ -37,6 +38,7 @@ type Props = {
   workOrderId: string;
   onClose: () => void;
   onChecklistSaved?: () => void;
+  onDeleted?: () => void;
 };
 
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0'));
@@ -119,13 +121,6 @@ function photoRequirementLabel(requiresPhoto: boolean, allowsPhoto?: boolean): s
   return 'Sin foto';
 }
 
-function tomorrowDateKey(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
 function parseScheduleForForm(wo: WorkOrderDetail): { date: string; hour: string; minute: string } {
   const date = calendarDateKeyFromStored(wo.scheduledDate) || '';
   if (!wo.scheduledTime) {
@@ -146,6 +141,7 @@ export function WorkOrderExecutionDetailModal({
   workOrderId,
   onClose,
   onChecklistSaved,
+  onDeleted,
 }: Props) {
   const [wo, setWo] = useState<WorkOrderDetail | null>(null);
   const [tasks, setTasks] = useState<ServiceExecutionTaskItem[]>([]);
@@ -155,6 +151,7 @@ export function WorkOrderExecutionDetailModal({
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [editingChecklist, setEditingChecklist] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduleHour, setScheduleHour] = useState('11');
   const [scheduleMinute, setScheduleMinute] = useState('00');
@@ -203,12 +200,11 @@ export function WorkOrderExecutionDetailModal({
   useEffect(() => {
     if (!wo) return;
     const parsed = parseScheduleForForm(wo);
-    const isCompleted = wo.status === 'COMPLETED';
-    setScheduleDate(isCompleted ? tomorrowDateKey() : parsed.date);
+    setScheduleDate(parsed.date);
     setScheduleHour(parsed.hour);
     setScheduleMinute(parsed.minute);
     setScheduleError(null);
-  }, [wo]);
+  }, [wo?.id, wo?.scheduledDate, wo?.scheduledTime]);
 
   function scrollToSchedule() {
     scheduleSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -228,25 +224,45 @@ export function WorkOrderExecutionDetailModal({
       const scheduledAt = toIsoFromDatetimeLocal(
         `${scheduleDate}T${scheduleHour}:${scheduleMinute}`,
       );
-      if (wo.status === 'COMPLETED') {
-        await api.post(`/work-orders/${wo.id}/repeat`, { scheduledAt });
-        setScheduleSuccess('Se creó un nuevo servicio con esa fecha. Quedó sin asignar.');
-      } else {
-        await api.patch(`/work-orders/${wo.id}/reschedule`, { scheduledAt });
-        setScheduleSuccess('Servicio reprogramado.');
-        await load();
-      }
+      await api.patch(`/work-orders/${wo.id}/reschedule`, { scheduledAt });
+      setScheduleSuccess('Servicio reprogramado.');
+      await load();
       onChecklistSaved?.();
     } catch (err) {
       setScheduleError(
-        err instanceof Error
-          ? err.message
-          : wo.status === 'COMPLETED'
-            ? 'No se pudo crear el nuevo servicio'
-            : 'No se pudo reprogramar el servicio',
+        err instanceof Error ? err.message : 'No se pudo reprogramar el servicio',
       );
     } finally {
       setSavingSchedule(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!wo) return;
+    if (wo.status === 'COMPLETED') {
+      setError('No se puede eliminar un servicio completado.');
+      return;
+    }
+
+    if (!window.confirm(`¿Eliminar el servicio "${wo.title}"?`)) return;
+
+    let deleteQuote = false;
+    if (wo.quote) {
+      deleteQuote = window.confirm(
+        `¿También eliminar el presupuesto ${formatQuoteNumber(wo.quote.number)}?\n\nSi el presupuesto tiene otros servicios no completados, también se eliminarán.`,
+      );
+    }
+
+    setDeleting(true);
+    setError(null);
+    try {
+      const qs = deleteQuote ? '?deleteQuote=true' : '';
+      await api.delete(`/work-orders/${wo.id}${qs}`);
+      onDeleted?.();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo eliminar el servicio');
+      setDeleting(false);
     }
   }
 
@@ -362,13 +378,20 @@ export function WorkOrderExecutionDetailModal({
                 type="button"
                 className="btn btn-secondary btn-sm"
                 onClick={scrollToSchedule}
-                title={
-                  wo.status === 'COMPLETED'
-                    ? 'Crear otro servicio con el mismo checklist en una fecha nueva'
-                    : 'Cambiar fecha y hora del servicio'
-                }
+                title="Cambiar fecha y hora del servicio"
               >
-                {wo.status === 'COMPLETED' ? 'Repetir' : 'Reprogramar'}
+                Reprogramar
+              </button>
+            ) : null}
+            {wo && wo.status !== 'COMPLETED' ? (
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                disabled={deleting}
+                onClick={() => void handleDelete()}
+                title="Eliminar este servicio"
+              >
+                {deleting ? 'Eliminando…' : 'Eliminar'}
               </button>
             ) : null}
             <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
@@ -472,13 +495,13 @@ export function WorkOrderExecutionDetailModal({
               }}
             >
               <h4 className="recurring-task-list-heading" style={{ margin: 0 }}>
-                {wo.status === 'COMPLETED' ? 'Crear otro servicio' : 'Reprogramar servicio'}
+                Reprogramar servicio
               </h4>
 
               {wo.status === 'COMPLETED' ? (
                 <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-                  Este servicio ya fue reportado como completado. No se puede cambiar su fecha.
-                  Completó:{' '}
+                  Este servicio ya fue reportado como completado. Podés corregir la fecha
+                  programada; el historial de finalización se mantiene. Completó:{' '}
                   <strong>
                     {participants.length > 0
                       ? participants.join(', ')
@@ -488,7 +511,7 @@ export function WorkOrderExecutionDetailModal({
                   <strong>
                     {formatWeekdayAndDateTime(se?.completedAt ?? wo.completedAt)}
                   </strong>
-                  . Si querés repetirlo, creá otro con el mismo checklist; queda sin asignar.
+                  .
                 </p>
               ) : wo.status === 'IN_PROGRESS' ? (
                 <p className="muted" style={{ margin: 0, fontSize: 13 }}>
@@ -497,7 +520,7 @@ export function WorkOrderExecutionDetailModal({
                 </p>
               ) : (
                 <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-                  Cambiá la fecha y hora si no pudieron hacerlo el día original.
+                  Se mueve este mismo servicio a la nueva fecha y hora. No se crea uno nuevo.
                 </p>
               )}
 
@@ -509,9 +532,7 @@ export function WorkOrderExecutionDetailModal({
               <form onSubmit={(e) => void handleScheduleSubmit(e)}>
                 <div className="form-grid">
                   <div className="form-field">
-                    <label htmlFor="detail-schedule-date">
-                      {wo.status === 'COMPLETED' ? 'Fecha del nuevo servicio *' : 'Nueva fecha *'}
-                    </label>
+                    <label htmlFor="detail-schedule-date">Nueva fecha *</label>
                     <input
                       id="detail-schedule-date"
                       className="input"
@@ -552,7 +573,7 @@ export function WorkOrderExecutionDetailModal({
                   </div>
                 </div>
 
-                {wo.reservationId && wo.status !== 'COMPLETED' ? (
+                {wo.reservationId ? (
                   <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
                     Este servicio está ligado a una reserva: al reprogramar también se actualiza el
                     checkout de la reserva.
@@ -565,13 +586,7 @@ export function WorkOrderExecutionDetailModal({
                     className="btn btn-primary btn-sm"
                     disabled={savingSchedule || !scheduleDate}
                   >
-                    {savingSchedule
-                      ? wo.status === 'COMPLETED'
-                        ? 'Creando…'
-                        : 'Guardando…'
-                      : wo.status === 'COMPLETED'
-                        ? 'Crear otro servicio'
-                        : 'Guardar nueva fecha'}
+                    {savingSchedule ? 'Guardando…' : 'Guardar nueva fecha'}
                   </button>
                 </div>
               </form>

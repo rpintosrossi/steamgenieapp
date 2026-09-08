@@ -42,6 +42,7 @@ export default function QuotesPage() {
   const [items, setItems] = useState<Quote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [month, setMonth] = useState('');
@@ -51,6 +52,7 @@ export default function QuotesPage() {
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [total, setTotal] = useState(0);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -90,6 +92,40 @@ export default function QuotesPage() {
     e.preventDefault();
     setSearch(searchInput.trim());
     setPage(1);
+  }
+
+  async function removeQuote(quote: Quote) {
+    const linked = quote.workOrders ?? [];
+    const hasCompleted = linked.some((wo) => wo.status === 'COMPLETED');
+    if (hasCompleted) {
+      setError('No se puede eliminar un presupuesto con servicios completados.');
+      setSuccess(null);
+      return;
+    }
+
+    const pendingCount = linked.length;
+    const confirmMsg =
+      pendingCount > 0
+        ? `¿Eliminar el presupuesto ${formatQuoteNumber(quote.number)} y sus ${pendingCount} servicio${pendingCount === 1 ? '' : 's'} asociado${pendingCount === 1 ? '' : 's'}?`
+        : `¿Eliminar el presupuesto ${formatQuoteNumber(quote.number)}? Esta acción no se puede deshacer desde la lista.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setDeletingId(quote.id);
+    setError(null);
+    setSuccess(null);
+    try {
+      await api.delete(`/quotes/${quote.id}`);
+      setSuccess(
+        pendingCount > 0
+          ? `Presupuesto ${formatQuoteNumber(quote.number)} y servicios asociados eliminados.`
+          : `Presupuesto ${formatQuoteNumber(quote.number)} eliminado.`,
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo eliminar el presupuesto');
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   return (
@@ -200,6 +236,7 @@ export default function QuotesPage() {
       </form>
 
       {error ? <div className="alert alert-error">{error}</div> : null}
+      {success ? <div className="alert alert-success">{success}</div> : null}
 
       <div className="card">
         {loading ? (
@@ -225,33 +262,48 @@ export default function QuotesPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((quote) => (
-                  <tr key={quote.id}>
-                    <td>{formatQuoteNumber(quote.number)}</td>
-                    <td>{clientLabel(quote)}</td>
-                    <td>{clientKind(quote)}</td>
-                    <td>{quote.branch?.name ?? '—'}</td>
-                    <td>
-                      <span className="badge">
-                        {QUOTE_STATUS_LABELS[quote.status as SharedQuoteStatus]}
-                      </span>
-                    </td>
-                    <td>{formatDate(quote.requestDate)}</td>
-                    <td>{quote.serviceType ?? '—'}</td>
-                    <td>{money(quote.total)}</td>
-                    <td style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-                      <Link
-                        href={`/presupuestos/${quote.id}/editar`}
-                        className="btn btn-ghost btn-sm"
-                      >
-                        Editar
-                      </Link>
-                      <Link href={`/presupuestos/${quote.id}`} className="btn btn-ghost btn-sm">
-                        Abrir
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
+                {items.map((quote) => {
+                  const canDelete = !(quote.workOrders ?? []).some(
+                    (wo) => wo.status === 'COMPLETED',
+                  );
+                  return (
+                    <tr key={quote.id}>
+                      <td>{formatQuoteNumber(quote.number)}</td>
+                      <td>{clientLabel(quote)}</td>
+                      <td>{clientKind(quote)}</td>
+                      <td>{quote.branch?.name ?? '—'}</td>
+                      <td>
+                        <span className="badge">
+                          {QUOTE_STATUS_LABELS[quote.status as SharedQuoteStatus]}
+                        </span>
+                      </td>
+                      <td>{formatDate(quote.requestDate)}</td>
+                      <td>{quote.serviceType ?? '—'}</td>
+                      <td>{money(quote.total)}</td>
+                      <td style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                        <Link
+                          href={`/presupuestos/${quote.id}/editar`}
+                          className="btn btn-ghost btn-sm"
+                        >
+                          Editar
+                        </Link>
+                        <Link href={`/presupuestos/${quote.id}`} className="btn btn-ghost btn-sm">
+                          Abrir
+                        </Link>
+                        {canDelete ? (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            disabled={deletingId === quote.id}
+                            onClick={() => void removeQuote(quote)}
+                          >
+                            {deletingId === quote.id ? 'Eliminando…' : 'Eliminar'}
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -162,7 +162,9 @@ export class WorkOrdersController {
   remove(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: AuthUser,
+    @Query('deleteQuote') deleteQuote?: string,
   ) {
-    return this.workOrdersService.remove(id, user);
+    const alsoDeleteQuote = deleteQuote === 'true' || deleteQuote === '1';
+    return this.workOrdersService.remove(id, user, alsoDeleteQuote);
   }
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import {
   QUOTE_STATUSES,
@@ -45,6 +45,7 @@ function clientKindLabel(quote: Quote) {
 
 export default function QuoteDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const [quote, setQuote] = useState<Quote | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +61,7 @@ export default function QuoteDetailPage() {
   const [branchId, setBranchId] = useState('');
   const [savingInternalNotes, setSavingInternalNotes] = useState(false);
   const [sharing, setSharing] = useState<'whatsapp' | 'email' | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
   const [serviceTime, setServiceTime] = useState('09:00');
   const [dateToAdd, setDateToAdd] = useState('');
@@ -120,7 +122,7 @@ export default function QuoteDetailPage() {
         });
       })
       .catch(() => setBranches([]));
-  }, [quote?.branch]);
+  }, [quote?.branch?.id]);
 
   async function saveStatus() {
     if (!quote) return;
@@ -208,6 +210,34 @@ export default function QuoteDetailPage() {
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo descargar el PDF');
+    }
+  }
+
+  async function removeQuote() {
+    if (!quote) return;
+    const linked = quote.workOrders ?? [];
+    const hasCompleted = linked.some((wo) => wo.status === 'COMPLETED');
+    if (hasCompleted) {
+      setError('No se puede eliminar un presupuesto con servicios completados.');
+      return;
+    }
+
+    const pendingCount = linked.length;
+    const confirmMsg =
+      pendingCount > 0
+        ? `¿Eliminar el presupuesto ${formatQuoteNumber(quote.number)} y sus ${pendingCount} servicio${pendingCount === 1 ? '' : 's'} asociado${pendingCount === 1 ? '' : 's'}?`
+        : `¿Eliminar el presupuesto ${formatQuoteNumber(quote.number)}? Esta acción no se puede deshacer desde la lista.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setDeleting(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await api.delete(`/quotes/${quote.id}`);
+      router.push('/presupuestos');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo eliminar el presupuesto');
+      setDeleting(false);
     }
   }
 
@@ -447,6 +477,7 @@ export default function QuoteDetailPage() {
 
   const linkedWorkOrders = quote.workOrders ?? [];
   const canConvert = quote.status === 'ACEPTADO' && linkedWorkOrders.length === 0;
+  const canDelete = !linkedWorkOrders.some((wo) => wo.status === 'COMPLETED');
   const selectedBranch = branches.find((row) => row.id === branchId) ?? quote.branch;
 
   return (
@@ -488,6 +519,16 @@ export default function QuoteDetailPage() {
           {canConvert ? (
             <button type="button" className="btn btn-primary" onClick={() => void openConvertModal()}>
               Crear servicio eventual
+            </button>
+          ) : null}
+          {canDelete ? (
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={deleting}
+              onClick={() => void removeQuote()}
+            >
+              {deleting ? 'Eliminando…' : 'Eliminar'}
             </button>
           ) : null}
         </div>

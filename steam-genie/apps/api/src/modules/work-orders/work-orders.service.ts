@@ -10,6 +10,7 @@ import { PhotoEvidenceMode, PhotoPhase, WorkOrderStatus, WorkOrderType } from '@
 import {
   buildClientPdfFilename,
   calendarDateFromInstant,
+  calendarDateKeyInBusinessTz,
   endOfStoredCalendarDateInBusinessTz,
   formatStoredCalendarDate,
   TASK_CATEGORY_UNCATEGORIZED,
@@ -1109,18 +1110,14 @@ export class WorkOrdersService {
       select: {
         id: true,
         buildingId: true,
-        status: true,
         reservationId: true,
         deadlineAt: true,
+        title: true,
       },
     });
     if (!wo) throw new NotFoundException('Work order not found');
 
     await this.assertCanManageWorkOrderBuilding(user.id, wo.buildingId);
-
-    if (wo.status === WorkOrderStatus.COMPLETED) {
-      throw new ConflictException('No se puede reprogramar un servicio completado.');
-    }
 
     const scheduledAt = new Date(dto.scheduledAt);
     if (Number.isNaN(scheduledAt.getTime())) {
@@ -1143,6 +1140,7 @@ export class WorkOrdersService {
     }
 
     const scheduledDate = calendarDateFromInstant(scheduledAt);
+    const title = refreshVisitLabelInTitle(wo.title, scheduledAt);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.workOrder.update({
@@ -1151,6 +1149,7 @@ export class WorkOrdersService {
           scheduledDate,
           scheduledTime: scheduledAt,
           deadlineAt,
+          ...(title !== wo.title ? { title } : {}),
         },
       });
 
@@ -1341,10 +1340,10 @@ export class WorkOrdersService {
 
   // ─── DELETE ───────────────────────────────────────────────────────────────
 
-  async remove(id: string, user: AuthUser) {
+  async remove(id: string, user: AuthUser, deleteQuote = false) {
     const wo = await this.prisma.workOrder.findFirst({
       where: { id, deletedAt: null },
-      select: { id: true, buildingId: true, status: true },
+      select: { id: true, buildingId: true, status: true, quoteId: true },
     });
     if (!wo) throw new NotFoundException('Work order not found');
 
@@ -1354,12 +1353,55 @@ export class WorkOrdersService {
       throw new ConflictException('No se puede eliminar un servicio completado.');
     }
 
-    await this.prisma.workOrder.update({
-      where: { id },
-      data: { deletedAt: new Date() },
+    const now = new Date();
+
+    if (!deleteQuote || !wo.quoteId) {
+      await this.prisma.workOrder.update({
+        where: { id },
+        data: { deletedAt: now },
+      });
+      return {
+        message: 'Servicio eliminado',
+        deletedQuote: false,
+        deletedWorkOrders: 1,
+      };
+    }
+
+    const siblings = await this.prisma.workOrder.findMany({
+      where: { quoteId: wo.quoteId, deletedAt: null, id: { not: id } },
+      select: { id: true, status: true },
+    });
+    const completedSiblings = siblings.filter(
+      (row) => row.status === WorkOrderStatus.COMPLETED,
+    );
+    if (completedSiblings.length > 0) {
+      throw new ConflictException(
+        'No se puede eliminar el presupuesto: tiene otros servicios ya completados.',
+      );
+    }
+
+    const siblingIds = siblings.map((row) => row.id);
+    const workOrderIds = [id, ...siblingIds];
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.workOrder.updateMany({
+        where: { id: { in: workOrderIds }, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      await tx.quote.updateMany({
+        where: { id: wo.quoteId!, deletedAt: null },
+        data: { deletedAt: now },
+      });
     });
 
-    return { message: 'Work order deleted' };
+    return {
+      message:
+        siblingIds.length > 0
+          ? 'Servicio, servicios relacionados y presupuesto eliminados'
+          : 'Servicio y presupuesto eliminados',
+      deletedQuote: true,
+      deletedWorkOrders: workOrderIds.length,
+    };
   }
 
   /**
@@ -1977,4 +2019,16 @@ function resolveServiceReportClientName(wo: {
   if (wo.reservation?.guestName?.trim()) return wo.reservation.guestName.trim();
   if (wo.quote?.building?.name) return wo.quote.building.name;
   return wo.building.name;
+}
+
+/** Si el título termina en " · dd/mm" (visitas multi-día), actualiza esa etiqueta. */
+function refreshVisitLabelInTitle(title: string, scheduledAt: Date): string {
+  const key = calendarDateKeyInBusinessTz(scheduledAt);
+  const [, m, d] = key.split('-');
+  if (!m || !d) return title;
+  const label = `${d}/${m}`;
+  if (/ · \d{2}\/\d{2}$/.test(title)) {
+    return title.replace(/ · \d{2}\/\d{2}$/, ` · ${label}`);
+  }
+  return title;
 }

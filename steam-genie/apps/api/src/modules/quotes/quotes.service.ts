@@ -724,12 +724,40 @@ export class QuotesService {
   }
 
   async remove(id: string) {
-    await this.assertExists(id);
-    await this.prisma.quote.update({
-      where: { id },
-      data: { deletedAt: new Date() },
+    const quote = await this.assertExists(id);
+    const linkedWorkOrders = quote.workOrders;
+    const completed = linkedWorkOrders.filter(
+      (wo) => wo.status === WorkOrderStatus.COMPLETED,
+    );
+    if (completed.length > 0) {
+      throw new ConflictException(
+        'No se puede eliminar un presupuesto con servicios completados.',
+      );
+    }
+
+    const now = new Date();
+    const workOrderIds = linkedWorkOrders.map((wo) => wo.id);
+
+    await this.prisma.$transaction(async (tx) => {
+      if (workOrderIds.length > 0) {
+        await tx.workOrder.updateMany({
+          where: { id: { in: workOrderIds }, deletedAt: null },
+          data: { deletedAt: now },
+        });
+      }
+      await tx.quote.update({
+        where: { id },
+        data: { deletedAt: now },
+      });
     });
-    return { message: 'Presupuesto eliminado' };
+
+    return {
+      message:
+        workOrderIds.length > 0
+          ? 'Presupuesto y servicios asociados eliminados'
+          : 'Presupuesto eliminado',
+      deletedWorkOrders: workOrderIds.length,
+    };
   }
 
   async generatePdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
