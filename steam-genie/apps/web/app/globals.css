@@ -2570,8 +2570,15 @@ textarea {
   font: inherit;
 }
 
-.worker-search-suggestions button:hover {
+.worker-search-suggestions button:hover,
+.worker-search-suggestions button.is-active {
   background: var(--color-bg);
+}
+
+.searchable-select-list.worker-search-suggestions {
+  position: relative;
+  top: auto;
+  z-index: 2;
 }
 
 /* ── Stock ── */
@@ -2943,12 +2950,16 @@ textarea {
   display: grid;
   grid-template-columns: 1fr 100px auto;
   gap: 10px;
-  align-items: end;
+  align-items: start;
   margin-bottom: 10px;
 }
 
 .logistics-line-grid .form-field {
   margin: 0;
+}
+
+.logistics-line-grid > .btn {
+  margin-top: 26px;
 }
 
 .logistics-product-list {

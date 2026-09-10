@@ -8,6 +8,7 @@ import {
   calendarDateKeyFromStored,
   formatStoredCalendarDate,
 } from '@steam-genie/shared-constants';
+import { SearchableSelect } from '../../../../components/SearchableSelect';
 import { StockSubnav } from '../../../../components/StockSubnav';
 import { api } from '../../../../lib/api-client';
 import { fetchBuildingsList } from '../../../../lib/buildings-cache';
@@ -463,19 +464,14 @@ export default function StockShipmentsPage() {
                 <p className="logistics-dest-index">Destino {di + 1}</p>
                 <div className="form-field">
                   <label htmlFor={`dest-building-${di}`}>Edificio</label>
-                  <select
+                  <SearchableSelect
                     id={`dest-building-${di}`}
-                    className="select"
                     value={dest.buildingId}
-                    onChange={(e) => updateDestination(di, { buildingId: e.target.value })}
-                  >
-                    <option value="">Seleccionar edificio...</option>
-                    {buildings.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.name}
-                      </option>
-                    ))}
-                  </select>
+                    options={buildings.map((b) => ({ id: b.id, label: b.name }))}
+                    onChange={(buildingId) => updateDestination(di, { buildingId })}
+                    placeholder="Buscar edificio..."
+                    emptyHint="Ningún edificio coincide"
+                  />
                 </div>
 
                 {dest.lines.map((line, li) => {
@@ -491,22 +487,21 @@ export default function StockShipmentsPage() {
                   <div key={li} className="logistics-line-grid">
                     <div className="form-field">
                       <label htmlFor={`dest-${di}-product-${li}`}>Producto</label>
-                      <select
+                      <SearchableSelect
                         id={`dest-${di}-product-${li}`}
-                        className="select"
                         value={line.productId}
-                        onChange={(e) => {
-                          updateLine(di, li, { productId: e.target.value });
+                        options={options.map((p) => ({
+                          id: p.id,
+                          label: productDepotLabel(p),
+                          keywords: [p.name, p.sku, p.category?.name].filter(Boolean).join(' '),
+                        }))}
+                        onChange={(productId) => {
+                          updateLine(di, li, { productId });
                           setCreateError(null);
                         }}
-                      >
-                        <option value="">Seleccionar...</option>
-                        {options.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {productDepotLabel(p)}
-                          </option>
-                        ))}
-                      </select>
+                        placeholder="Buscar producto..."
+                        emptyHint="Ningún producto coincide"
+                      />
                       {selectedProduct ? (
                         <span className="logistics-stock-hint">
                           Depósito disponible:{' '}
