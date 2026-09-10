@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { QUOTE_VAT_RATE, QUOTE_DEFAULT_SERVICE_INCLUDES, formatQuoteNumber } from '@steam-genie/shared-constants';
+import { QUOTE_VAT_RATE, QUOTE_DEFAULT_SERVICE_INCLUDES, formatQuoteNumber, isQuoteVatExempt, quoteVatLineLabel } from '@steam-genie/shared-constants';
 import { api } from '../lib/api-client';
 import type {
   Building,
@@ -161,6 +161,9 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
   const [branchId, setBranchId] = useState(
     initialQuote?.branchId ?? initialQuote?.branch?.id ?? '',
   );
+  const [vatExempt, setVatExempt] = useState(
+    initialQuote ? isQuoteVatExempt(initialQuote.vatRate) : false,
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [contactPrefillDone, setContactPrefillDone] = useState(mode === 'edit');
@@ -216,9 +219,10 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
 
   const totals = useMemo(() => {
     const subtotal = Math.round(items.reduce((acc, item) => acc + lineTotal(item), 0) * 100) / 100;
-    const vatAmount = Math.round(subtotal * (QUOTE_VAT_RATE / 100) * 100) / 100;
-    return { subtotal, vatAmount, total: Math.round((subtotal + vatAmount) * 100) / 100 };
-  }, [items]);
+    const vatRate = vatExempt ? 0 : QUOTE_VAT_RATE;
+    const vatAmount = Math.round(subtotal * (vatRate / 100) * 100) / 100;
+    return { subtotal, vatRate, vatAmount, total: Math.round((subtotal + vatAmount) * 100) / 100 };
+  }, [items, vatExempt]);
 
   const selectedBranch = branches.find((row) => row.id === branchId);
 
@@ -364,6 +368,7 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
         serviceIncludes: serviceIncludes.trim() || null,
         payments: paymentsPayload,
         items: payloadItems,
+        vatExempt,
       };
 
       if (mode === 'edit' && initialQuote) {
@@ -398,6 +403,7 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
           serviceIncludes: serviceIncludes.trim() || undefined,
           payments: paymentsPayload,
           items: payloadItems,
+          vatExempt,
         });
         const failedUploads: string[] = [];
         for (const file of pendingInternalFiles) {
@@ -953,12 +959,37 @@ export function QuoteForm({ mode, initialQuote }: QuoteFormProps) {
             </div>
           ))}
 
-          <div style={{ textAlign: 'right' }}>
-            <div>Subtotal: {money(totals.subtotal)}</div>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'flex-end',
+              gap: 16,
+              flexWrap: 'wrap',
+            }}
+          >
             <div>
-              IVA ({QUOTE_VAT_RATE}%): {money(totals.vatAmount)}
+              <button
+                type="button"
+                className={`btn btn-sm ${vatExempt ? 'btn-primary' : 'btn-secondary'}`}
+                aria-pressed={vatExempt}
+                onClick={() => setVatExempt((current) => !current)}
+              >
+                Bonificación del IVA
+              </button>
+              {vatExempt ? (
+                <p className="muted" style={{ margin: '6px 0 0', fontSize: 12 }}>
+                  No se suma el 21% al total.
+                </p>
+              ) : null}
             </div>
-            <strong>Total: {money(totals.total)}</strong>
+            <div style={{ textAlign: 'right' }}>
+              <div>Subtotal: {money(totals.subtotal)}</div>
+              <div>
+                {quoteVatLineLabel(totals.vatRate)}: {money(totals.vatAmount)}
+              </div>
+              <strong>Total: {money(totals.total)}</strong>
+            </div>
           </div>
         </div>
 

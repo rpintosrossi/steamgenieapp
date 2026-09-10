@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEmail,
   IsEnum,
@@ -122,6 +123,10 @@ export class UpdateQuoteDto {
   @ValidateNested({ each: true })
   @Type(() => QuoteItemDto)
   items?: QuoteItemDto[];
+
+  @IsOptional()
+  @IsBoolean()
+  vatExempt?: boolean;
 
   @IsOptional()
   @IsArray()

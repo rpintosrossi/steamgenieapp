@@ -18,6 +18,14 @@ export const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
 
 export const QUOTE_VAT_RATE = 21;
 
+export function isQuoteVatExempt(vatRate: number | string | null | undefined): boolean {
+  return Number(vatRate) === 0;
+}
+
+export function quoteVatLineLabel(vatRate: number | string): string {
+  return isQuoteVatExempt(vatRate) ? 'Bonificación de IVA' : `IVA (${Number(vatRate)}%)`;
+}
+
 /** Texto por defecto de “El servicio incluye” (una línea = un ítem del PDF). */
 export const QUOTE_DEFAULT_SERVICE_INCLUDES = [
   'Insumos requeridos para el servicio',

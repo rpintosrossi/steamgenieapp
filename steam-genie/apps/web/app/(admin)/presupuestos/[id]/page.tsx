@@ -9,6 +9,7 @@ import {
   buildQuotePdfFilename,
   formatQuoteNumber,
   parseQuoteServiceIncludes,
+  quoteVatLineLabel,
   type QuoteStatus as SharedQuoteStatus,
 } from '@steam-genie/shared-constants';
 import { api } from '../../../../lib/api-client';
@@ -843,7 +844,7 @@ export default function QuoteDetailPage() {
         <div style={{ textAlign: 'right', marginTop: 12 }}>
           <div>Subtotal: {money(quote.subtotal)}</div>
           <div>
-            IVA ({quote.vatRate}%): {money(quote.vatAmount)}
+            {quoteVatLineLabel(quote.vatRate)}: {money(quote.vatAmount)}
           </div>
           <strong>Total: {money(quote.total)}</strong>
         </div>

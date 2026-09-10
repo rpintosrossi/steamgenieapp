@@ -12,6 +12,7 @@ import {
   QUOTE_DEFAULT_SERVICE_INCLUDES,
   buildQuotePdfFilename,
   calendarDateKeyInBusinessTz,
+  isQuoteVatExempt,
 } from '@steam-genie/shared-constants';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StorageService } from '../../infrastructure/storage/storage.service';
@@ -443,7 +444,7 @@ export class QuotesService {
       contactEmail = contactEmail ?? emptyToNull(client?.email);
     }
 
-    const computed = this.computeTotals(dto.items);
+    const computed = this.computeTotals(dto.items, Boolean(dto.vatExempt));
     const requestDate = parseDateOnly(dto.requestDate);
     const validUntil = dto.validUntil
       ? parseDateOnly(dto.validUntil)
@@ -566,7 +567,22 @@ export class QuotesService {
       });
     }
 
-    const computed = dto.items ? this.computeTotals(dto.items) : null;
+    const vatExempt =
+      dto.vatExempt ?? isQuoteVatExempt(toNumber(existing.vatRate));
+    const computed = dto.items
+      ? this.computeTotals(dto.items, vatExempt)
+      : dto.vatExempt !== undefined
+        ? this.computeTotals(
+            existing.items.map((item) => ({
+              quantity: toNumber(item.quantity),
+              description: item.description,
+              unitPrice: toNumber(item.unitPrice),
+              discountPercent:
+                item.discountPercent != null ? toNumber(item.discountPercent) : undefined,
+            })),
+            vatExempt,
+          )
+        : null;
     const paymentCreates =
       dto.payments !== undefined ? await this.buildPaymentCreates(dto.payments) : null;
 
@@ -1374,9 +1390,9 @@ export class QuotesService {
     return creates;
   }
 
-  private computeTotals(items: QuoteItemDto[]) {
+  private computeTotals(items: QuoteItemDto[], vatExempt = false) {
     const subtotal = round2(items.reduce((acc, item) => acc + lineTotal(item), 0));
-    const vatRate = QUOTE_VAT_RATE;
+    const vatRate = vatExempt ? 0 : QUOTE_VAT_RATE;
     const vatAmount = round2(subtotal * (vatRate / 100));
     const total = round2(subtotal + vatAmount);
     return {

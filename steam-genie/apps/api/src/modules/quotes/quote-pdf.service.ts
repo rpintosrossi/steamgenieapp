@@ -380,7 +380,11 @@ export class QuotePdfService {
         width: totalsValueW,
         align: 'right',
       });
-      doc.fillColor(COLORS.muted).text(`I.V.A. (${payload.vatRate}%)`, totalsInner, y + 24);
+      doc.fillColor(COLORS.muted).text(
+        payload.vatRate === 0 ? 'Bonif. I.V.A.' : `I.V.A. (${payload.vatRate}%)`,
+        totalsInner,
+        y + 24,
+      );
       doc.fillColor(COLORS.text).text(money(payload.vatAmount), totalsInner, y + 24, {
         width: totalsValueW,
         align: 'right',
