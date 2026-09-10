@@ -7,9 +7,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
-  Modal,
-  Image,
-  Dimensions,
   Alert,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
@@ -17,6 +14,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatQuoteNumber, formatStoredCalendarDate } from '@steam-genie/shared-constants';
 import { AuthenticatedImage } from '../../../src/components/AuthenticatedImage';
+import {
+  PhotoGalleryModal,
+  type PhotoGalleryItem,
+} from '../../../src/components/PhotoGalleryModal';
 import { COLORS } from '../../../src/constants/colors';
 import {
   adminApi,
@@ -25,7 +26,6 @@ import {
   type ServiceExecutionTaskItem,
   type ServiceExecutionTaskPhoto,
 } from '../../../src/services/admin-api';
-import { useAuthenticatedImage } from '../../../src/hooks/useAuthenticatedImage';
 import { PdfViewerModal } from '../../../src/components/PdfViewerModal';
 import { formatScheduledTime } from '../../../src/utils/schedule';
 import { downloadPdfToCache, quotePdfFilename } from '../../../src/utils/download-pdf';
@@ -52,38 +52,6 @@ const EXEC_STATUS: Record<string, string> = {
   SKIPPED: 'Omitida',
 };
 
-type GalleryItem = {
-  id: string;
-  url: string;
-  title: string;
-};
-
-function Lightbox({
-  item,
-  onClose,
-}: {
-  item: GalleryItem | null;
-  onClose: () => void;
-}) {
-  const source = useAuthenticatedImage(item?.url);
-  if (!item) return null;
-  return (
-    <Modal visible animationType="fade" transparent onRequestClose={onClose}>
-      <View style={styles.lightbox}>
-        <TouchableOpacity style={styles.lightboxClose} onPress={onClose}>
-          <Ionicons name="close" size={28} color="#fff" />
-        </TouchableOpacity>
-        <Text style={styles.lightboxTitle}>{item.title}</Text>
-        {source ? (
-          <Image source={source} style={styles.lightboxImage} resizeMode="contain" />
-        ) : (
-          <ActivityIndicator color="#fff" />
-        )}
-      </View>
-    </Modal>
-  );
-}
-
 export default function AdminServiceDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -95,7 +63,7 @@ export default function AdminServiceDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lightbox, setLightbox] = useState<GalleryItem | null>(null);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [pdfUri, setPdfUri] = useState<string | null>(null);
   const [pdfTitle, setPdfTitle] = useState('Presupuesto');
@@ -136,7 +104,7 @@ export default function AdminServiceDetailScreen() {
     }, [load]),
   );
 
-  const gallery: GalleryItem[] = [];
+  const gallery: PhotoGalleryItem[] = [];
   for (const photo of phasePhotos) {
     gallery.push({
       id: photo.id,
@@ -154,8 +122,9 @@ export default function AdminServiceDetailScreen() {
     }
   }
 
-  function openPhoto(photo: ServiceExecutionTaskPhoto | ServiceExecutionPhasePhoto, title: string) {
-    setLightbox({ id: photo.id, url: photo.url, title });
+  function openPhoto(photo: ServiceExecutionTaskPhoto | ServiceExecutionPhasePhoto) {
+    const index = gallery.findIndex((item) => item.id === photo.id);
+    setLightboxIndex(index >= 0 ? index : 0);
   }
 
   async function handleOpenQuotePdf() {
@@ -287,7 +256,7 @@ export default function AdminServiceDetailScreen() {
                 {phasePhotos.map((photo) => (
                   <TouchableOpacity
                     key={photo.id}
-                    onPress={() => openPhoto(photo, PHASE_LABELS[photo.phase] ?? photo.phase)}
+                    onPress={() => openPhoto(photo)}
                   >
                     <AuthenticatedImage pathOrUrl={photo.url} style={styles.thumb} />
                     <Text style={styles.thumbLabel}>
@@ -322,7 +291,7 @@ export default function AdminServiceDetailScreen() {
                       {task.execution!.photos.map((photo) => (
                         <TouchableOpacity
                           key={photo.id}
-                          onPress={() => openPhoto(photo, task.nameSnapshot)}
+                          onPress={() => openPhoto(photo)}
                         >
                           <AuthenticatedImage pathOrUrl={photo.url} style={styles.thumbSm} />
                         </TouchableOpacity>
@@ -340,7 +309,13 @@ export default function AdminServiceDetailScreen() {
         </ScrollView>
       )}
 
-      <Lightbox item={lightbox} onClose={() => setLightbox(null)} />
+      {lightboxIndex != null && gallery.length > 0 && (
+        <PhotoGalleryModal
+          items={gallery}
+          initialIndex={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+        />
+      )}
       <PdfViewerModal
         visible={!!pdfUri}
         uri={pdfUri}
@@ -350,8 +325,6 @@ export default function AdminServiceDetailScreen() {
     </View>
   );
 }
-
-const { width: SCREEN_W } = Dimensions.get('window');
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
@@ -437,14 +410,4 @@ const styles = StyleSheet.create({
   },
   footerHint: { fontSize: 12, color: COLORS.textMuted, marginTop: 12, textAlign: 'center' },
   errorText: { marginTop: 40, textAlign: 'center', color: COLORS.error, paddingHorizontal: 24 },
-  lightbox: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.92)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
-  },
-  lightboxClose: { position: 'absolute', top: 48, right: 20, zIndex: 2 },
-  lightboxTitle: { color: '#fff', marginBottom: 12, fontSize: 14, fontWeight: '600' },
-  lightboxImage: { width: SCREEN_W - 32, height: SCREEN_W - 32 },
 });
