@@ -190,22 +190,43 @@ export class ServiceReportPdfService {
       ensureSpace(40);
       y = doc.y;
       doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(11);
-      doc.text('TAREAS DEL SERVICIO', marginX, y);
-      y += 16;
+      doc.text('TAREAS DEL SERVICIO', marginX, y, { lineBreak: false });
+      doc.y = y + 16;
 
       if (payload.tasks.length === 0) {
         doc.fillColor(COLORS.muted).font('Helvetica').fontSize(10);
-        doc.text('No hay tareas definidas para este servicio.', marginX, y);
-        y += 18;
+        doc.text('No hay tareas definidas para este servicio.', marginX, doc.y, {
+          lineBreak: false,
+        });
+        doc.y += 18;
       } else {
         payload.tasks.forEach((task, index) => {
+          const title = `${index + 1}. ${task.name}`;
+          const innerW = contentWidth - 24;
           const hasExecutionMeta = Boolean(
             task.status || task.executedByName || task.executedAtLabel,
           );
-          const obsH = task.observation
-            ? doc.heightOfString(task.observation, { width: contentWidth - 24 }) + 14
-            : 0;
-          const blockH = (hasExecutionMeta ? 54 : 36) + obsH;
+          const obsText = task.observation
+            ? `Observación: ${task.observation}`
+            : null;
+
+          const padY = 10;
+          const gap = 6;
+          doc.font('Helvetica-Bold').fontSize(10);
+          const titleH = doc.heightOfString(title, { width: innerW });
+          const metaH = hasExecutionMeta ? 12 : 0;
+          let obsH = 0;
+          if (obsText) {
+            doc.font('Helvetica').fontSize(9);
+            obsH = doc.heightOfString(obsText, { width: innerW });
+          }
+          const blockH =
+            padY +
+            titleH +
+            (hasExecutionMeta ? gap + metaH : 0) +
+            (obsText ? gap + obsH : 0) +
+            padY;
+
           ensureSpace(blockH + 8);
           y = doc.y;
 
@@ -217,49 +238,51 @@ export class ServiceReportPdfService {
             .strokeColor(COLORS.border)
             .stroke();
 
+          let cursorY = y + padY;
           doc.fillColor(COLORS.text).font('Helvetica-Bold').fontSize(10);
-          doc.text(`${index + 1}. ${task.name}`, marginX + 12, y + 10, {
-            width: contentWidth - 24,
-            lineBreak: false,
-            ellipsis: true,
-          });
+          doc.text(title, marginX + 12, cursorY, { width: innerW });
+          cursorY += titleH;
 
           if (hasExecutionMeta) {
+            cursorY += gap;
             const statusLabel = task.status
               ? (TASK_STATUS_LABELS[task.status] ?? task.status)
               : 'Pendiente';
             const statusColor = task.status === 'DONE' ? COLORS.success : COLORS.muted;
+            const statusW = 90;
             doc.fillColor(statusColor).font('Helvetica-Bold').fontSize(8);
-            doc.text(statusLabel, marginX + 12, y + 28);
+            doc.text(statusLabel, marginX + 12, cursorY, {
+              width: statusW,
+              height: metaH,
+              ellipsis: true,
+            });
 
             const who = task.executedByName ?? '—';
             const when = task.executedAtLabel ?? '—';
             doc.fillColor(COLORS.muted).font('Helvetica').fontSize(8);
-            doc.text(`${who}  ·  ${when}`, marginX + 100, y + 28, {
-              width: contentWidth - 120,
-              lineBreak: false,
+            doc.text(`${who}  ·  ${when}`, marginX + 12 + statusW, cursorY, {
+              width: innerW - statusW,
+              height: metaH,
               ellipsis: true,
             });
+            cursorY += metaH;
           }
 
-          if (task.observation) {
-            const obsY = hasExecutionMeta ? y + 44 : y + 28;
+          if (obsText) {
+            cursorY += gap;
             doc.fillColor(COLORS.text).font('Helvetica').fontSize(9);
-            doc.text(`Observación: ${task.observation}`, marginX + 12, obsY, {
-              width: contentWidth - 24,
-            });
+            doc.text(obsText, marginX + 12, cursorY, { width: innerW });
           }
 
           doc.y = y + blockH + 8;
         });
-        y = doc.y;
       }
 
       // ── Photos ────────────────────────────────────────────────────────────
       ensureSpace(40);
       y = doc.y + 8;
       doc.fillColor(COLORS.navy).font('Helvetica-Bold').fontSize(11);
-      doc.text('EVIDENCIA FOTOGRÁFICA', marginX, y);
+      doc.text('EVIDENCIA FOTOGRÁFICA', marginX, y, { lineBreak: false });
       y += 16;
       doc.y = y;
 
@@ -285,14 +308,13 @@ export class ServiceReportPdfService {
           doc.text('Sin fotos registradas.', marginX, doc.y);
         } else {
           for (const task of tasksWithPhotos) {
-            ensureSpace(28);
+            doc.font('Helvetica-Bold').fontSize(9);
+            const nameH = doc.heightOfString(task.name, { width: contentWidth });
+            ensureSpace(nameH + 16);
+            const nameY = doc.y;
             doc.fillColor(COLORS.primary).font('Helvetica-Bold').fontSize(9);
-            doc.text(task.name, marginX, doc.y, {
-              width: contentWidth,
-              lineBreak: false,
-              ellipsis: true,
-            });
-            doc.y += 12;
+            doc.text(task.name, marginX, nameY, { width: contentWidth });
+            doc.y = nameY + nameH + 8;
             this.drawPhotoGrid(doc, task.photos, marginX, contentWidth, ensureSpace);
           }
         }
@@ -348,8 +370,8 @@ export class ServiceReportPdfService {
       doc.fillColor(COLORS.muted).font('Helvetica').fontSize(8);
       doc.text(photo.caption, x, y + cellH + 4, {
         width: cellW,
+        height: captionH,
         align: 'center',
-        lineBreak: false,
         ellipsis: true,
       });
 
