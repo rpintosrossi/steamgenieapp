@@ -113,6 +113,19 @@ function parseScheduleForForm(wo: WorkOrderListItem): { date: string; hour: stri
   return { date, hour, minute };
 }
 
+function addCalendarDays(dateKey: string, days: number): string {
+  const source = dateKey ? new Date(`${dateKey}T12:00:00`) : new Date();
+  if (Number.isNaN(source.getTime())) {
+    const fallback = new Date();
+    fallback.setDate(fallback.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${fallback.getFullYear()}-${pad(fallback.getMonth() + 1)}-${pad(fallback.getDate())}`;
+  }
+  source.setDate(source.getDate() + days);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${source.getFullYear()}-${pad(source.getMonth() + 1)}-${pad(source.getDate())}`;
+}
+
 function formatAssignments(wo: WorkOrderListItem): string {
   const active = getActiveAssignments(wo);
   if (active.length === 0) return '—';
@@ -286,6 +299,12 @@ function EventualServicesPageInner() {
   const [rescheduleMinute, setRescheduleMinute] = useState('00');
   const [savingReschedule, setSavingReschedule] = useState(false);
   const [rescheduleError, setRescheduleError] = useState<string | null>(null);
+  const [repeatingWo, setRepeatingWo] = useState<WorkOrderListItem | null>(null);
+  const [repeatDate, setRepeatDate] = useState('');
+  const [repeatHour, setRepeatHour] = useState('11');
+  const [repeatMinute, setRepeatMinute] = useState('00');
+  const [savingRepeat, setSavingRepeat] = useState(false);
+  const [repeatError, setRepeatError] = useState<string | null>(null);
   const [financeWoId, setFinanceWoId] = useState<string | null>(null);
   const [detailWoId, setDetailWoId] = useState<string | null>(null);
   const [checklistWoId, setChecklistWoId] = useState<string | null>(null);
@@ -507,6 +526,65 @@ function EventualServicesPageInner() {
   function closeReschedule() {
     setReschedulingWo(null);
     setRescheduleError(null);
+  }
+
+  function extraDayDefaults(wo: WorkOrderListItem) {
+    const parsed = parseScheduleForForm(wo);
+    return {
+      date: addCalendarDays(parsed.date, 1),
+      hour: parsed.hour,
+      minute: parsed.minute,
+    };
+  }
+
+  function openRepeat(wo: WorkOrderListItem) {
+    const parsed = extraDayDefaults(wo);
+    setRepeatingWo(wo);
+    setRepeatDate(parsed.date);
+    setRepeatHour(parsed.hour);
+    setRepeatMinute(parsed.minute);
+    setRepeatError(null);
+    setError(null);
+    setSuccess(null);
+  }
+
+  function closeRepeat() {
+    setRepeatingWo(null);
+    setRepeatError(null);
+  }
+
+  async function handleRepeat(e: FormEvent) {
+    e.preventDefault();
+    if (!repeatingWo || !repeatDate) {
+      setRepeatError('Indicá la fecha del nuevo servicio.');
+      return;
+    }
+
+    setSavingRepeat(true);
+    setRepeatError(null);
+    setError(null);
+    setSuccess(null);
+    try {
+      const scheduledAt = toIsoFromDatetimeLocal(
+        `${repeatDate}T${repeatHour}:${repeatMinute}`,
+      );
+      const created = await api.post<WorkOrderListItem>(
+        `/work-orders/${repeatingWo.id}/repeat`,
+        { scheduledAt },
+      );
+      setSuccess(
+        `Se creó el servicio extra "${created.title}". Quedó sin asignar.`,
+      );
+      closeRepeat();
+      setDetailWoId(created.id);
+      await loadServices({ silent: true });
+    } catch (err) {
+      setRepeatError(
+        err instanceof Error ? err.message : 'No se pudo crear el servicio extra',
+      );
+    } finally {
+      setSavingRepeat(false);
+    }
   }
 
   async function handleReschedule(e: FormEvent) {
@@ -834,6 +912,16 @@ function EventualServicesPageInner() {
                           >
                             Reprogramar
                           </button>
+                          {isCompleted ? (
+                            <button
+                              type="button"
+                              className="btn btn-primary btn-sm"
+                              onClick={() => openRepeat(wo)}
+                              title="Crear un servicio extra con el mismo checklist"
+                            >
+                              Crear otro día
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
@@ -1243,6 +1331,102 @@ function EventualServicesPageInner() {
         </div>
       ) : null}
 
+      {repeatingWo ? (
+        <div className="modal-overlay" onClick={closeRepeat}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">Crear otro día</h2>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={closeRepeat}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <p className="muted" style={{ marginTop: 0 }}>
+              <strong>{repeatingWo.title}</strong>
+              <br />
+              {repeatingWo.building?.name ?? 'Edificio'} ·{' '}
+              {repeatingWo.zone?.name ?? 'Zona'}
+              <br />
+              Servicio original: {formatDate(repeatingWo.scheduledDate)}{' '}
+              {formatScheduledTime(repeatingWo.scheduledTime)}
+            </p>
+
+            <p className="muted" style={{ fontSize: 13 }}>
+              El servicio completado no se modifica. Se crea uno nuevo, con el mismo checklist
+              y el mismo presupuesto, sin asignar.
+            </p>
+
+            {repeatError ? (
+              <div className="alert alert-error" style={{ marginBottom: 12 }}>
+                {repeatError}
+              </div>
+            ) : null}
+
+            <form onSubmit={(e) => void handleRepeat(e)}>
+              <div className="form-grid" style={{ marginTop: 12 }}>
+                <div className="form-field">
+                  <label htmlFor="repeat-date">Fecha del nuevo servicio *</label>
+                  <input
+                    id="repeat-date"
+                    className="input"
+                    type="date"
+                    required
+                    value={repeatDate}
+                    onChange={(e) => setRepeatDate(e.target.value)}
+                  />
+                </div>
+                <div className="form-field">
+                  <label htmlFor="repeat-hour">Hora</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <select
+                      id="repeat-hour"
+                      className="input"
+                      value={repeatHour}
+                      onChange={(e) => setRepeatHour(e.target.value)}
+                    >
+                      {HOUR_OPTIONS.map((h) => (
+                        <option key={h} value={h}>
+                          {h}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      id="repeat-minute"
+                      className="input"
+                      value={repeatMinute}
+                      onChange={(e) => setRepeatMinute(e.target.value)}
+                    >
+                      {MINUTE_OPTIONS.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-actions" style={{ marginTop: 16 }}>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={savingRepeat || !repeatDate}
+                >
+                  {savingRepeat ? 'Creando…' : 'Crear servicio extra'}
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={closeRepeat}>
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
       {financeWoId ? (
         <WorkOrderFinanceModal workOrderId={financeWoId} onClose={() => setFinanceWoId(null)} />
       ) : null}
@@ -1261,6 +1445,13 @@ function EventualServicesPageInner() {
           onChecklistSaved={() => void loadServices({ silent: true })}
           onDeleted={() => {
             setSuccess('Servicio eliminado.');
+            void loadServices({ silent: true });
+          }}
+          onRepeated={(created) => {
+            setSuccess(
+              `Se creó el servicio extra "${created.title}". Quedó sin asignar.`,
+            );
+            setDetailWoId(created.id);
             void loadServices({ silent: true });
           }}
           onClose={() => {

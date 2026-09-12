@@ -39,6 +39,7 @@ type Props = {
   onClose: () => void;
   onChecklistSaved?: () => void;
   onDeleted?: () => void;
+  onRepeated?: (created: { id: string; title: string }) => void;
 };
 
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0'));
@@ -121,6 +122,19 @@ function photoRequirementLabel(requiresPhoto: boolean, allowsPhoto?: boolean): s
   return 'Sin foto';
 }
 
+function addCalendarDays(dateKey: string, days: number): string {
+  const source = dateKey ? new Date(`${dateKey}T12:00:00`) : new Date();
+  if (Number.isNaN(source.getTime())) {
+    const fallback = new Date();
+    fallback.setDate(fallback.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${fallback.getFullYear()}-${pad(fallback.getMonth() + 1)}-${pad(fallback.getDate())}`;
+  }
+  source.setDate(source.getDate() + days);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${source.getFullYear()}-${pad(source.getMonth() + 1)}-${pad(source.getDate())}`;
+}
+
 function parseScheduleForForm(wo: WorkOrderDetail): { date: string; hour: string; minute: string } {
   const date = calendarDateKeyFromStored(wo.scheduledDate) || '';
   if (!wo.scheduledTime) {
@@ -142,6 +156,7 @@ export function WorkOrderExecutionDetailModal({
   onClose,
   onChecklistSaved,
   onDeleted,
+  onRepeated,
 }: Props) {
   const [wo, setWo] = useState<WorkOrderDetail | null>(null);
   const [tasks, setTasks] = useState<ServiceExecutionTaskItem[]>([]);
@@ -158,7 +173,14 @@ export function WorkOrderExecutionDetailModal({
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [scheduleSuccess, setScheduleSuccess] = useState<string | null>(null);
+  const [extraDayDate, setExtraDayDate] = useState('');
+  const [extraDayHour, setExtraDayHour] = useState('11');
+  const [extraDayMinute, setExtraDayMinute] = useState('00');
+  const [savingExtraDay, setSavingExtraDay] = useState(false);
+  const [extraDayError, setExtraDayError] = useState<string | null>(null);
+  const [extraDaySuccess, setExtraDaySuccess] = useState<string | null>(null);
   const scheduleSectionRef = useRef<HTMLElement | null>(null);
+  const extraDaySectionRef = useRef<HTMLElement | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -204,10 +226,19 @@ export function WorkOrderExecutionDetailModal({
     setScheduleHour(parsed.hour);
     setScheduleMinute(parsed.minute);
     setScheduleError(null);
+    setExtraDayDate(addCalendarDays(parsed.date, 1));
+    setExtraDayHour(parsed.hour);
+    setExtraDayMinute(parsed.minute);
+    setExtraDayError(null);
+    setExtraDaySuccess(null);
   }, [wo?.id, wo?.scheduledDate, wo?.scheduledTime]);
 
   function scrollToSchedule() {
     scheduleSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function scrollToExtraDay() {
+    extraDaySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   async function handleScheduleSubmit(e: FormEvent) {
@@ -234,6 +265,38 @@ export function WorkOrderExecutionDetailModal({
       );
     } finally {
       setSavingSchedule(false);
+    }
+  }
+
+  async function handleExtraDaySubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!wo || !extraDayDate) {
+      setExtraDayError('Indicá la fecha del nuevo servicio.');
+      return;
+    }
+
+    setSavingExtraDay(true);
+    setExtraDayError(null);
+    setExtraDaySuccess(null);
+    try {
+      const scheduledAt = toIsoFromDatetimeLocal(
+        `${extraDayDate}T${extraDayHour}:${extraDayMinute}`,
+      );
+      const created = await api.post<{ id: string; title: string }>(
+        `/work-orders/${wo.id}/repeat`,
+        { scheduledAt },
+      );
+      if (onRepeated) {
+        onRepeated(created);
+      } else {
+        setExtraDaySuccess('Se creó el servicio extra. Quedó sin asignar.');
+      }
+    } catch (err) {
+      setExtraDayError(
+        err instanceof Error ? err.message : 'No se pudo crear el servicio extra',
+      );
+    } finally {
+      setSavingExtraDay(false);
     }
   }
 
@@ -381,6 +444,16 @@ export function WorkOrderExecutionDetailModal({
                 title="Cambiar fecha y hora del servicio"
               >
                 Reprogramar
+              </button>
+            ) : null}
+            {wo && wo.status === 'COMPLETED' ? (
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={scrollToExtraDay}
+                title="Crear un servicio extra con el mismo checklist"
+              >
+                Crear otro día
               </button>
             ) : null}
             {wo && wo.status !== 'COMPLETED' ? (
@@ -591,6 +664,89 @@ export function WorkOrderExecutionDetailModal({
                 </div>
               </form>
             </section>
+
+            {wo.status === 'COMPLETED' ? (
+              <section
+                ref={extraDaySectionRef}
+                className="stack"
+                style={{
+                  gap: 10,
+                  padding: 12,
+                  border: '1px solid var(--border, #e5e7eb)',
+                  borderRadius: 8,
+                  background: 'var(--surface-muted, #f9fafb)',
+                }}
+              >
+                <h4 className="recurring-task-list-heading" style={{ margin: 0 }}>
+                  Crear otro día
+                </h4>
+                <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                  El servicio completado queda como está. Se crea uno nuevo, con el mismo
+                  checklist y el mismo presupuesto, sin asignar. Úsalo si el trabajo no alcanzó
+                  y hay que volver otro día.
+                </p>
+
+                {extraDayError ? <div className="alert alert-error">{extraDayError}</div> : null}
+                {extraDaySuccess ? (
+                  <div className="alert alert-success">{extraDaySuccess}</div>
+                ) : null}
+
+                <form onSubmit={(e) => void handleExtraDaySubmit(e)}>
+                  <div className="form-grid">
+                    <div className="form-field">
+                      <label htmlFor="extra-day-date">Fecha del nuevo servicio *</label>
+                      <input
+                        id="extra-day-date"
+                        className="input"
+                        type="date"
+                        required
+                        value={extraDayDate}
+                        onChange={(e) => setExtraDayDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="form-field">
+                      <label htmlFor="extra-day-hour">Hora</label>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <select
+                          id="extra-day-hour"
+                          className="input"
+                          value={extraDayHour}
+                          onChange={(e) => setExtraDayHour(e.target.value)}
+                        >
+                          {HOUR_OPTIONS.map((h) => (
+                            <option key={h} value={h}>
+                              {h}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          id="extra-day-minute"
+                          className="input"
+                          value={extraDayMinute}
+                          onChange={(e) => setExtraDayMinute(e.target.value)}
+                        >
+                          {MINUTE_OPTIONS.map((m) => (
+                            <option key={m} value={m}>
+                              {m}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="form-actions" style={{ marginTop: 12 }}>
+                    <button
+                      type="submit"
+                      className="btn btn-primary btn-sm"
+                      disabled={savingExtraDay || !extraDayDate}
+                    >
+                      {savingExtraDay ? 'Creando…' : 'Crear servicio extra'}
+                    </button>
+                  </div>
+                </form>
+              </section>
+            ) : null}
 
             {wo.quote ? (
               <section className="stack" style={{ gap: 10 }}>

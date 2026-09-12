@@ -1198,6 +1198,7 @@ export class WorkOrdersService {
     }
 
     const scheduledDate = calendarDateFromInstant(scheduledAt);
+    const title = refreshVisitLabelInTitle(source.title, scheduledAt);
 
     const createdId = await this.prisma.$transaction(async (tx) => {
       const workOrder = await tx.workOrder.create({
@@ -1208,7 +1209,7 @@ export class WorkOrdersService {
           floorId: source.floorId,
           zoneId: source.zoneId,
           subzoneId: source.subzoneId,
-          title: source.title,
+          title,
           description: source.description,
           scheduledDate,
           scheduledTime: scheduledAt,
