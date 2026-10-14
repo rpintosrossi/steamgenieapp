@@ -27,6 +27,7 @@ import {
   type ServiceExecutionTaskPhoto,
 } from '../../../src/services/admin-api';
 import { PdfViewerModal } from '../../../src/components/PdfViewerModal';
+import { QuoteInternalNotesCard } from '../../../src/components/QuoteInternalNotesCard';
 import { formatScheduledTime } from '../../../src/utils/schedule';
 import { downloadPdfToCache, quotePdfFilename } from '../../../src/utils/download-pdf';
 
@@ -230,6 +231,14 @@ export default function AdminServiceDetailScreen() {
               )}
             </TouchableOpacity>
           )}
+
+          {wo.quote ? (
+            <QuoteInternalNotesCard
+              quoteNumber={wo.quote.number}
+              notes={wo.quote.internalNotes}
+              photos={wo.quote.internalPhotos}
+            />
+          ) : null}
 
           {wo.assignments?.length ? (
             <View style={styles.card}>

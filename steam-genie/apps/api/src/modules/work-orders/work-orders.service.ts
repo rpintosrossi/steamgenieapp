@@ -120,6 +120,17 @@ const WO_DETAIL_INCLUDE = {
       particularClient: { select: { name: true } },
       eventualClient: { select: { name: true } },
       building: { select: { name: true } },
+      internalNotes: true,
+      internalPhotos: {
+        where: { deletedAt: null },
+        orderBy: { createdAt: 'asc' as const },
+        select: {
+          id: true,
+          originalFilename: true,
+          mimeType: true,
+          createdAt: true,
+        },
+      },
       items: {
         orderBy: { sortOrder: 'asc' as const },
         select: {
@@ -561,7 +572,51 @@ export class WorkOrdersService {
       }
     }
 
-    return wo;
+    return this.presentWorkOrder(wo, user);
+  }
+
+  /**
+   * Texto y fotos internas del presupuesto: solo admin y encargado.
+   * No van al PDF ni al cliente, y el limpiador no las recibe.
+   */
+  private presentWorkOrder<T extends { quote: { id: string } | null }>(
+    wo: T,
+    user?: AuthUser,
+  ) {
+    const quote = wo.quote as
+      | (T['quote'] & {
+          internalNotes?: string | null;
+          internalPhotos?: Array<{
+            id: string;
+            originalFilename: string | null;
+            mimeType: string | null;
+            createdAt: Date;
+          }>;
+        })
+      | null;
+    if (!quote) return wo;
+
+    const { internalNotes, internalPhotos, ...publicQuote } = quote;
+    const canSeeInternal =
+      user?.primaryRole === 'admin' || user?.primaryRole === 'manager';
+    if (!canSeeInternal) {
+      return { ...wo, quote: publicQuote };
+    }
+
+    return {
+      ...wo,
+      quote: {
+        ...publicQuote,
+        internalNotes: internalNotes ?? null,
+        internalPhotos: (internalPhotos ?? []).map((photo) => ({
+          id: photo.id,
+          url: `/quotes/${quote.id}/internal-photos/${photo.id}/file`,
+          originalFilename: photo.originalFilename ?? null,
+          mimeType: photo.mimeType ?? null,
+          createdAt: photo.createdAt,
+        })),
+      },
+    };
   }
 
   // ─── ASSIGN ───────────────────────────────────────────────────────────────
@@ -806,7 +861,7 @@ export class WorkOrdersService {
       }),
     ]);
 
-    return this.findOne(id);
+    return this.findOne(id, user);
   }
 
   // ─── REJECT ───────────────────────────────────────────────────────────────
@@ -858,7 +913,7 @@ export class WorkOrdersService {
       });
     }
 
-    return this.findOne(id);
+    return this.findOne(id, user);
   }
 
   // ─── START ────────────────────────────────────────────────────────────────
@@ -933,7 +988,7 @@ export class WorkOrdersService {
           joinedAt: now,
         },
       });
-      return this.findOne(id);
+      return this.findOne(id, user);
     }
 
     // Create ServiceExecution + update WO status
@@ -961,7 +1016,7 @@ export class WorkOrdersService {
       });
     });
 
-    return this.findOne(id);
+    return this.findOne(id, user);
   }
 
   // ─── COMPLETE ─────────────────────────────────────────────────────────────
@@ -1099,7 +1154,7 @@ export class WorkOrdersService {
       }),
     ]);
 
-    return this.findOne(id);
+    return this.findOne(id, user);
   }
 
   // ─── RESCHEDULE ────────────────────────────────────────────────────────────

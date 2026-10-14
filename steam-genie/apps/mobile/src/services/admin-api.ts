@@ -198,6 +198,12 @@ export interface TimelineTaskRow {
 export interface AdminWorkOrderQuote {
   id: string;
   number: number;
+  internalNotes?: string | null;
+  internalPhotos?: Array<{
+    id: string;
+    url: string;
+    originalFilename?: string | null;
+  }>;
   particularClient?: { name: string } | null;
   eventualClient?: { name: string } | null;
   building?: { name: string } | null;

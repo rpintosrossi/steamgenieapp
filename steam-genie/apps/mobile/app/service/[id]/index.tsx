@@ -23,6 +23,7 @@ import { useSyncStore } from '../../../src/stores/sync.store';
 import { COLORS } from '../../../src/constants/colors';
 import { getWorkOrderTypeLabel } from '../../../src/constants/work-order-types';
 import { CheckoutReservationCard } from '../../../src/components/CheckoutReservationCard';
+import { QuoteInternalNotesCard } from '../../../src/components/QuoteInternalNotesCard';
 import {
   ATTENDANCE_REQUIRED_MESSAGE,
   isCheckedInAtBuilding,
@@ -71,6 +72,16 @@ interface WorkOrderDetail extends Omit<WorkOrderCached, 'workOrderTasks'> {
     status: string;
     user?: { fullName: string };
   }>;
+  quote?: {
+    id: string;
+    number?: number;
+    internalNotes?: string | null;
+    internalPhotos?: Array<{
+      id: string;
+      url: string;
+      originalFilename?: string | null;
+    }>;
+  } | null;
 }
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
@@ -599,6 +610,14 @@ export default function ServiceDetailScreen() {
             </>
           ) : null}
         </View>
+
+        {workOrder.quote ? (
+          <QuoteInternalNotesCard
+            quoteNumber={workOrder.quote.number}
+            notes={workOrder.quote.internalNotes}
+            photos={workOrder.quote.internalPhotos}
+          />
+        ) : null}
 
         {showCheckoutReservation && workOrder.reservation ? (
           <CheckoutReservationCard
