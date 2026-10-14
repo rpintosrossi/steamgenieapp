@@ -88,6 +88,12 @@ export class QueryEventualCalendarDto {
   @IsBoolean()
   includeServices?: boolean = true;
 
+  /** Presupuestos cotizados o en espera, ubicados por fecha de solicitud. */
+  @IsOptional()
+  @Transform(({ value }) => toBooleanFlag(value, false))
+  @IsBoolean()
+  includePendingQuotes?: boolean = false;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

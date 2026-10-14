@@ -9,23 +9,30 @@ import {
   RefreshControl,
   Modal,
   Pressable,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
   calendarDateKeyFromStored,
   calendarDateKeyInBusinessTz,
+  formatQuoteNumber,
+  QUOTE_STATUS_LABELS,
+  type QuoteStatus,
 } from '@steam-genie/shared-constants';
 import { BrandedScreenHeader } from '../../src/components/BrandedScreenHeader';
+import { PdfViewerModal } from '../../src/components/PdfViewerModal';
 import { COLORS } from '../../src/constants/colors';
 import {
   adminApi,
   type AdminBuilding,
+  type EventualCalendarPendingQuote,
   type EventualCalendarReservation,
   type EventualCalendarResponse,
   type EventualCalendarService,
 } from '../../src/services/admin-api';
 import { formatScheduledTime } from '../../src/utils/schedule';
+import { downloadPdfToCache, quotePdfFilename } from '../../src/utils/download-pdf';
 
 const WEEKDAY_LABELS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
 
@@ -135,6 +142,21 @@ function overlapsDay(checkinAt: string, checkoutAt: string, dayKey: string): boo
   return dayKey >= start && dayKey <= end;
 }
 
+function formatMoney(amount: number): string {
+  return new Intl.NumberFormat('es-AR', {
+    style: 'currency',
+    currency: 'ARS',
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+function quoteStatusLabel(status: string): string {
+  if (status in QUOTE_STATUS_LABELS) {
+    return QUOTE_STATUS_LABELS[status as QuoteStatus];
+  }
+  return status;
+}
+
 export default function AdminCalendarioScreen() {
   const router = useRouter();
   const todayKey = calendarDateKeyInBusinessTz(new Date());
@@ -147,17 +169,35 @@ export default function AdminCalendarioScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState(todayKey);
+  const [showPendingQuotes, setShowPendingQuotes] = useState(true);
+  const [downloadingQuoteId, setDownloadingQuoteId] = useState<string | null>(null);
+  const [pdfUri, setPdfUri] = useState<string | null>(null);
+  const [pdfTitle, setPdfTitle] = useState('Presupuesto');
 
   const gridDays = useMemo(() => buildMonthGrid(month), [month]);
   const { from, to } = useMemo(() => monthRangeKeys(month), [month]);
 
+  const visibleQuotes = useMemo(() => {
+    const quotes = data?.quotes ?? [];
+    const allBuildingsSelected =
+      buildings.length > 0 && selectedBuildingIds.length === buildings.length;
+    return quotes.filter((quote) => {
+      if (!quote.buildingId) return allBuildingsSelected;
+      return selectedBuildingIds.includes(quote.buildingId);
+    });
+  }, [data, buildings.length, selectedBuildingIds]);
+
   const eventsByDay = useMemo(() => {
     const map = new Map<
       string,
-      { reservations: EventualCalendarReservation[]; services: EventualCalendarService[] }
+      {
+        reservations: EventualCalendarReservation[];
+        services: EventualCalendarService[];
+        quotes: EventualCalendarPendingQuote[];
+      }
     >();
     for (const day of gridDays) {
-      map.set(day.key, { reservations: [], services: [] });
+      map.set(day.key, { reservations: [], services: [], quotes: [] });
     }
     if (!data) return map;
 
@@ -173,8 +213,15 @@ export default function AdminCalendarioScreen() {
       const dayKey = calendarDateKeyFromStored(s.scheduledDate);
       map.get(dayKey)?.services.push(s);
     }
+    if (showPendingQuotes) {
+      for (const quote of visibleQuotes) {
+        if (!quote.requestDate) continue;
+        const dayKey = calendarDateKeyFromStored(quote.requestDate);
+        map.get(dayKey)?.quotes.push(quote);
+      }
+    }
     return map;
-  }, [data, gridDays]);
+  }, [data, gridDays, showPendingQuotes, visibleQuotes]);
 
   // Al cambiar de mes, si el día elegido queda fuera del rango, usar hoy o el 1º.
   useEffect(() => {
@@ -183,7 +230,11 @@ export default function AdminCalendarioScreen() {
     setSelectedDay(todayInMonth ? todayKey : from);
   }, [from, to, selectedDay, todayKey]);
 
-  const dayDetail = eventsByDay.get(selectedDay) ?? { reservations: [], services: [] };
+  const dayDetail = eventsByDay.get(selectedDay) ?? {
+    reservations: [],
+    services: [],
+    quotes: [],
+  };
   const selectedDayLabel = new Date(selectedDay + 'T12:00:00').toLocaleDateString('es-AR', {
     weekday: 'long',
     day: 'numeric',
@@ -226,6 +277,7 @@ export default function AdminCalendarioScreen() {
         buildingIds: selectedBuildingIds,
         includeReservations: true,
         includeServices: true,
+        includePendingQuotes: true,
       });
       setData(res);
     } catch (e) {
@@ -256,6 +308,26 @@ export default function AdminCalendarioScreen() {
     }
   }
 
+  async function handleOpenQuotePdf(quote: EventualCalendarPendingQuote) {
+    if (downloadingQuoteId) return;
+    setDownloadingQuoteId(quote.id);
+    try {
+      const downloaded = await downloadPdfToCache(
+        `/quotes/${quote.id}/pdf`,
+        quotePdfFilename(quote),
+      );
+      setPdfTitle(`Presupuesto N° ${formatQuoteNumber(quote.number)}`);
+      setPdfUri(downloaded.uri);
+    } catch (e) {
+      Alert.alert(
+        'Error',
+        e instanceof Error ? e.message : 'No se pudo abrir el presupuesto',
+      );
+    } finally {
+      setDownloadingQuoteId(null);
+    }
+  }
+
   function toggleBuilding(id: string) {
     setSelectedBuildingIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
@@ -273,7 +345,7 @@ export default function AdminCalendarioScreen() {
     <View style={styles.container}>
       <BrandedScreenHeader
         title="Calendario"
-        subtitle="Servicios confirmados y reservas"
+        subtitle="Servicios, reservas y presupuestos pendientes"
         right={
           <TouchableOpacity
             style={styles.filterBtn}
@@ -301,6 +373,20 @@ export default function AdminCalendarioScreen() {
           </TouchableOpacity>
         </View>
 
+        <TouchableOpacity
+          style={styles.quoteToggle}
+          onPress={() => setShowPendingQuotes((value) => !value)}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: showPendingQuotes }}
+        >
+          <Ionicons
+            name={showPendingQuotes ? 'checkbox' : 'square-outline'}
+            size={22}
+            color={showPendingQuotes ? COLORS.quotePending : COLORS.disabled}
+          />
+          <Text style={styles.quoteToggleText}>Ver presupuestos sin aceptar</Text>
+        </TouchableOpacity>
+
         <View style={styles.weekHeader}>
           {WEEKDAY_LABELS.map((d) => (
             <Text key={d} style={styles.weekLabel}>
@@ -319,6 +405,7 @@ export default function AdminCalendarioScreen() {
               const events = eventsByDay.get(day.key);
               const serviceCount = events?.services.length ?? 0;
               const reservationCount = events?.reservations.length ?? 0;
+              const quoteCount = events?.quotes.length ?? 0;
               const isToday = day.key === todayKey;
               const isSelected = day.key === selectedDay;
               return (
@@ -342,7 +429,7 @@ export default function AdminCalendarioScreen() {
                   >
                     {day.label}
                   </Text>
-                  {(serviceCount > 0 || reservationCount > 0) && (
+                  {(serviceCount > 0 || reservationCount > 0 || quoteCount > 0) && (
                     <View style={styles.dots}>
                       {serviceCount > 0 && (
                         <View
@@ -362,11 +449,31 @@ export default function AdminCalendarioScreen() {
                           ]}
                         />
                       )}
+                      {quoteCount > 0 && (
+                        <View
+                          style={[
+                            styles.dot,
+                            styles.dotQuote,
+                            isSelected && styles.dotOnSelected,
+                          ]}
+                        />
+                      )}
                     </View>
                   )}
                   {serviceCount > 0 && (
                     <Text style={[styles.countText, isSelected && styles.countTextSelected]}>
                       {serviceCount}
+                    </Text>
+                  )}
+                  {serviceCount === 0 && quoteCount > 0 && (
+                    <Text
+                      style={[
+                        styles.countText,
+                        styles.countTextQuote,
+                        isSelected && styles.countTextSelected,
+                      ]}
+                    >
+                      {quoteCount}
                     </Text>
                   )}
                 </TouchableOpacity>
@@ -375,7 +482,7 @@ export default function AdminCalendarioScreen() {
           </View>
         )}
 
-        {data?.truncated.services || data?.truncated.reservations ? (
+        {data?.truncated.services || data?.truncated.reservations || data?.truncated.quotes ? (
           <Text style={styles.hint}>
             Resultados truncados. Probá filtrar menos edificios.
           </Text>
@@ -390,6 +497,10 @@ export default function AdminCalendarioScreen() {
             <View style={[styles.dot, styles.dotReservation]} />
             <Text style={styles.legendText}>Reservas</Text>
           </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.dot, styles.dotQuote]} />
+            <Text style={styles.legendText}>Presupuestos sin aceptar</Text>
+          </View>
         </View>
 
         {/* Listado del día seleccionado */}
@@ -401,9 +512,14 @@ export default function AdminCalendarioScreen() {
             {dayDetail.reservations.length > 0
               ? ` · ${dayDetail.reservations.length} reserva${dayDetail.reservations.length === 1 ? '' : 's'}`
               : ''}
+            {showPendingQuotes && dayDetail.quotes.length > 0
+              ? ` · ${dayDetail.quotes.length} presupuesto${dayDetail.quotes.length === 1 ? '' : 's'}`
+              : ''}
           </Text>
 
-          {sortedServices.length === 0 && dayDetail.reservations.length === 0 ? (
+          {sortedServices.length === 0 &&
+          dayDetail.reservations.length === 0 &&
+          dayDetail.quotes.length === 0 ? (
             <Text style={styles.emptyText}>Sin eventos este día</Text>
           ) : null}
 
@@ -459,6 +575,44 @@ export default function AdminCalendarioScreen() {
               </Text>
             </View>
           ))}
+
+          {dayDetail.quotes.length > 0 && (
+            <Text style={[styles.sectionLabel, { marginTop: 8 }]}>
+              Presupuestos sin aceptar
+            </Text>
+          )}
+          {dayDetail.quotes.map((quote) => (
+            <TouchableOpacity
+              key={quote.id}
+              style={[styles.eventCard, styles.quoteCard]}
+              onPress={() => void handleOpenQuotePdf(quote)}
+              disabled={downloadingQuoteId != null}
+            >
+              <View style={styles.eventTop}>
+                <Text style={[styles.eventTime, styles.quoteTime]}>
+                  N° {formatQuoteNumber(quote.number)}
+                </Text>
+                <Text style={[styles.badge, styles.badgeQuote]}>
+                  {quoteStatusLabel(quote.status)}
+                </Text>
+              </View>
+              <Text style={styles.eventTitle}>{quote.clientName}</Text>
+              <Text style={styles.eventMeta}>
+                {quote.building?.name ?? 'Sin edificio'}
+                {quote.serviceType ? ` · ${quote.serviceType}` : ''}
+              </Text>
+              <Text style={styles.eventMeta}>{formatMoney(quote.total)}</Text>
+              {downloadingQuoteId === quote.id ? (
+                <ActivityIndicator
+                  color={COLORS.quotePending}
+                  size="small"
+                  style={{ marginTop: 8 }}
+                />
+              ) : (
+                <Text style={styles.quoteOpenHint}>Tocá para ver el PDF</Text>
+              )}
+            </TouchableOpacity>
+          ))}
         </View>
       </ScrollView>
 
@@ -511,6 +665,13 @@ export default function AdminCalendarioScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <PdfViewerModal
+        visible={pdfUri != null}
+        uri={pdfUri}
+        title={pdfTitle}
+        onClose={() => setPdfUri(null)}
+      />
     </View>
   );
 }
@@ -538,6 +699,13 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   monthTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text },
+  quoteToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  quoteToggleText: { fontSize: 14, fontWeight: '600', color: COLORS.text, flex: 1 },
   weekHeader: { flexDirection: 'row', marginBottom: 4 },
   weekLabel: {
     flex: 1,
@@ -566,10 +734,12 @@ const styles = StyleSheet.create({
   dot: { width: 6, height: 6, borderRadius: 3 },
   dotService: { backgroundColor: COLORS.primary },
   dotReservation: { backgroundColor: COLORS.warning },
+  dotQuote: { backgroundColor: COLORS.quotePending },
   dotOnSelected: { backgroundColor: '#fff' },
   countText: { fontSize: 10, color: COLORS.textMuted, marginTop: 2 },
+  countTextQuote: { color: COLORS.quotePending, fontWeight: '700' },
   countTextSelected: { color: '#fff' },
-  legend: { flexDirection: 'row', gap: 16, marginTop: 16 },
+  legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, marginTop: 16 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   legendText: { fontSize: 12, color: COLORS.textMuted },
   hint: { marginTop: 12, fontSize: 12, color: COLORS.warning },
@@ -635,6 +805,9 @@ const styles = StyleSheet.create({
     borderLeftColor: COLORS.primary,
   },
   reservationCard: { borderLeftColor: COLORS.warning },
+  quoteCard: { borderLeftColor: COLORS.quotePending },
+  quoteTime: { color: COLORS.quotePending },
+  quoteOpenHint: { fontSize: 12, color: COLORS.quotePending, marginTop: 6, fontWeight: '600' },
   eventTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -654,6 +827,7 @@ const styles = StyleSheet.create({
   },
   badgeOk: { backgroundColor: '#dcfce7', color: COLORS.success },
   badgeWarn: { backgroundColor: '#fef3c7', color: COLORS.warning },
+  badgeQuote: { backgroundColor: '#ede9fe', color: COLORS.quotePending },
   pickerActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',

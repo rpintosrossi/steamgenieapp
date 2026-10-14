@@ -6,6 +6,7 @@ export const COLORS = {
   success: '#16a34a',
   error: '#dc2626',
   warning: '#d97706',
+  quotePending: '#7c3aed',
   bg: '#f8fafc',
   surface: '#ffffff',
   text: '#1e293b',

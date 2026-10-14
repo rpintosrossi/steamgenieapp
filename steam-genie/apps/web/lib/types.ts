@@ -516,18 +516,35 @@ export interface EventualCalendarService {
   activeAssignments: WorkOrderAssignmentItem[];
 }
 
+export interface EventualCalendarPendingQuote {
+  id: string;
+  number: number;
+  status: string;
+  requestDate: string;
+  serviceType: string | null;
+  total: number;
+  buildingId: string | null;
+  clientName: string;
+  building?: { id: string; name: string } | null;
+  particularClient?: { name: string } | null;
+  eventualClient?: { name: string } | null;
+}
+
 export interface EventualCalendarResponse {
   reservations: EventualCalendarReservation[];
   services: EventualCalendarService[];
+  quotes?: EventualCalendarPendingQuote[];
   from: string;
   to: string;
   totals: {
     reservations: number;
     services: number;
+    quotes?: number;
   };
   truncated: {
     reservations: boolean;
     services: boolean;
+    quotes?: boolean;
   };
 }
 

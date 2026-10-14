@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { WorkOrderType } from '@prisma/client';
+import { Prisma, QuoteStatus, WorkOrderType } from '@prisma/client';
 import {
   businessDayInstantRange,
   endOfStoredCalendarDateInBusinessTz,
@@ -37,6 +37,7 @@ export class EventualCalendarService {
       workerId,
       includeReservations = true,
       includeServices = true,
+      includePendingQuotes = false,
       limit = 2000,
     } = query;
 
@@ -60,10 +61,11 @@ export class EventualCalendarService {
       return {
         reservations: [],
         services: [],
+        quotes: [],
         from,
         to,
-        totals: { reservations: 0, services: 0 },
-        truncated: { reservations: false, services: false },
+        totals: { reservations: 0, services: 0, quotes: 0 },
+        truncated: { reservations: false, services: false, quotes: false },
       };
     }
 
@@ -79,7 +81,7 @@ export class EventualCalendarService {
     const rangeStart = businessDayInstantRange(from).start;
     const rangeEnd = endOfStoredCalendarDateInBusinessTz(to);
 
-    const [reservationResult, serviceResult] = await Promise.all([
+    const [reservationResult, serviceResult, quoteResult] = await Promise.all([
       includeReservations
         ? this.fetchReservations({
             rangeStart,
@@ -102,20 +104,31 @@ export class EventualCalendarService {
             limit,
           })
         : { items: [], total: 0, truncated: false },
+      includePendingQuotes
+        ? this.fetchPendingQuotes({
+            fromDate,
+            toDate,
+            buildingFilter,
+            limit,
+          })
+        : { items: [], total: 0, truncated: false },
     ]);
 
     return {
       reservations: reservationResult.items,
       services: serviceResult.items,
+      quotes: quoteResult.items,
       from,
       to,
       totals: {
         reservations: reservationResult.total,
         services: serviceResult.total,
+        quotes: quoteResult.total,
       },
       truncated: {
         reservations: reservationResult.truncated,
         services: serviceResult.truncated,
+        quotes: quoteResult.truncated,
       },
     };
   }
@@ -242,6 +255,91 @@ export class EventualCalendarService {
           ...wo,
           activeAssignments,
           unassigned,
+        };
+      }),
+      total,
+      truncated: total > params.limit,
+    };
+  }
+
+  /** Cotizados y en espera, sin servicio asociado. La fecha del calendario es la de solicitud. */
+  private async fetchPendingQuotes(params: {
+    fromDate: Date;
+    toDate: Date;
+    buildingFilter: string | { in: string[] };
+    limit: number;
+  }) {
+    const where: Prisma.QuoteWhereInput = {
+      deletedAt: null,
+      status: { in: [QuoteStatus.COTIZADO, QuoteStatus.EN_ESPERA] },
+      requestDate: { gte: params.fromDate, lte: params.toDate },
+      OR: [
+        { buildingId: params.buildingFilter },
+        {
+          particularClient: {
+            buildingId: params.buildingFilter,
+            deletedAt: null,
+          },
+        },
+        {
+          buildingId: null,
+          particularClientId: null,
+          eventualClientId: { not: null },
+        },
+      ],
+    };
+
+    const [rows, total] = await Promise.all([
+      this.prisma.quote.findMany({
+        where,
+        take: params.limit,
+        orderBy: [{ requestDate: 'asc' }, { number: 'asc' }],
+        select: {
+          id: true,
+          number: true,
+          status: true,
+          requestDate: true,
+          serviceType: true,
+          total: true,
+          buildingId: true,
+          building: { select: { id: true, name: true } },
+          particularClient: {
+            select: {
+              name: true,
+              buildingId: true,
+              building: { select: { id: true, name: true } },
+            },
+          },
+          eventualClient: { select: { name: true } },
+        },
+      }),
+      this.prisma.quote.count({ where }),
+    ]);
+
+    return {
+      items: rows.map((quote) => {
+        const site = quote.building ?? quote.particularClient?.building ?? null;
+        const clientName =
+          quote.particularClient?.name?.trim() ||
+          quote.eventualClient?.name?.trim() ||
+          quote.building?.name?.trim() ||
+          'Cliente';
+        return {
+          id: quote.id,
+          number: quote.number,
+          status: quote.status,
+          requestDate: quote.requestDate,
+          serviceType: quote.serviceType,
+          total: Number(quote.total),
+          buildingId: quote.buildingId ?? quote.particularClient?.buildingId ?? null,
+          clientName,
+          building: site,
+          particularClient: quote.particularClient
+            ? { name: quote.particularClient.name }
+            : null,
+          eventualClient: quote.eventualClient
+            ? { name: quote.eventualClient.name }
+            : null,
         };
       }),
       total,
