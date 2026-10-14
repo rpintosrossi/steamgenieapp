@@ -158,7 +158,21 @@ function FloorSection({
                     subTasks.map((task) => (
                       <View key={task.id} style={styles.taskRow}>
                         <Ionicons name="ellipse" size={6} color={COLORS.primary} />
-                        <Text style={styles.taskName}>{task.name}</Text>
+                        <View style={styles.taskNameWrap}>
+                          <Text style={styles.taskName}>{task.name}</Text>
+                          {task.assignment ? (
+                            <Text
+                              style={[
+                                styles.assignmentLabel,
+                                task.assignment.kind === 'mine'
+                                  ? styles.assignmentMine
+                                  : styles.assignmentDestined,
+                              ]}
+                            >
+                              {task.assignment.label}
+                            </Text>
+                          ) : null}
+                        </View>
                         <Text style={styles.taskFreq}>
                           {FREQ_LABELS[task.frequency] ?? task.frequency}
                         </Text>
@@ -172,7 +186,21 @@ function FloorSection({
             {zoneTasksDirect.map((task) => (
               <View key={task.id} style={styles.taskRowIndented}>
                 <Ionicons name="ellipse" size={6} color={COLORS.primary} />
-                <Text style={styles.taskName}>{task.name}</Text>
+                <View style={styles.taskNameWrap}>
+                  <Text style={styles.taskName}>{task.name}</Text>
+                  {task.assignment ? (
+                    <Text
+                      style={[
+                        styles.assignmentLabel,
+                        task.assignment.kind === 'mine'
+                          ? styles.assignmentMine
+                          : styles.assignmentDestined,
+                      ]}
+                    >
+                      {task.assignment.label}
+                    </Text>
+                  ) : null}
+                </View>
               </View>
             ))}
           </View>
@@ -232,7 +260,7 @@ const styles = StyleSheet.create({
   noTasks: { fontSize: 12, color: COLORS.textMuted, fontStyle: 'italic', marginLeft: 4 },
   taskRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 8,
     paddingVertical: 3,
     paddingLeft: 4,
@@ -244,6 +272,10 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     marginLeft: 12,
   },
-  taskName: { flex: 1, fontSize: 12, color: COLORS.text },
+  taskNameWrap: { flex: 1 },
+  taskName: { fontSize: 12, color: COLORS.text },
+  assignmentLabel: { fontSize: 10, fontWeight: '700', lineHeight: 14 },
+  assignmentMine: { color: COLORS.primary },
+  assignmentDestined: { color: COLORS.brandNavy },
   taskFreq: { fontSize: 10, color: COLORS.textMuted },
 });

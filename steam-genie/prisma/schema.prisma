@@ -243,6 +243,7 @@ model User {
   commissionPdfVersions      CommissionSettlementPdfVersion[] @relation("CommissionPdfCreator")
   createdQuotes              Quote[]                          @relation("QuoteCreator")
   uploadedQuoteInternalPhotos QuoteInternalPhoto[]            @relation("QuoteInternalPhotoUploader")
+  taskAssignees               TaskAssignee[]
 
   @@index([deletedAt, fullName])
   @@map("users")
@@ -705,11 +706,27 @@ model Task {
   customFields             TaskCustomField[]
   workOrderTaskSnapshots   WorkOrderTask[]
   periodicTaskInstances    PeriodicTaskInstance[]
+  assignees                TaskAssignee[]
 
   @@index([buildingId, zoneId, subzoneId, frequency])
   @@index([buildingId, isActive, deletedAt])
   @@index([categoryId, deletedAt])
   @@map("tasks")
+}
+
+/// Personas a las que se destina una tarea rutinaria.
+/// Si no hay filas, la tarea la ve todo el equipo del edificio.
+model TaskAssignee {
+  id        String   @id @default(uuid()) @db.Uuid
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  @@unique([taskId, userId])
+  @@index([userId])
+  @@map("task_assignees")
 }
 
 model TaskCustomField {

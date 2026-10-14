@@ -67,4 +67,11 @@ export class UpdateTaskDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  /** Reemplaza las personas de la tarea. Array vacío = todo el equipo. Omitir = no cambiar. */
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID(undefined, { each: true })
+  assigneeUserIds?: string[];
 }

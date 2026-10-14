@@ -54,6 +54,7 @@ interface PeriodicDueItem {
     allowsPhoto?: boolean;
     requiresRejectionReason: boolean;
     customFields?: TaskCustomField[];
+    assignment?: { label: string; kind: 'mine' | 'destined' } | null;
   };
   phasePhotos?: PhasePhotoItem[];
   execution: {
@@ -1697,6 +1698,18 @@ function TaskRow({
               <Text style={styles.individualHint}>Completar individualmente</Text>
             ) : null}
           </View>
+          {item.task.assignment ? (
+            <Text
+              style={[
+                styles.assignmentLabel,
+                item.task.assignment.kind === 'mine'
+                  ? styles.assignmentMine
+                  : styles.assignmentDestined,
+              ]}
+            >
+              {item.task.assignment.label}
+            </Text>
+          ) : null}
           {statusLabel ? (
             <Text style={[styles.taskStatus, needsPhoto && styles.taskStatusPhotoPending]}>
               {statusLabel}
@@ -2201,6 +2214,9 @@ const styles = StyleSheet.create({
   taskInfo: { flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   taskTextWrap: { flex: 1, gap: 2 },
   taskName: { fontSize: 13, color: COLORS.text, flexShrink: 1 },
+  assignmentLabel: { fontSize: 11, fontWeight: '700', lineHeight: 15 },
+  assignmentMine: { color: COLORS.primary },
+  assignmentDestined: { color: COLORS.brandNavy },
   taskNameWithHint: { flexShrink: 1, maxWidth: '58%' },
   taskStatus: { fontSize: 11, color: COLORS.textMuted },
   taskStatusPhotoPending: { color: COLORS.warning, fontWeight: '700' },

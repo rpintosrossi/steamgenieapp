@@ -69,6 +69,53 @@ const TASK_CATEGORY_SELECT = {
   updatedAt: true,
 };
 
+const TASK_ASSIGNEE_SELECT = {
+  orderBy: { user: { fullName: 'asc' as const } },
+  select: {
+    user: { select: { id: true, fullName: true } },
+  },
+};
+
+type AssigneeRelation = { user: { id: string; fullName: string } };
+
+export type TaskAssignmentView = {
+  label: string;
+  kind: 'mine' | 'destined';
+} | null;
+
+function flattenAssignees(rows: AssigneeRelation[] | null | undefined) {
+  return (rows ?? []).map((row) => ({ id: row.user.id, fullName: row.user.fullName }));
+}
+
+function formatPersonList(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  if (names.length === 2) return `${names[0]} y ${names[1]}`;
+  return `${names.slice(0, -1).join(', ')} y ${names[names.length - 1]}`;
+}
+
+function assignmentView(
+  assignees: Array<{ id: string; fullName: string }>,
+  userId: string,
+  isSupervisor: boolean,
+): { visible: boolean; assignment: TaskAssignmentView } {
+  if (assignees.length === 0) {
+    return { visible: true, assignment: null };
+  }
+  if (isSupervisor) {
+    return {
+      visible: true,
+      assignment: {
+        kind: 'destined',
+        label: `Destinada a ${formatPersonList(assignees.map((person) => person.fullName))}`,
+      },
+    };
+  }
+  if (assignees.some((person) => person.id === userId)) {
+    return { visible: true, assignment: { kind: 'mine', label: 'Asignada a vos' } };
+  }
+  return { visible: false, assignment: null };
+}
+
 const TASK_SELECT = {
   id: true,
   buildingId: true,
@@ -86,6 +133,7 @@ const TASK_SELECT = {
   isActive: true,
   createdAt: true,
   updatedAt: true,
+  assignees: TASK_ASSIGNEE_SELECT,
 };
 
 const TASK_LIST_SELECT = {
@@ -207,7 +255,13 @@ export class TasksService {
       this.prisma.task.count({ where }),
     ]);
 
-    return { data, total, page, limit, pages: Math.ceil(total / limit) };
+    return {
+      data: data.map((task) => this.presentTask(task)),
+      total,
+      page,
+      limit,
+      pages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(id: string, user?: AuthUser) {
@@ -228,6 +282,7 @@ export class TasksService {
           },
         },
         subzone: { select: { id: true, name: true } },
+        assignees: TASK_ASSIGNEE_SELECT,
       },
     });
     if (!task) throw new NotFoundException('Task not found');
@@ -241,7 +296,7 @@ export class TasksService {
       }
     }
 
-    return task;
+    return this.presentTask(task);
   }
 
   async create(dto: CreateTaskDto) {
@@ -266,25 +321,39 @@ export class TasksService {
     const weekdays = this.resolveWeekdays(dto.frequency, dto.weekdays);
     const requiresPhoto = dto.requiresPhoto ?? false;
     const allowsPhoto = requiresPhoto || (dto.allowsPhoto ?? false);
+    const assigneeUserIds = await this.assertAssignableUsers(
+      dto.frequency,
+      dto.assigneeUserIds ?? [],
+    );
 
-    return this.prisma.task.create({
-      data: {
-        buildingId: dto.buildingId,
-        zoneId: dto.zoneId,
-        subzoneId: dto.subzoneId ?? null,
-        categoryId,
-        name: dto.name,
-        frequency: dto.frequency,
-        startDate: startOfDay(dto.startDate),
-        weekdays,
-        allowsPhoto,
-        requiresPhoto,
-        allowsObservation: dto.allowsObservation ?? false,
-        requiresRejectionReason: dto.requiresRejectionReason ?? false,
-        isActive: dto.isActive ?? true,
-      },
-      select: TASK_SELECT,
+    const created = await this.prisma.$transaction(async (tx) => {
+      const task = await tx.task.create({
+        data: {
+          buildingId: dto.buildingId,
+          zoneId: dto.zoneId,
+          subzoneId: dto.subzoneId ?? null,
+          categoryId,
+          name: dto.name,
+          frequency: dto.frequency,
+          startDate: startOfDay(dto.startDate),
+          weekdays,
+          allowsPhoto,
+          requiresPhoto,
+          allowsObservation: dto.allowsObservation ?? false,
+          requiresRejectionReason: dto.requiresRejectionReason ?? false,
+          isActive: dto.isActive ?? true,
+        },
+        select: { id: true },
+      });
+      if (assigneeUserIds.length > 0) {
+        await tx.taskAssignee.createMany({
+          data: assigneeUserIds.map((userId) => ({ taskId: task.id, userId })),
+        });
+      }
+      return task;
     });
+
+    return this.findOne(created.id);
   }
 
   async update(id: string, dto: UpdateTaskDto) {
@@ -334,7 +403,26 @@ export class TasksService {
       data.weekdays = this.resolveWeekdays(existing.frequency, dto.weekdays);
     }
 
-    return this.prisma.task.update({ where: { id }, data, select: TASK_SELECT });
+    const assigneeUserIds =
+      dto.assigneeUserIds !== undefined
+        ? await this.assertAssignableUsers(existing.frequency, dto.assigneeUserIds)
+        : undefined;
+
+    await this.prisma.$transaction(async (tx) => {
+      if (Object.keys(data).length > 0) {
+        await tx.task.update({ where: { id }, data });
+      }
+      if (assigneeUserIds !== undefined) {
+        await tx.taskAssignee.deleteMany({ where: { taskId: id } });
+        if (assigneeUserIds.length > 0) {
+          await tx.taskAssignee.createMany({
+            data: assigneeUserIds.map((userId) => ({ taskId: id, userId })),
+          });
+        }
+      }
+    });
+
+    return this.findOne(id);
   }
 
   async remove(id: string) {
@@ -636,7 +724,7 @@ export class TasksService {
 
   // ─── DUE TODAY ─────────────────────────────────────────────────────────────
 
-  async getDueToday(query: DueTodayQueryDto) {
+  async getDueToday(query: DueTodayQueryDto, user: AuthUser) {
     const todayDate = startOfDay();
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -656,11 +744,87 @@ export class TasksService {
     const dueTasks = tasks.filter((t) =>
       this.isTaskDueToday(t.frequency, t.startDate, todayDate, t.weekdays),
     );
+    const supervisorBuildings = await this.supervisorBuildingIds(
+      user.id,
+      [...new Set(dueTasks.map((task) => task.buildingId))],
+    );
+    const visibleTasks = dueTasks.filter(
+      (task) =>
+        assignmentView(
+          flattenAssignees(task.assignees),
+          user.id,
+          supervisorBuildings.has(task.buildingId),
+        ).visible,
+    );
 
-    const instances = await this.loadPeriodicInstances(dueTasks, todayDate, {
+    const instances = await this.loadPeriodicInstances(visibleTasks, todayDate, {
       createMissing: true,
     });
-    return this.enrichPeriodicInstancesBatch(instances);
+    const enriched = await this.enrichPeriodicInstancesBatch(instances);
+    return enriched.map((instance, index) => {
+      const source = visibleTasks[index];
+      const persisted = instance as typeof instance & {
+        task?: { customFields?: unknown };
+      };
+      const assignees = flattenAssignees(source.assignees);
+      const view = assignmentView(
+        assignees,
+        user.id,
+        supervisorBuildings.has(source.buildingId),
+      );
+      return {
+        ...instance,
+        task: {
+          ...source,
+          ...persisted.task,
+          assignees,
+          assignment: view.assignment,
+        },
+      };
+    });
+  }
+
+  /**
+   * Catálogo de tareas rutinarias del edificio para la app.
+   * El operario no ve las destinadas a otras personas.
+   */
+  async listVisiblePeriodicTasksForPrefetch(buildingId: string, user: AuthUser) {
+    const tasks = await this.prisma.task.findMany({
+      where: {
+        buildingId,
+        isActive: true,
+        deletedAt: null,
+        frequency: { not: TaskFrequency.EVENTUAL },
+      },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        frequency: true,
+        zoneId: true,
+        subzoneId: true,
+        startDate: true,
+        assignees: TASK_ASSIGNEE_SELECT,
+      },
+    });
+    const supervisor = await this.isBuildingSupervisor(user.id, buildingId);
+    return tasks.flatMap((task) => {
+      const assignees = flattenAssignees(task.assignees);
+      const view = assignmentView(assignees, user.id, supervisor);
+      if (!view.visible) return [];
+      return [
+        {
+          id: task.id,
+          name: task.name,
+          frequency: task.frequency,
+          zoneId: task.zoneId,
+          subzoneId: task.subzoneId,
+          startDate: task.startDate,
+          assignees,
+          assignment: view.assignment,
+        },
+      ];
+    });
   }
 
   // ─── RECURRING WORK LIST (ADMIN) ───────────────────────────────────────────
@@ -818,6 +982,11 @@ export class TasksService {
 
     await this.assertBuildingAccess(user.id, instance.task.buildingId);
     await this.assertActiveAttendance(user.id, instance.task.buildingId);
+    await this.assertCanCompleteAssignedTask(
+      instance.taskId,
+      instance.task.buildingId,
+      user.id,
+    );
 
     if (dto.clientOperationId) {
       const existingByOp = await this.prisma.taskExecutionRecord.findUnique({
@@ -1007,6 +1176,7 @@ export class TasksService {
 
     await this.assertBuildingAccess(user.id, instance.task.buildingId);
     await this.assertActiveAttendance(user.id, instance.task.buildingId);
+    await this.assertCanCompleteAssignedTask(instance.taskId, instance.task.buildingId, user.id);
 
     const taskExecution = await this.prisma.taskExecutionRecord.findFirst({
       where: { periodicTaskInstanceId: instanceId },
@@ -1080,6 +1250,7 @@ export class TasksService {
 
     await this.assertBuildingAccess(user.id, instance.task.buildingId);
     await this.assertActiveAttendance(user.id, instance.task.buildingId);
+    await this.assertCanCompleteAssignedTask(instance.taskId, instance.task.buildingId, user.id);
 
     if (dto.clientOperationId) {
       const existing = await this.prisma.periodicTaskInstancePhoto.findFirst({
@@ -1153,6 +1324,7 @@ export class TasksService {
 
     await this.assertBuildingAccess(user.id, instance.task.buildingId);
     await this.assertActiveAttendance(user.id, instance.task.buildingId);
+    await this.assertCanCompleteAssignedTask(instance.taskId, instance.task.buildingId, user.id);
 
     const photo = await this.prisma.periodicTaskInstancePhoto.findFirst({
       where: {
@@ -1704,6 +1876,7 @@ export class TasksService {
         floor: { id: string; name: string } | null;
       } | null;
       subzone: { id: string; name: string } | null;
+      assignees?: AssigneeRelation[];
     },
     instance: {
       id: string;
@@ -1747,6 +1920,7 @@ export class TasksService {
       taskId: task.id,
       taskName: task.name,
       frequency: task.frequency,
+      assignees: flattenAssignees(task.assignees),
       allowsPhoto: task.allowsPhoto,
       requiresPhoto: task.requiresPhoto,
       photoEvidenceMode: resolvePhotoEvidenceMode(task.building),
@@ -1784,6 +1958,93 @@ export class TasksService {
     } catch {
       return [];
     }
+  }
+
+  private presentTask<T extends { assignees?: AssigneeRelation[] | null }>(task: T) {
+    const { assignees, ...rest } = task;
+    return {
+      ...rest,
+      assignees: flattenAssignees(assignees),
+    };
+  }
+
+  private async assertAssignableUsers(frequency: TaskFrequency, userIds: string[]) {
+    const unique = [...new Set(userIds)];
+    if (frequency === TaskFrequency.EVENTUAL) {
+      if (unique.length > 0) {
+        throw new BadRequestException(
+          'Las tareas eventuales no se asignan a personas. La asignación es del servicio.',
+        );
+      }
+      return [];
+    }
+    if (unique.length === 0) return [];
+
+    const users = await this.prisma.user.findMany({
+      where: {
+        id: { in: unique },
+        deletedAt: null,
+        isActive: true,
+        buildingRoles: {
+          some: { role: { name: { in: ['cleaner', 'manager'] } } },
+        },
+      },
+      select: { id: true },
+    });
+    if (users.length !== unique.length) {
+      throw new BadRequestException(
+        'Alguna de las personas elegidas no está activa o no es operario ni encargado.',
+      );
+    }
+    return unique;
+  }
+
+  private async isBuildingSupervisor(userId: string, buildingId: string) {
+    const role = await this.prisma.userBuildingRole.findFirst({
+      where: {
+        userId,
+        role: { name: { in: ['admin', 'manager'] } },
+        OR: [{ buildingId: null }, { buildingId }],
+      },
+      select: { id: true },
+    });
+    return !!role;
+  }
+
+  private async supervisorBuildingIds(userId: string, buildingIds: string[]) {
+    const unique = [...new Set(buildingIds)];
+    if (unique.length === 0) return new Set<string>();
+
+    const roles = await this.prisma.userBuildingRole.findMany({
+      where: {
+        userId,
+        role: { name: { in: ['admin', 'manager'] } },
+        OR: [{ buildingId: null }, { buildingId: { in: unique } }],
+      },
+      select: { buildingId: true },
+    });
+    if (roles.some((role) => role.buildingId === null)) {
+      return new Set(unique);
+    }
+    return new Set(
+      roles
+        .map((role) => role.buildingId)
+        .filter((id): id is string => Boolean(id)),
+    );
+  }
+
+  private async assertCanCompleteAssignedTask(
+    taskId: string,
+    buildingId: string,
+    userId: string,
+  ) {
+    const rows = await this.prisma.taskAssignee.findMany({
+      where: { taskId },
+      select: { userId: true },
+    });
+    if (rows.length === 0 || rows.some((row) => row.userId === userId)) return;
+    if (await this.isBuildingSupervisor(userId, buildingId)) return;
+    throw new ForbiddenException('Esta tarea está asignada a otra persona.');
   }
 
   private async assertBuildingAccess(userId: string, buildingId: string) {

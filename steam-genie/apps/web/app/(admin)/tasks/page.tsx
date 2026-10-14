@@ -301,6 +301,7 @@ export default function TasksPage() {
                   <tr>
                     <th>Nombre</th>
                     <th>Frecuencia</th>
+                    <th>Personas</th>
                     <th>Categoría</th>
                     <th>Edificio</th>
                     <th>Ubicación</th>
@@ -314,6 +315,13 @@ export default function TasksPage() {
                     <tr key={task.id} className={!task.isActive ? 'row-muted' : undefined}>
                       <td>{task.name}</td>
                       <td>{TASK_FREQUENCY_LABELS[task.frequency] ?? task.frequency}</td>
+                      <td>
+                        {task.frequency === 'EVENTUAL'
+                          ? '—'
+                          : task.assignees && task.assignees.length > 0
+                            ? task.assignees.map((person) => person.fullName).join(', ')
+                            : 'Todo el equipo'}
+                      </td>
                       <td>{task.category?.name ?? '—'}</td>
                       <td>{task.building?.name ?? '—'}</td>
                       <td>

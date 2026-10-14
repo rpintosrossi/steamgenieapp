@@ -216,25 +216,12 @@ export class SyncService {
       select: { id: true, text: true, type: true, allowsFreeText: true },
     });
 
-    // ── Periodic tasks due today ───────────────────────────────────────────────
-    // Return active non-EVENTUAL tasks for the building so the mobile can determine what is due.
-    const periodicTasks = await this.prisma.task.findMany({
-      where: {
-        buildingId,
-        isActive: true,
-        deletedAt: null,
-        frequency: { not: 'EVENTUAL' },
-      },
-      orderBy: { name: 'asc' },
-      select: {
-        id: true,
-        name: true,
-        frequency: true,
-        zoneId: true,
-        subzoneId: true,
-        startDate: true,
-      },
-    });
+    // ── Periodic tasks ────────────────────────────────────────────────────────
+    // El operario no recibe las tareas destinadas a otras personas.
+    const periodicTasks = await this.tasksService.listVisiblePeriodicTasksForPrefetch(
+      buildingId,
+      user,
+    );
 
     return {
       serverTime: new Date(),

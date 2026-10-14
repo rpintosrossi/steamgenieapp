@@ -114,6 +114,7 @@ export interface PeriodicTaskCached {
   zoneId: string | null;
   subzoneId: string | null;
   startDate: string;
+  assignment?: { label: string; kind: 'mine' | 'destined' } | null;
 }
 
 export interface PrefetchData {

@@ -53,8 +53,8 @@ export class TasksController {
   // NOTE: due-today must be before :id to avoid 'due-today' being parsed as a UUID
   @Get('due-today')
   @RequiredRoles('admin', 'manager', 'cleaner')
-  getDueToday(@Query() query: DueTodayQueryDto) {
-    return this.tasksService.getDueToday(query);
+  getDueToday(@Query() query: DueTodayQueryDto, @CurrentUser() user: AuthUser) {
+    return this.tasksService.getDueToday(query, user);
   }
 
   @Get('recurring-work/groups')

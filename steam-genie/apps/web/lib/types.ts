@@ -138,6 +138,7 @@ export interface TaskItem {
   allowsObservation: boolean;
   requiresRejectionReason: boolean;
   isActive: boolean;
+  assignees?: Array<{ id: string; fullName: string }>;
   category?: { id: string; name: string } | null;
   building?: { id: string; name: string };
   floor?: { id: string; name: string } | null;
@@ -175,6 +176,7 @@ export interface RecurringWorkListItem {
   taskId: string;
   taskName: string;
   frequency: string;
+  assignees?: Array<{ id: string; fullName: string }>;
   allowsPhoto: boolean;
   requiresPhoto: boolean;
   photoEvidenceMode?: PhotoEvidenceMode;

@@ -70,4 +70,11 @@ export class CreateTaskDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  /** Personas a las que se destina la tarea. Vacío = todo el equipo. Solo tareas rutinarias. */
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID(undefined, { each: true })
+  assigneeUserIds?: string[];
 }

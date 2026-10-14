@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { TASK_FREQUENCIES } from '@steam-genie/shared-constants';
 import { LocationPicker } from './LocationPicker';
+import { TaskAssigneePicker } from './TaskAssigneePicker';
 import { TaskCustomFieldsEditor } from './TaskCustomFieldsEditor';
 import { WeekdayPicker } from './WeekdayPicker';
 import type { TaskCustomField } from '../lib/task-custom-fields';
@@ -38,6 +39,7 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
   const [allowsObservation, setAllowsObservation] = useState(true);
   const [requiresRejectionReason, setRequiresRejectionReason] = useState(true);
   const [customFields, setCustomFields] = useState<TaskCustomField[]>([]);
+  const [assigneeUserIds, setAssigneeUserIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,6 +67,7 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
         setAllowsObservation(data.allowsObservation);
         setRequiresRejectionReason(data.requiresRejectionReason);
         setCustomFields(data.customFields ?? []);
+        setAssigneeUserIds((data.assignees ?? []).map((person) => person.id));
         setCategories(cats.filter((c) => c.isActive || c.id === data.categoryId));
         setLocation({
           buildingId: data.buildingId,
@@ -115,6 +118,7 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
         requiresPhoto: photoMode === 'required',
         allowsObservation,
         requiresRejectionReason,
+        ...(frequency !== TASK_FREQUENCIES.EVENTUAL ? { assigneeUserIds } : {}),
       });
       onSaved();
     } catch (err) {
@@ -172,6 +176,14 @@ export function EditTaskModal({ taskId, buildings, onClose, onSaved }: EditTaskM
 
               {frequency === TASK_FREQUENCIES.CUSTOM_WEEKDAYS ? (
                 <WeekdayPicker value={weekdays} onChange={setWeekdays} />
+              ) : null}
+
+              {frequency !== TASK_FREQUENCIES.EVENTUAL ? (
+                <TaskAssigneePicker
+                  buildingId={location.buildingId}
+                  value={assigneeUserIds}
+                  onChange={setAssigneeUserIds}
+                />
               ) : null}
 
               {frequency === TASK_FREQUENCIES.EVENTUAL ? (

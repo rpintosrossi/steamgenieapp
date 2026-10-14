@@ -133,6 +133,12 @@ function RecurringTaskDetailList({ tasks }: { tasks: RecurringWorkListItem[] }) 
                 <dt>Frecuencia</dt>
                 <dd>{TASK_FREQUENCY_LABELS[item.frequency] ?? item.frequency}</dd>
               </div>
+              {item.assignees && item.assignees.length > 0 ? (
+                <div className="recurring-task-meta-item">
+                  <dt>Destinada a</dt>
+                  <dd>{item.assignees.map((person) => person.fullName).join(', ')}</dd>
+                </div>
+              ) : null}
               <div className="recurring-task-meta-item">
                 <dt>Período</dt>
                 <dd>{item.periodLabelDisplay}</dd>
